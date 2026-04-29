@@ -1,21 +1,24 @@
 # my-game — Session Notes
 
-_Installed: YYYY-MM-DD_
+_Installed: 2026-04-29_
 
 ## Current Phase
 
-Fresh Jen install. Awaiting first direction from Director.
+First art direction pass: character visual design for Capture Arena.
 
 ## Active Threads
 
-_(none)_
+- **Character visual design** — Recommendations delivered in companion page. Awaiting Director approval to implement.
 
 ## Open Questions
 
-_(none)_
+- Should the character redesign (rounded capsule body) ship in V1, or is the current box aesthetic preferred?
+- Team mode color selection: will teams pick from the existing 8-color palette, or get dedicated team colors?
+- Yellow (#FFEB3B) has low contrast on white ground. Director opinion on darkening to amber?
 
 ## Next Steps
 
-- [ ] Director fills in `CLAUDE.md` Project Purpose section
-- [ ] Director fills in `docs/director-profile.md` (optional but helpful)
-- [ ] First session: define art direction intent and seed `docs/backlog.md`
+- [ ] Director reviews character-design.html recommendations
+- [ ] Implement approved character changes in PlayerRenderer.ts
+- [ ] Add player position rendering to Minimap.ts
+- [ ] Begin UI/HUD art direction pass (name entry, death screen, leaderboard styling)

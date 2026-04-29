@@ -77,7 +77,6 @@ When a player steps from unclaimed/enemy territory back onto their own territory
 **Death triggers:**
 - Another player crosses your trail
 - You cross your own trail
-- You leave the circular arena boundary
 
 **On death:**
 - Trail is removed
@@ -115,7 +114,7 @@ When a player steps from unclaimed/enemy territory back onto their own territory
 - **Trails**: Slightly transparent ribbons with subtle glow
 - **Players**: Small 3D blocky characters (cube body + simple features)
 - **Camera**: Top-down with slight isometric tilt, follows local player
-- **Map border**: Circular arena edge, visible as a subtle ring
+- **Map border**: Circular arena edge, visible as a subtle ring — acts as a solid wall players slide along
 - **Background**: Light neutral color, faint grid lines for spatial reference
 
 ## HUD
