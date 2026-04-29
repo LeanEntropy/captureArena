@@ -1,11 +1,9 @@
 import * as THREE from "three";
-import polygonClipping from "polygon-clipping";
 import earcut from "earcut";
 
 // ===================== CONSTANTS =====================
 const ARENA_RADIUS = 24.5;
 const START_RADIUS = 3;
-const START_POINTS = 45;
 const MIN_POINT_DIST = 0.3;
 const PLAYER_SPEED = 8;
 const BOT_SPEED = 6;
@@ -20,10 +18,6 @@ const CAMERA_HEIGHT = 30;
 const CAMERA_Z_OFFSET = 14;
 const TOTAL_AREA = Math.PI * ARENA_RADIUS * ARENA_RADIUS;
 
-// Conquest modes:
-// "RETAIN_FIRST_OWNER" — conquered territory keeps visual memory of original owner (polygons overlap visually)
-// "REPLACE_OWNER" — conquered territory is subtracted from the previous owner's polygon
-const CONQUEST_MODE = "REPLACE_OWNER"; // default
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
 const COLORS = [0x4CAF50, 0x2196F3, 0xFF9800, 0xE91E63, 0x9C27B0, 0x00BCD4, 0xCDDC39, 0xFF5722];
@@ -41,11 +35,379 @@ function dlog(category, msg, data) {
   try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); } catch(e) {}
 }
 
-// ===================== TRIANGULATOR (earcut — robust, handles degenerate polygons) =====================
+// ===================== TERRITORY GRID =====================
+const GRID_SIZE = 1024;
+const WORLD_MIN = -ARENA_RADIUS;  // -24.5
+const WORLD_SIZE = ARENA_RADIUS * 2;  // 49
+const CELL_SIZE = WORLD_SIZE / GRID_SIZE;  // ~0.0479
+const GRID_SENTINEL = 255;  // out-of-bounds marker
+
+const territoryGrid = {
+  grid: new Uint8Array(GRID_SIZE * GRID_SIZE),
+  totalArenaCells: 0,
+
+  init() {
+    let count = 0;
+    for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const { wx, wy } = this.gridToWorld(gx, gy);
+        const dist = Math.sqrt(wx * wx + wy * wy);
+        const idx = gy * GRID_SIZE + gx;
+        if (dist > ARENA_RADIUS) {
+          this.grid[idx] = GRID_SENTINEL;
+        } else {
+          this.grid[idx] = 0;
+          count++;
+        }
+      }
+    }
+    this.totalArenaCells = count;
+    dlog("GRID", "initialized", { totalArenaCells: count, gridSize: GRID_SIZE });
+  },
+
+  worldToGrid(wx, wy) {
+    const gx = Math.floor((wx - WORLD_MIN) / CELL_SIZE);
+    const gy = Math.floor((wy - WORLD_MIN) / CELL_SIZE);
+    return {
+      gx: Math.max(0, Math.min(GRID_SIZE - 1, gx)),
+      gy: Math.max(0, Math.min(GRID_SIZE - 1, gy))
+    };
+  },
+
+  gridToWorld(gx, gy) {
+    return {
+      wx: WORLD_MIN + (gx + 0.5) * CELL_SIZE,
+      wy: WORLD_MIN + (gy + 0.5) * CELL_SIZE
+    };
+  },
+
+  getOwner(wx, wy) {
+    const gx = Math.floor((wx - WORLD_MIN) / CELL_SIZE);
+    const gy = Math.floor((wy - WORLD_MIN) / CELL_SIZE);
+    if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return 0;
+    const val = this.grid[gy * GRID_SIZE + gx];
+    return val === GRID_SENTINEL ? 0 : val;
+  },
+
+  getOwnerGrid(gx, gy) {
+    if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return GRID_SENTINEL;
+    return this.grid[gy * GRID_SIZE + gx];
+  },
+
+  stampCircle(cx, cy, radius, ownerId) {
+    const { gx: minGX, gy: minGY } = this.worldToGrid(cx - radius, cy - radius);
+    const { gx: maxGX, gy: maxGY } = this.worldToGrid(cx + radius, cy + radius);
+    const r2 = radius * radius;
+    for (let gy = minGY; gy <= maxGY; gy++) {
+      for (let gx = minGX; gx <= maxGX; gx++) {
+        const { wx, wy } = this.gridToWorld(gx, gy);
+        const dx = wx - cx, dy = wy - cy;
+        if (dx * dx + dy * dy <= r2) {
+          const idx = gy * GRID_SIZE + gx;
+          if (this.grid[idx] !== GRID_SENTINEL) {
+            this.grid[idx] = ownerId;
+          }
+        }
+      }
+    }
+  },
+
+  stampPolygon(poly2D, ownerId) {
+    // Scanline rasterization of a 2D polygon ({x,y}[] in world coords)
+    // Returns the set of previous owner IDs that were overwritten
+    const overwritten = new Set();
+    if (poly2D.length < 3) return overwritten;
+
+    // Find bounding box in grid coords
+    let wMinY = Infinity, wMaxY = -Infinity;
+    for (const p of poly2D) {
+      if (p.y < wMinY) wMinY = p.y;
+      if (p.y > wMaxY) wMaxY = p.y;
+    }
+    const { gy: minGY } = this.worldToGrid(0, wMinY);
+    const { gy: maxGY } = this.worldToGrid(0, wMaxY);
+
+    const n = poly2D.length;
+    for (let gy = minGY; gy <= maxGY; gy++) {
+      const { wy: scanY } = this.gridToWorld(0, gy);
+
+      // Find all X intersections of polygon edges with this scanline Y
+      const xIntersections = [];
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const yi = poly2D[i].y, yj = poly2D[j].y;
+        if ((yi <= scanY && yj > scanY) || (yj <= scanY && yi > scanY)) {
+          const t = (scanY - yi) / (yj - yi);
+          const xInt = poly2D[i].x + t * (poly2D[j].x - poly2D[i].x);
+          xIntersections.push(xInt);
+        }
+      }
+
+      xIntersections.sort((a, b) => a - b);
+
+      // Fill between pairs
+      for (let k = 0; k + 1 < xIntersections.length; k += 2) {
+        const { gx: gxStart } = this.worldToGrid(xIntersections[k], 0);
+        const { gx: gxEnd } = this.worldToGrid(xIntersections[k + 1], 0);
+        for (let gx = gxStart; gx <= gxEnd; gx++) {
+          const idx = gy * GRID_SIZE + gx;
+          const prev = this.grid[idx];
+          if (prev !== GRID_SENTINEL && prev !== ownerId) {
+            if (prev !== 0) overwritten.add(prev);
+            this.grid[idx] = ownerId;
+          }
+        }
+      }
+    }
+    return overwritten;
+  },
+
+  clearOwner(ownerId) {
+    for (let i = 0; i < this.grid.length; i++) {
+      if (this.grid[i] === ownerId) this.grid[i] = 0;
+    }
+  },
+
+  countCells(ownerId) {
+    let count = 0;
+    for (let i = 0; i < this.grid.length; i++) {
+      if (this.grid[i] === ownerId) count++;
+    }
+    return count;
+  },
+
+  extractContours(ownerId) {
+    // Marching squares to extract boundary contours
+    // Create binary ownership function
+    const owned = (gx, gy) => {
+      if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return 0;
+      return this.grid[gy * GRID_SIZE + gx] === ownerId ? 1 : 0;
+    };
+
+    // Find bounding box of owned cells to avoid scanning entire grid
+    let minGX = GRID_SIZE, maxGX = 0, minGY = GRID_SIZE, maxGY = 0;
+    for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        if (this.grid[gy * GRID_SIZE + gx] === ownerId) {
+          if (gx < minGX) minGX = gx;
+          if (gx > maxGX) maxGX = gx;
+          if (gy < minGY) minGY = gy;
+          if (gy > maxGY) maxGY = gy;
+        }
+      }
+    }
+    if (minGX > maxGX) return []; // no cells owned
+
+    // Expand bounds by 1 for marching squares border
+    minGX = Math.max(0, minGX - 1);
+    minGY = Math.max(0, minGY - 1);
+    maxGX = Math.min(GRID_SIZE - 1, maxGX + 1);
+    maxGY = Math.min(GRID_SIZE - 1, maxGY + 1);
+
+    // Marching squares: for each 2x2 block, compute case and emit segments
+    // Corners: TL=bit3, TR=bit2, BR=bit1, BL=bit0
+    // Segment endpoints are on cell edges (midpoints)
+    const segments = [];
+
+    for (let gy = minGY; gy < maxGY; gy++) {
+      for (let gx = minGX; gx < maxGX; gx++) {
+        const tl = owned(gx, gy);
+        const tr = owned(gx + 1, gy);
+        const br = owned(gx + 1, gy + 1);
+        const bl = owned(gx, gy + 1);
+        const caseIdx = (tl << 3) | (tr << 2) | (br << 1) | bl;
+
+        if (caseIdx === 0 || caseIdx === 15) continue; // all same
+
+        // Midpoints of edges: top, right, bottom, left
+        const top = { gx: gx + 0.5, gy: gy };
+        const right = { gx: gx + 1, gy: gy + 0.5 };
+        const bottom = { gx: gx + 0.5, gy: gy + 1 };
+        const left = { gx: gx, gy: gy + 0.5 };
+
+        switch (caseIdx) {
+          case 1:  segments.push([bottom, left]); break;
+          case 2:  segments.push([right, bottom]); break;
+          case 3:  segments.push([right, left]); break;
+          case 4:  segments.push([top, right]); break;
+          case 5:  segments.push([top, left]); segments.push([right, bottom]); break; // saddle
+          case 6:  segments.push([top, bottom]); break;
+          case 7:  segments.push([top, left]); break;
+          case 8:  segments.push([left, top]); break;
+          case 9:  segments.push([bottom, top]); break;
+          case 10: segments.push([left, bottom]); segments.push([top, right]); break; // saddle
+          case 11: segments.push([right, top]); break;
+          case 12: segments.push([left, right]); break;
+          case 13: segments.push([bottom, right]); break;
+          case 14: segments.push([left, bottom]); break;
+        }
+      }
+    }
+
+    if (segments.length === 0) return [];
+
+    // Chain segments into closed loops
+    // Key segments by their start point for efficient lookup
+    const key = (p) => `${p.gx},${p.gy}`;
+    const adjMap = new Map();
+    for (let i = 0; i < segments.length; i++) {
+      const k = key(segments[i][0]);
+      if (!adjMap.has(k)) adjMap.set(k, []);
+      adjMap.get(k).push(i);
+    }
+
+    const used = new Uint8Array(segments.length);
+    const loops = [];
+
+    for (let i = 0; i < segments.length; i++) {
+      if (used[i]) continue;
+
+      const loop = [];
+      let current = i;
+      while (current !== -1 && !used[current]) {
+        used[current] = 1;
+        const seg = segments[current];
+        loop.push(seg[0]);
+
+        // Find next segment whose start matches current end
+        const endKey = key(seg[1]);
+        current = -1;
+        const candidates = adjMap.get(endKey);
+        if (candidates) {
+          for (const ci of candidates) {
+            if (!used[ci]) {
+              current = ci;
+              break;
+            }
+          }
+        }
+      }
+
+      if (loop.length >= 3) {
+        // Convert grid coords to world coords
+        const worldLoop = loop.map(p => {
+          const { wx, wy } = this.gridToWorld(p.gx, p.gy);
+          return { x: wx, y: wy };
+        });
+
+        // Simplify with RDP
+        const simplified = simplifyContour(worldLoop, 0.06);
+        if (simplified.length >= 3) {
+          loops.push(simplified);
+        }
+      }
+    }
+
+    return loops;
+  },
+
+  floodFillConnected(ownerId, startWX, startWZ) {
+    // Flood fill from world position to find all connected cells of ownerId.
+    // Returns count of disconnected cells cleared.
+    const { gx: startGX, gy: startGY } = this.worldToGrid(startWX, startWZ);
+
+    // If start cell doesn't belong to owner, find nearest owned cell
+    let sgx = startGX, sgy = startGY;
+    if (this.getOwnerGrid(sgx, sgy) !== ownerId) {
+      // Search nearby for an owned cell
+      let found = false;
+      for (let r = 1; r < 100 && !found; r++) {
+        for (let dy = -r; dy <= r && !found; dy++) {
+          for (let dx = -r; dx <= r && !found; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only check ring
+            const nx = sgx + dx, ny = sgy + dy;
+            if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+              if (this.grid[ny * GRID_SIZE + nx] === ownerId) {
+                sgx = nx;
+                sgy = ny;
+                found = true;
+              }
+            }
+          }
+        }
+      }
+      if (!found) return 0; // no owned cells at all
+    }
+
+    // BFS flood fill to mark connected cells
+    const visited = new Uint8Array(GRID_SIZE * GRID_SIZE);
+    const queue = [sgx, sgy]; // flat pairs
+    visited[sgy * GRID_SIZE + sgx] = 1;
+    let head = 0;
+
+    while (head < queue.length) {
+      const cx = queue[head++];
+      const cy = queue[head++];
+
+      const neighbors = [
+        [cx - 1, cy], [cx + 1, cy],
+        [cx, cy - 1], [cx, cy + 1]
+      ];
+      for (const [nx, ny] of neighbors) {
+        if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+        const nIdx = ny * GRID_SIZE + nx;
+        if (visited[nIdx]) continue;
+        if (this.grid[nIdx] !== ownerId) continue;
+        visited[nIdx] = 1;
+        queue.push(nx, ny);
+      }
+    }
+
+    // Clear any unvisited cells that belong to this owner
+    let cleared = 0;
+    for (let i = 0; i < this.grid.length; i++) {
+      if (this.grid[i] === ownerId && !visited[i]) {
+        this.grid[i] = 0;
+        cleared++;
+      }
+    }
+    return cleared;
+  }
+};
+
+// ===================== CONTOUR SIMPLIFICATION (RDP) =====================
+function pointToSegDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-12) {
+    const ex = p.x - a.x, ey = p.y - a.y;
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = a.x + t * dx, projY = a.y + t * dy;
+  const ex = p.x - projX, ey = p.y - projY;
+  return Math.sqrt(ex * ex + ey * ey);
+}
+
+function rdpRecurse(points, epsilon, start, end) {
+  if (end - start < 2) return [points[start], points[end]];
+  let maxDist = 0, maxIdx = start;
+  const a = points[start], b = points[end];
+  for (let i = start + 1; i < end; i++) {
+    const d = pointToSegDist(points[i], a, b);
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist > epsilon) {
+    const left = rdpRecurse(points, epsilon, start, maxIdx);
+    const right = rdpRecurse(points, epsilon, maxIdx, end);
+    return left.slice(0, -1).concat(right);
+  }
+  return [a, b];
+}
+
+function simplifyContour(points, epsilon) {
+  if (points.length <= 4) return points;
+  const open = points.concat([points[0]]);
+  const result = rdpRecurse(open, epsilon, 0, open.length - 1);
+  result.pop(); // remove closing duplicate
+  return result.length >= 3 ? result : points;
+}
+
+// ===================== TRIANGULATOR (earcut) =====================
 function triangulate(pts) {
   const n = pts.length;
   if (n < 3) return [];
-  // Flatten {x, y} array into [x0, y0, x1, y1, ...] for earcut
   const coords = new Array(n * 2);
   for (let i = 0; i < n; i++) {
     coords[i * 2] = pts[i].x;
@@ -86,417 +448,6 @@ function dist2D(a, b) {
   const dx = a.x-b.x, dz = a.z-b.z;
   return Math.sqrt(dx*dx + dz*dz);
 }
-function segmentIntersection(p1, p2, p3, p4) {
-  // Returns intersection point of segment (p1->p2) with segment (p3->p4), or null
-  // All points are {x, y} (2D)
-  const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
-  const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
-  const denom = d1x * d2y - d1y * d2x;
-  if (Math.abs(denom) < 1e-10) return null; // parallel or collinear
-  const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
-  const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
-  if (t < -1e-10 || t > 1+1e-10 || u < -1e-10 || u > 1+1e-10) return null;
-  const tc = Math.max(0, Math.min(1, t));
-  const uc = Math.max(0, Math.min(1, u));
-  return { x: p1.x + tc * d1x, y: p1.y + tc * d1y, t: tc, u: uc };
-}
-
-// ===================== POLYGON-CLIPPING LIBRARY HELPERS =====================
-// Convert our {x, y} 2D polygon to the library's GeoJSON-style coordinate format:
-// Polygon = [Ring], Ring = [[x,y], [x,y], ...] (closed: first == last)
-function poly2DToGeoJSON(poly2D) {
-  const ring = poly2D.map(p => [p.x, p.y]);
-  // Close the ring (GeoJSON requires first == last)
-  if (ring.length > 0) {
-    const first = ring[0], last = ring[ring.length - 1];
-    if (first[0] !== last[0] || first[1] !== last[1]) {
-      ring.push([first[0], first[1]]);
-    }
-  }
-  return [ring]; // Polygon = [outerRing]
-}
-
-// Convert library's MultiPolygon result back to our {x, y} format.
-// Returns the largest polygon (by area) as a flat array of {x, y} points.
-// Also returns all polygons for cases where we need fragments.
-function multiPolyFromGeoJSON(multiPoly) {
-  if (!multiPoly || multiPoly.length === 0) return { largest: [], all: [] };
-
-  const allPolys = [];
-  for (const polygon of multiPoly) {
-    // Each polygon is [outerRing, ...holeRings]. We only use the outer ring.
-    const outerRing = polygon[0];
-    if (!outerRing || outerRing.length < 3) continue;
-    // Convert to {x, y}, dropping the closing duplicate point
-    const pts = [];
-    for (let i = 0; i < outerRing.length; i++) {
-      const p = { x: outerRing[i][0], y: outerRing[i][1] };
-      // Skip closing duplicate
-      if (i === outerRing.length - 1) {
-        const first = pts[0];
-        if (first && Math.abs(p.x - first.x) < 1e-10 && Math.abs(p.y - first.y) < 1e-10) continue;
-      }
-      pts.push(p);
-    }
-    if (pts.length >= 3) allPolys.push(pts);
-  }
-
-  if (allPolys.length === 0) return { largest: [], all: [] };
-
-  // Find the largest polygon by area
-  let bestIdx = 0, bestArea = polyArea(allPolys[0]);
-  for (let i = 1; i < allPolys.length; i++) {
-    const a = polyArea(allPolys[i]);
-    if (a > bestArea) { bestArea = a; bestIdx = i; }
-  }
-
-  return { largest: allPolys[bestIdx], all: allPolys };
-}
-
-function subtractPolygon(victimPoly2D, claimerPoly2D) {
-  // Subtract claimerPoly2D from victimPoly2D (victim minus claimer).
-  // Returns array of 2D points forming the result polygon, or [] if fully consumed.
-  // Uses the polygon-clipping library (Martinez-Rueda algorithm) for robust boolean ops.
-
-  if (victimPoly2D.length < 3 || claimerPoly2D.length < 3) return [];
-
-  try {
-    const victimGeo = poly2DToGeoJSON(victimPoly2D);
-    const claimerGeo = poly2DToGeoJSON(claimerPoly2D);
-    const result = polygonClipping.difference(victimGeo, claimerGeo);
-    const { largest } = multiPolyFromGeoJSON(result);
-    return largest;
-  } catch (e) {
-    dlog("SUBTRACT", "polygon-clipping difference() threw", { error: e.message });
-    return victimPoly2D.slice(); // fallback: return victim unchanged
-  }
-}
-
-// Union two 2D polygons. Returns the merged polygon as {x, y}[] or [] on failure.
-function unionPolygons(polyA2D, polyB2D) {
-  if (polyA2D.length < 3 && polyB2D.length < 3) return [];
-  if (polyA2D.length < 3) return polyB2D.slice();
-  if (polyB2D.length < 3) return polyA2D.slice();
-
-  try {
-    const geoA = poly2DToGeoJSON(polyA2D);
-    const geoB = poly2DToGeoJSON(polyB2D);
-    const result = polygonClipping.union(geoA, geoB);
-    const { largest } = multiPolyFromGeoJSON(result);
-    return largest;
-  } catch (e) {
-    dlog("UNION", "polygon-clipping union() threw", { error: e.message });
-    return []; // fallback: return empty (caller should handle)
-  }
-}
-
-// Difference that returns ALL resulting polygons (for CONTINUOUS_LAND fragment splitting)
-function subtractPolygonAll(victimPoly2D, claimerPoly2D) {
-  if (victimPoly2D.length < 3 || claimerPoly2D.length < 3) return [];
-
-  try {
-    const victimGeo = poly2DToGeoJSON(victimPoly2D);
-    const claimerGeo = poly2DToGeoJSON(claimerPoly2D);
-    const result = polygonClipping.difference(victimGeo, claimerGeo);
-    const { all } = multiPolyFromGeoJSON(result);
-    return all;
-  } catch (e) {
-    dlog("SUBTRACT_ALL", "polygon-clipping difference() threw", { error: e.message });
-    return [victimPoly2D.slice()]; // fallback: return victim unchanged as single fragment
-  }
-}
-
-// DEBUG: expose for testing (comment out in production)
-// window._subtractPolygon = subtractPolygon;
-// window._unionPolygons = unionPolygons;
-// window._polyArea = polyArea;
-// window._pointInPoly = pointInPoly;
-
-// ===================== POLYGON SIMPLIFICATION =====================
-
-// --- Ramer-Douglas-Peucker for open polylines ---
-function _pointToSegmentDist(p, a, b) {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 1e-12) {
-    const ex = p.x - a.x, ey = p.y - a.y;
-    return Math.sqrt(ex * ex + ey * ey);
-  }
-  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  const projX = a.x + t * dx, projY = a.y + t * dy;
-  const ex = p.x - projX, ey = p.y - projY;
-  return Math.sqrt(ex * ex + ey * ey);
-}
-
-function _rdpSimplify(points, epsilon, start, end) {
-  if (end - start < 2) return [points[start], points[end]];
-  let maxDist = 0, maxIdx = start;
-  const a = points[start], b = points[end];
-  for (let i = start + 1; i < end; i++) {
-    const d = _pointToSegmentDist(points[i], a, b);
-    if (d > maxDist) { maxDist = d; maxIdx = i; }
-  }
-  if (maxDist > epsilon) {
-    const left = _rdpSimplify(points, epsilon, start, maxIdx);
-    const right = _rdpSimplify(points, epsilon, maxIdx, end);
-    return left.slice(0, -1).concat(right);
-  }
-  return [a, b];
-}
-
-// RDP for closed polygons: try multiple "seam" positions, pick the one that
-// produces the best result (avoids artifacts from a single fixed seam).
-function simplifyRDP(poly, epsilon) {
-  if (poly.length <= 4) return poly;
-
-  // For small polygons just use single-seam RDP
-  if (poly.length <= 20) {
-    const open = poly.concat([poly[0]]);
-    const simplified = _rdpSimplify(open, epsilon, 0, open.length - 1);
-    // Remove closing duplicate
-    if (simplified.length > 1) simplified.pop();
-    return simplified.length >= 3 ? simplified : poly;
-  }
-
-  // For larger polygons, try 3 seam positions and pick the one with fewest vertices
-  // (they all respect the epsilon tolerance, so fewer = cleaner)
-  const n = poly.length;
-  let best = poly;
-  const seams = [0, Math.floor(n / 3), Math.floor(2 * n / 3)];
-  for (const seam of seams) {
-    // Rotate polygon so seam is at index 0
-    const rotated = poly.slice(seam).concat(poly.slice(0, seam));
-    const open = rotated.concat([rotated[0]]);
-    const simplified = _rdpSimplify(open, epsilon, 0, open.length - 1);
-    if (simplified.length > 1) simplified.pop();
-    if (simplified.length >= 3 && simplified.length < best.length) {
-      best = simplified;
-    }
-  }
-  return best;
-}
-
-// Remove near-duplicate vertices (vertices too close together)
-function deduplicatePolygon(verts, minDist) {
-    if (verts.length < 3) return verts;
-    const minDistSq = minDist * minDist;
-    const result = [verts[0]];
-    for (let i = 1; i < verts.length; i++) {
-        const prev = result[result.length - 1];
-        const dx = verts[i].x - prev.x, dy = verts[i].y - prev.y;
-        if (dx * dx + dy * dy >= minDistSq) {
-            result.push(verts[i]);
-        }
-    }
-    // Check last vs first
-    if (result.length > 1) {
-        const first = result[0], last = result[result.length - 1];
-        const dx = last.x - first.x, dy = last.y - first.y;
-        if (dx * dx + dy * dy < minDistSq) result.pop();
-    }
-    return result.length >= 3 ? result : verts;
-}
-
-// Remove spike patterns: three consecutive vertices A-B-C where B creates a
-// near-zero-area triangle but B is far from the AC line (thin spike).
-// Also catches backtracking edges where the polygon doubles back on itself.
-function removeSpikes(poly, areaThreshold = 0.08, minEdgeLen = 0.15) {
-    if (poly.length <= 4) return poly;
-    const minEdgeSq = minEdgeLen * minEdgeLen;
-    let changed = true;
-    let result = poly.slice();
-
-    // Iterate until stable (spikes can be nested)
-    for (let pass = 0; pass < 3 && changed; pass++) {
-        changed = false;
-        const cleaned = [];
-        const n = result.length;
-        const remove = new Uint8Array(n);
-
-        for (let i = 0; i < n; i++) {
-            const prev = result[(i - 1 + n) % n];
-            const curr = result[i];
-            const next = result[(i + 1) % n];
-
-            // Triangle area of prev-curr-next
-            const triArea = Math.abs(
-                (next.x - prev.x) * (curr.y - prev.y) -
-                (next.y - prev.y) * (curr.x - prev.x)
-            ) * 0.5;
-
-            // Edge lengths squared
-            const d_prev_curr_sq = (curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2;
-            const d_curr_next_sq = (next.x - curr.x) ** 2 + (next.y - curr.y) ** 2;
-
-            // Spike check: tiny area triangle, meaning curr is either:
-            // 1. Collinear with prev-next (harmless but redundant), or
-            // 2. A thin spike extending out and back
-            if (triArea < areaThreshold) {
-                // Check that at least one of the edges is short enough to be a spike
-                // (not just a long collinear segment we want to keep as a simplification point)
-                const d_prev_next_sq = (next.x - prev.x) ** 2 + (next.y - prev.y) ** 2;
-                const maxEdge = Math.max(d_prev_curr_sq, d_curr_next_sq);
-                const baseLen = Math.sqrt(d_prev_next_sq);
-
-                // If the "spike height" (area * 2 / base) is tiny, remove
-                if (baseLen > 1e-6) {
-                    const spikeHeight = (triArea * 2) / baseLen;
-                    if (spikeHeight < 0.15) {
-                        remove[i] = 1;
-                        changed = true;
-                        continue;
-                    }
-                }
-            }
-
-            // Micro-edge check: very short edge to next vertex
-            if (d_curr_next_sq < minEdgeSq) {
-                // Keep the vertex that's farther from the previous kept vertex
-                // (skip this one, next one will be evaluated fresh)
-                remove[i] = 1;
-                changed = true;
-            }
-        }
-
-        for (let i = 0; i < n; i++) {
-            if (!remove[i]) cleaned.push(result[i]);
-        }
-        result = cleaned.length >= 3 ? cleaned : result;
-    }
-    return result;
-}
-
-// Remove thin protrusions: detect narrow "bridge" patterns where the polygon
-// nearly touches itself, creating a thin strip. We find pairs of non-adjacent
-// vertices that are very close, and if the polygon path between them encloses
-// very little area, we shortcut across them.
-function removeThinProtrusions(poly, widthThreshold = 0.4, minProtrusionVerts = 3) {
-    if (poly.length <= 8) return poly;
-    const n = poly.length;
-    const widthSq = widthThreshold * widthThreshold;
-
-    // Find pairs of non-adjacent vertices that are close together
-    for (let i = 0; i < n; i++) {
-        for (let j = i + minProtrusionVerts; j < n; j++) {
-            // Skip adjacent pairs (including wrap-around)
-            if (j === i + 1 || (i === 0 && j === n - 1)) continue;
-
-            const dx = poly[i].x - poly[j].x;
-            const dy = poly[i].y - poly[j].y;
-            if (dx * dx + dy * dy > widthSq) continue;
-
-            // Found a close pair. Check if the path between them (the shorter arc)
-            // forms a thin protrusion (very small area relative to its perimeter).
-            const arcLen = j - i;
-            const otherArcLen = n - arcLen;
-
-            // Pick the shorter arc as the potential protrusion
-            let protStart, protEnd, protLen;
-            if (arcLen <= otherArcLen) {
-                protStart = i; protEnd = j; protLen = arcLen;
-            } else {
-                protStart = j; protEnd = i; protLen = otherArcLen;
-            }
-
-            if (protLen < minProtrusionVerts || protLen > n / 2) continue;
-
-            // Calculate the area of the protrusion arc
-            let protArea = 0;
-            for (let k = 0; k < protLen; k++) {
-                const ci = (protStart + k) % n;
-                const ni = (protStart + k + 1) % n;
-                protArea += poly[ci].x * poly[ni].y - poly[ni].x * poly[ci].y;
-            }
-            protArea = Math.abs(protArea) * 0.5;
-
-            // Calculate perimeter of the protrusion
-            let perim = 0;
-            for (let k = 0; k < protLen; k++) {
-                const ci = (protStart + k) % n;
-                const ni = (protStart + k + 1) % n;
-                const ex = poly[ni].x - poly[ci].x, ey = poly[ni].y - poly[ci].y;
-                perim += Math.sqrt(ex * ex + ey * ey);
-            }
-
-            // Thin protrusion test: area is very small relative to perimeter squared
-            // (a circle has area/perim^2 ~ 0.08, a thin strip has ~ 0)
-            if (perim > 0 && protArea / (perim * perim) < 0.01) {
-                // Remove the protrusion: keep the main body, skip the thin arc
-                // Midpoint of the close pair replaces the protrusion
-                const mid = {
-                    x: (poly[i].x + poly[j].x) * 0.5,
-                    y: (poly[i].y + poly[j].y) * 0.5
-                };
-
-                let result;
-                if (arcLen <= otherArcLen) {
-                    // Remove indices i+1 to j-1, replace with midpoint
-                    result = [];
-                    for (let k = j; k !== i; k = (k + 1) % n) {
-                        result.push(poly[k]);
-                    }
-                    result.push(mid);
-                } else {
-                    // Remove indices j+1 to i-1, replace with midpoint
-                    result = [];
-                    for (let k = i; k !== j; k = (k + 1) % n) {
-                        result.push(poly[k]);
-                    }
-                    result.push(mid);
-                }
-
-                if (result.length >= 3) {
-                    // Recurse: there might be more protrusions
-                    return removeThinProtrusions(result, widthThreshold, minProtrusionVerts);
-                }
-            }
-        }
-    }
-    return poly;
-}
-
-// Full polygon cleanup pipeline: dedup -> remove spikes -> RDP -> remove protrusions -> ensure CCW
-function cleanPolygon(poly2D) {
-    if (poly2D.length < 3) return poly2D;
-
-    let result = poly2D;
-
-    // 1. Deduplicate very close vertices
-    result = deduplicatePolygon(result, MIN_POINT_DIST * 0.5);
-
-    // 2. Remove spikes and near-degenerate triangles
-    result = removeSpikes(result, 0.08, MIN_POINT_DIST * 0.5);
-
-    // 3. RDP simplification (epsilon = 0.12 — small enough to preserve shape, large enough to clean noise)
-    result = simplifyRDP(result, 0.12);
-
-    // 4. Remove thin protrusions (near-zero-width bridges)
-    result = removeThinProtrusions(result, 0.5, 3);
-
-    // 5. Final dedup pass (RDP/protrusion removal can create new near-duplicates)
-    result = deduplicatePolygon(result, MIN_POINT_DIST);
-
-    // 6. Ensure consistent winding
-    ensureCCW(result);
-
-    return result;
-}
-
-// Ensure polygon has consistent CCW winding order (2D)
-function ensureCCW(poly2D) {
-    if (poly2D.length < 3) return poly2D;
-    let area = 0;
-    for (let i = 0; i < poly2D.length; i++) {
-        const j = (i + 1) % poly2D.length;
-        area += poly2D[i].x * poly2D[j].y - poly2D[j].x * poly2D[i].y;
-    }
-    if (area < 0) {
-        // CW winding — reverse to CCW
-        poly2D.reverse();
-    }
-    return poly2D;
-}
 
 function randomSpawn(characters) {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -508,13 +459,10 @@ function randomSpawn(characters) {
     for (const c of characters) {
       if (c.alive && dist2D({x,z}, c.pos) < 10) { ok = false; break; }
     }
-    // Reject spawn inside ANY character's territory (alive or dead)
+    // Reject spawn inside ANY character's territory
     if (ok) {
-      for (const c of characters) {
-        if (c.areaVerts.length >= 3 && pointInPoly(x, z, to2D(c.areaVerts))) {
-          ok = false;
-          break;
-        }
+      if (territoryGrid.getOwner(x, z) !== 0) {
+        ok = false;
       }
     }
     if (ok) return { x, z };
@@ -538,7 +486,9 @@ class Character {
     this.respawnTimer = 0;
     this.invulnTimer = INVULN_TIME;
     this.killCount = 0;
-    this.areaVerts = [];
+    this.ownerId = 0; // set when game starts, 1-based
+    this.territoryDirty = true;
+    this.contourLoops = []; // cached contour for rendering
     this.areaMesh = null;
     this.trailVerts = [];
     this.trailMesh = null;
@@ -546,12 +496,11 @@ class Character {
     this.allCharacters = null; // set after all characters are created
     this.group = this._buildChar(color);
     scene.add(this.group);
-    this._initTerritory();
     // Bot AI state
-    this.botPhase = "idle"; // "idle" | "outward" | "curving" | "returning" | "aggro"
-    this.botWaypoints = [];  // queued waypoints for the current loop
+    this.botPhase = "idle";
+    this.botWaypoints = [];
     this.botLoopCount = 0;
-    this.botAggroChance = 0.25; // chance to target another player's territory
+    this.botAggroChance = 0.25;
   }
 
   _buildChar(color) {
@@ -584,42 +533,56 @@ class Character {
   }
 
   _initTerritory() {
-    this.areaVerts = [];
-    const step = (Math.PI * 2) / START_POINTS;
-    for (let i = 0; i < START_POINTS; i++) {
-      const a = step * i;
-      this.areaVerts.push(new THREE.Vector3(
-        this.pos.x + Math.cos(a) * START_RADIUS, 0,
-        this.pos.z + Math.sin(a) * START_RADIUS
-      ));
-    }
+    territoryGrid.stampCircle(this.pos.x, this.pos.z, START_RADIUS, this.ownerId);
+    this.territoryDirty = true;
     this._rebuildAreaMesh();
   }
 
   _rebuildAreaMesh() {
-    if (this.areaMesh) { this.scene.remove(this.areaMesh); this.areaMesh.geometry.dispose(); this.areaMesh = null; }
-    if (this.areaVerts.length < 3) return;
-
-    // Pre-triangulation cleanup: ensure vertices are clean before rendering
-    let pts2D = to2D(this.areaVerts);
-    pts2D = cleanPolygon(pts2D);
-    if (pts2D.length < 3) return;
-
-    // Sync cleaned vertices back to areaVerts (keeps vertex count manageable)
-    if (pts2D.length !== this.areaVerts.length) {
-      this.areaVerts = pts2D.map(p => new THREE.Vector3(p.x, 0, p.y));
+    if (this.areaMesh) {
+      this.scene.remove(this.areaMesh);
+      this.areaMesh.geometry.dispose();
+      this.areaMesh = null;
     }
 
-    const idx = triangulate(pts2D);
-    if (idx.length === 0) return;
-    const pos = new Float32Array(this.areaVerts.length * 3);
-    for (let i = 0; i < this.areaVerts.length; i++) {
-      pos[i*3] = this.areaVerts[i].x; pos[i*3+1] = 0.02; pos[i*3+2] = this.areaVerts[i].z;
+    if (!this.territoryDirty) return;
+    this.territoryDirty = false;
+
+    // Extract contours
+    this.contourLoops = territoryGrid.extractContours(this.ownerId);
+    if (this.contourLoops.length === 0) return;
+
+    // Sort loops by area descending: largest is outer boundary, smaller are holes
+    this.contourLoops.sort((a, b) => polyArea(b) - polyArea(a));
+
+    const outer = this.contourLoops[0];
+    const holes = this.contourLoops.slice(1);
+
+    // Build flat coords for earcut
+    const coords = [];
+    for (const p of outer) { coords.push(p.x, p.y); }
+    const holeIndices = [];
+    for (const hole of holes) {
+      holeIndices.push(coords.length / 2);
+      for (const p of hole) { coords.push(p.x, p.y); }
     }
+
+    const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
+    if (indices.length < 3) return;
+
+    const totalPts = coords.length / 2;
+    const pos = new Float32Array(totalPts * 3);
+    for (let i = 0; i < totalPts; i++) {
+      pos[i * 3] = coords[i * 2];       // x (world)
+      pos[i * 3 + 1] = 0.02;            // y (slightly above ground)
+      pos[i * 3 + 2] = coords[i * 2 + 1]; // z (world y -> three.js z)
+    }
+
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.setIndex(idx);
+    geom.setIndex(indices);
     geom.computeVertexNormals();
+
     this.areaMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
       color: this.color, transparent: false, opacity: 1.0, side: THREE.DoubleSide, depthWrite: false
     }));
@@ -661,7 +624,7 @@ class Character {
   }
 
   insideOwn(x, z) {
-    return this.areaVerts.length >= 3 && pointInPoly(x, z, to2D(this.areaVerts));
+    return territoryGrid.getOwner(x, z) === this.ownerId;
   }
 
   update(dt) {
@@ -682,7 +645,7 @@ class Character {
     this.pos.x += this.dir.x * this.speed * dt;
     this.pos.z += this.dir.z * this.speed * dt;
 
-    // Boundary — solid wall, slide along it
+    // Boundary -- solid wall, slide along it
     if (this.pos.length() > ARENA_RADIUS) {
       this.pos.normalize().multiplyScalar(ARENA_RADIUS);
       this.pos.y = 0;
@@ -700,7 +663,7 @@ class Character {
         }
       }
       if (!this.wasOutside && this.isPlayer) {
-        dlog("EXIT", "left territory", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2), areaVerts: this.areaVerts.length });
+        dlog("EXIT", "left territory", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2) });
       }
       this.wasOutside = true;
     } else if (this.wasOutside && this.trailVerts.length > 2) {
@@ -725,13 +688,10 @@ class Character {
       if (this.isPlayer) dlog("CLAIM", "aborted: trail too short", { trailLen: this.trailVerts.length });
       this._clearTrail(); return;
     }
-    const av = this.areaVerts, trail = this.trailVerts;
-    const prevArea = polyArea(to2D(av));
-    const prevVertCount = av.length;
+    const trail = this.trailVerts;
 
     if (this.isPlayer) {
-      dlog("CLAIM", "starting claim (union method)", {
-        prevVertCount, prevArea: prevArea.toFixed(2),
+      dlog("CLAIM", "starting claim (grid method)", {
         trailLen: trail.length,
         trailStart: `${trail[0].x.toFixed(2)},${trail[0].z.toFixed(2)}`,
         trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`
@@ -739,37 +699,46 @@ class Character {
     }
 
     // Build a trail polygon by closing the trail loop through the territory boundary.
-    // The trail starts near boundary vertex si and ends near boundary vertex ei.
-    // We connect trail end -> boundary arc -> trail start to form a closed polygon,
-    // then union it with the existing territory.
-    const si = closestIdx(av, trail[0]);
-    const ei = closestIdx(av, trail[trail.length - 1]);
+    // We need boundary vertices to form the arc. Extract a boundary polygon from contours.
+    // Use fresh contour extraction to get boundary points.
+    const contours = territoryGrid.extractContours(this.ownerId);
+    if (contours.length === 0) {
+      if (this.isPlayer) dlog("CLAIM", "aborted: no contours found");
+      this._clearTrail();
+      return;
+    }
+
+    // Use largest contour as boundary
+    contours.sort((a, b) => polyArea(b) - polyArea(a));
+    const boundary = contours[0];
+
+    // Convert boundary to Vector3-like for closestIdx (needs .x, .z)
+    const boundaryV3 = boundary.map(p => ({ x: p.x, z: p.y }));
+
+    const si = closestIdx(boundaryV3, trail[0]);
+    const ei = closestIdx(boundaryV3, trail[trail.length - 1]);
 
     // Build trail polygon: trail points + boundary arc from ei back to si
     let trailPoly;
     if (si === ei) {
-      // Trail forms a loop anchored at one boundary point — just close the trail itself
       trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
     } else {
-      // Two possible arcs to connect the trail ends through boundary: pick the shorter one
-      const arcFwd = []; // ei -> ei+1 -> ... -> si
-      for (let i = ei; ; i = (i + 1) % av.length) {
-        arcFwd.push({ x: av[i].x, y: av[i].z });
+      const n = boundaryV3.length;
+      const arcFwd = [];
+      for (let i = ei; ; i = (i + 1) % n) {
+        arcFwd.push({ x: boundaryV3[i].x, y: boundaryV3[i].z });
         if (i === si) break;
-        if (arcFwd.length > av.length) break;
+        if (arcFwd.length > n) break;
       }
-      const arcBwd = []; // ei -> ei-1 -> ... -> si
-      for (let i = ei; ; i = (i - 1 + av.length) % av.length) {
-        arcBwd.push({ x: av[i].x, y: av[i].z });
+      const arcBwd = [];
+      for (let i = ei; ; i = (i - 1 + n) % n) {
+        arcBwd.push({ x: boundaryV3[i].x, y: boundaryV3[i].z });
         if (i === si) break;
-        if (arcBwd.length > av.length) break;
+        if (arcBwd.length > n) break;
       }
-      // Use the shorter arc
       const arc = arcFwd.length <= arcBwd.length ? arcFwd : arcBwd;
 
-      // Trail polygon: trail forward + arc from ei back to si
       trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
-      // Add arc points (skipping first since it duplicates trail end, and last since it duplicates trail start)
       for (let i = 1; i < arc.length - 1; i++) {
         trailPoly.push(arc[i]);
       }
@@ -781,232 +750,48 @@ class Character {
       return;
     }
 
-    // Union the trail polygon with existing territory using polygon-clipping library
-    const existingPoly2D = to2D(av);
-    const unionResult = unionPolygons(existingPoly2D, trailPoly);
+    // Stamp the trail polygon onto the grid
+    const overwritten = territoryGrid.stampPolygon(trailPoly, this.ownerId);
 
-    if (unionResult.length < 3) {
-      if (this.isPlayer) {
-        dlog("CLAIM", "FAILED: union produced empty result", {
-          existingVerts: existingPoly2D.length,
-          trailPolyVerts: trailPoly.length
-        });
-      }
-      this._clearTrail();
-      return;
-    }
-
-    const newArea = polyArea(unionResult);
-
-    // Safety: never shrink territory
-    if (newArea < prevArea - 0.1) {
-      if (this.isPlayer) {
-        dlog("CLAIM", "ABORTED: union would shrink territory", {
-          prevArea: prevArea.toFixed(2), newArea: newArea.toFixed(2)
-        });
-      }
-      this._clearTrail();
-      return;
-    }
-
-    // Clean up: full pipeline (dedup, spike removal, RDP, protrusion removal, CCW)
-    let cleanPoly2D = cleanPolygon(unionResult);
-
-    // Validate: try triangulating before committing
-    const testIdx = triangulate(cleanPoly2D);
-    if (testIdx.length > 0) {
-      this.areaVerts = cleanPoly2D.map(p => new THREE.Vector3(p.x, 0, p.y));
-      this._rebuildAreaMesh();
-      if (CONQUEST_MODE === "REPLACE_OWNER") {
-        this._subtractFromOthers();
-      }
-      const finalArea = polyArea(to2D(this.areaVerts));
-      if (this.isPlayer) {
-        dlog("CLAIM", "SUCCESS (union)", {
-          newVertCount: this.areaVerts.length, newArea: finalArea.toFixed(2),
-          areaChange: (finalArea - prevArea).toFixed(2),
-          triangles: testIdx.length / 3,
-          areaGrew: finalArea > prevArea
-        });
-      }
-    } else {
-      if (this.isPlayer) {
-        dlog("CLAIM", "FAILED triangulation after union", {
-          unionVerts: cleanPoly2D.length
-        });
-      }
-    }
-    this._clearTrail();
-  }
-
-  _subtractFromOthers() {
-    if (!this.allCharacters) return;
-    const claimerPoly2D = to2D(this.areaVerts);
-    if (claimerPoly2D.length < 3) return;
-
-    const othersCount = this.allCharacters.filter(c => c !== this).length;
-    dlog("CONQUEST_CHECK", `${this.name} checking subtraction against ${othersCount} other characters`, {
-      claimerVerts: claimerPoly2D.length,
-      claimerArea: polyArea(claimerPoly2D).toFixed(2)
-    });
-
-    for (const victim of this.allCharacters) {
-      if (victim === this) continue;
-      if (victim.areaVerts.length < 3) continue;
-
-      const victimPoly2D = to2D(victim.areaVerts);
-
-      // Quick check: does any victim vertex fall inside claimer's polygon?
-      let hasOverlap = false;
-      let victimInsideCount = 0;
-      let claimerInsideCount = 0;
-      for (const v of victimPoly2D) {
-        if (pointInPoly(v.x, v.y, claimerPoly2D)) { hasOverlap = true; victimInsideCount++; }
-      }
-      // Also check if any claimer vertex falls inside victim (claimer fully inside victim edge case)
-      if (!hasOverlap) {
-        for (const v of claimerPoly2D) {
-          if (pointInPoly(v.x, v.y, victimPoly2D)) { hasOverlap = true; claimerInsideCount++; }
-        }
-      }
-      dlog("CONQUEST_OVERLAP", `${this.name} vs ${victim.name}: overlap=${hasOverlap}`, {
-        victimVertsInsideClaimer: victimInsideCount,
-        claimerVertsInsideVictim: claimerInsideCount,
-        victimVerts: victimPoly2D.length,
-        claimerVerts: claimerPoly2D.length
-      });
-      if (!hasOverlap) continue;
-
-      const prevArea = polyArea(victimPoly2D);
-
-      // Use subtractPolygonAll to get ALL fragments (the library handles this natively)
-      const allFragments = subtractPolygonAll(victimPoly2D, claimerPoly2D);
-
-      if (allFragments.length === 0 || allFragments.every(f => f.length < 3)) {
-        // Victim's territory is fully consumed
-        dlog("CONQUEST", "fully consumed " + victim.name, {
-          claimer: this.name,
-          prevArea: prevArea.toFixed(2)
-        });
-        victim.areaVerts = [];
-        if (victim.areaMesh) {
-          victim.scene.remove(victim.areaMesh);
-          victim.areaMesh.geometry.dispose();
-          victim.areaMesh = null;
-        }
-        continue;
-      }
-
-      // CONTINUOUS_LAND: if subtraction produced multiple fragments, keep only the connected one
-      let resultPoly2D;
-      if (CONTINUOUS_LAND && allFragments.length > 1) {
-        const fragAreas = allFragments.map(f => polyArea(f));
-        dlog("CONTINUOUS_LAND", `${victim.name}: subtraction produced ${allFragments.length} fragments`, {
-          areas: fragAreas.map(a => a.toFixed(2))
-        });
-
-        // Determine which fragment the victim is connected to:
-        // 1. Check if the victim's character is physically inside a fragment
-        // 2. If outside all fragments, check which fragment contains trail start
-        // 3. Fallback: keep the largest fragment
-        let keepIdx = -1;
-
-        // Strategy 1: player position inside a fragment
-        for (let fi = 0; fi < allFragments.length; fi++) {
-          if (pointInPoly(victim.pos.x, victim.pos.z, allFragments[fi])) {
-            keepIdx = fi;
-            dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (player inside)`, {
-              area: fragAreas[fi].toFixed(2)
-            });
-            break;
+    // Handle CONTINUOUS_LAND for victims
+    if (CONTINUOUS_LAND && overwritten.size > 0) {
+      for (const victimId of overwritten) {
+        // Find the victim character
+        const victim = this.allCharacters ? this.allCharacters.find(c => c.ownerId === victimId) : null;
+        if (victim) {
+          const cleared = territoryGrid.floodFillConnected(victimId, victim.pos.x, victim.pos.z);
+          if (cleared > 0) {
+            dlog("CONTINUOUS_LAND", `${victim.name}: cleared ${cleared} disconnected cells`);
           }
-        }
-
-        // Strategy 2: trail start point inside a fragment
-        if (keepIdx === -1 && victim.trailVerts.length > 0) {
-          const trailStart = victim.trailVerts[0];
-          for (let fi = 0; fi < allFragments.length; fi++) {
-            if (pointInPoly(trailStart.x, trailStart.z, allFragments[fi])) {
-              keepIdx = fi;
-              dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (trail start inside)`, {
-                area: fragAreas[fi].toFixed(2),
-                trailStart: { x: trailStart.x.toFixed(2), z: trailStart.z.toFixed(2) }
-              });
-              break;
-            }
-          }
-        }
-
-        // Strategy 3: fallback to largest fragment
-        if (keepIdx === -1) {
-          keepIdx = 0;
-          let maxArea = fragAreas[0];
-          for (let fi = 1; fi < allFragments.length; fi++) {
-            if (fragAreas[fi] > maxArea) {
-              maxArea = fragAreas[fi];
-              keepIdx = fi;
-            }
-          }
-          dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${keepIdx} (largest, fallback)`, {
-            area: fragAreas[keepIdx].toFixed(2)
-          });
-        }
-
-        // Calculate total area lost from discarded fragments
-        let discardedArea = 0;
-        for (let fi = 0; fi < allFragments.length; fi++) {
-          if (fi !== keepIdx) discardedArea += fragAreas[fi];
-        }
-        dlog("CONTINUOUS_LAND", `${victim.name}: discarding ${allFragments.length - 1} fragments`, {
-          keptFragment: keepIdx,
-          keptArea: fragAreas[keepIdx].toFixed(2),
-          discardedArea: discardedArea.toFixed(2),
-          totalFragments: allFragments.length
-        });
-
-        resultPoly2D = allFragments[keepIdx];
-      } else {
-        // Single fragment or CONTINUOUS_LAND disabled: use the largest
-        resultPoly2D = allFragments.reduce((best, f) => polyArea(f) > polyArea(best) ? f : best, allFragments[0]);
-      }
-
-      // Clean up result: full pipeline (dedup, spike removal, RDP, protrusion removal, CCW)
-      let cleanResult = cleanPolygon(resultPoly2D);
-
-      // Convert result back to 3D
-      const newVerts3D = cleanResult.map(p => new THREE.Vector3(p.x, 0, p.y));
-
-      // Validate: try triangulating and check area didn't increase
-      const testIdx = triangulate(cleanResult);
-      if (testIdx.length > 0) {
-        const newArea = polyArea(cleanResult);
-        // Safety: subtraction must never INCREASE the victim's area
-        if (newArea > prevArea + 0.1) {
-          dlog("CONQUEST", "REJECTED: subtraction would increase area for " + victim.name, {
-            claimer: this.name,
-            prevArea: prevArea.toFixed(2),
-            newArea: newArea.toFixed(2),
-            areaIncrease: (newArea - prevArea).toFixed(2)
-          });
-        } else {
-          dlog("CONQUEST", "subtracted from " + victim.name, {
-            claimer: this.name,
-            prevArea: prevArea.toFixed(2),
-            newArea: newArea.toFixed(2),
-            areaLost: (prevArea - newArea).toFixed(2),
-            prevVerts: victim.areaVerts.length,
-            newVerts: newVerts3D.length
-          });
-          victim.areaVerts = newVerts3D;
+          victim.territoryDirty = true;
           victim._rebuildAreaMesh();
         }
-      } else {
-        dlog("CONQUEST", "subtraction failed triangulation for " + victim.name, {
-          claimer: this.name,
-          resultVerts: resultPoly2D.length
-        });
+      }
+    } else if (overwritten.size > 0) {
+      // Even without CONTINUOUS_LAND, rebuild overwritten victims' meshes
+      for (const victimId of overwritten) {
+        const victim = this.allCharacters ? this.allCharacters.find(c => c.ownerId === victimId) : null;
+        if (victim) {
+          victim.territoryDirty = true;
+          victim._rebuildAreaMesh();
+        }
       }
     }
+
+    // Rebuild our own mesh
+    this.territoryDirty = true;
+    this._rebuildAreaMesh();
+
+    if (this.isPlayer) {
+      const cellCount = territoryGrid.countCells(this.ownerId);
+      dlog("CLAIM", "SUCCESS (grid)", {
+        cellCount,
+        areaPct: ((cellCount / territoryGrid.totalArenaCells) * 100).toFixed(2),
+        overwritten: [...overwritten]
+      });
+    }
+
+    this._clearTrail();
   }
 
   _clearTrail() {
@@ -1015,6 +800,14 @@ class Character {
   }
 
   die() {
+    territoryGrid.clearOwner(this.ownerId);
+    this.territoryDirty = true;
+    if (this.areaMesh) {
+      this.scene.remove(this.areaMesh);
+      this.areaMesh.geometry.dispose();
+      this.areaMesh = null;
+    }
+    this.contourLoops = [];
     this.alive = false;
     this.respawnTimer = RESPAWN_DELAY;
     this.wasOutside = false;
@@ -1036,7 +829,9 @@ class Character {
     this.botPhase = "idle";
   }
 
-  getAreaPct() { return (polyArea(to2D(this.areaVerts)) / TOTAL_AREA) * 100; }
+  getAreaPct() {
+    return (territoryGrid.countCells(this.ownerId) / territoryGrid.totalArenaCells) * 100;
+  }
 }
 
 // ===================== GAME =====================
@@ -1133,19 +928,26 @@ class Game {
     this.playerName = name;
     this.started = true;
 
+    // Initialize the territory grid
+    territoryGrid.init();
+
     // Create player
     const sp = randomSpawn([]);
     this.player = new Character(this.scene, sp.x, sp.z, COLORS[0], name, true);
+    this.player.ownerId = 1;
     this.characters.push(this.player);
+    this.player._initTerritory();
 
     // Create bots
     for (let i = 0; i < BOT_COUNT; i++) {
       const pos = randomSpawn(this.characters);
       const bot = new Character(this.scene, pos.x, pos.z, COLORS[(i+1) % COLORS.length], BOT_NAMES[i], false);
+      bot.ownerId = i + 2;
       this.characters.push(bot);
+      bot._initTerritory();
     }
 
-    // Give each character a reference to all characters for conquest subtraction
+    // Give each character a reference to all characters
     for (const c of this.characters) {
       c.allCharacters = this.characters;
     }
@@ -1182,7 +984,7 @@ class Game {
       }
     }
 
-    // Bot AI — loop-based territory claiming
+    // Bot AI -- loop-based territory claiming
     for (const c of this.characters) {
       if (c.isPlayer || !c.alive) continue;
 
@@ -1192,7 +994,6 @@ class Game {
           this._planBotLoop(c);
         } catch (e) {
           dlog("BOT_AI", `${c.name} _planBotLoop error: ${e.message}`);
-          // Fallback: wander randomly
           const angle = Math.random() * Math.PI * 2;
           c.botWaypoints = [{ x: c.pos.x + Math.sin(angle) * 5, z: c.pos.z + Math.cos(angle) * 5 }];
         }
@@ -1204,7 +1005,7 @@ class Game {
         const dx = wp.x - c.pos.x, dz = wp.z - c.pos.z;
         const d = Math.sqrt(dx * dx + dz * dz);
         if (d < 1.2) {
-          c.botWaypoints.shift(); // reached waypoint, move to next
+          c.botWaypoints.shift();
         } else {
           c.targetDir.set(dx / d, 0, dz / d);
         }
@@ -1281,8 +1082,9 @@ class Game {
   }
 
   _planBotLoop(bot) {
-    // If territory was fully consumed, bot has no home — just wander toward center
-    if (bot.areaVerts.length < 3) {
+    // If territory was fully consumed, bot has no home -- just wander toward center
+    const cellCount = territoryGrid.countCells(bot.ownerId);
+    if (cellCount === 0) {
       dlog("BOT_AI", `${bot.name} has no territory, wandering toward center`);
       bot.botWaypoints = [
         { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 },
@@ -1291,26 +1093,34 @@ class Game {
       return;
     }
 
-    // Compute territory center
+    // Compute territory center from contour loops
+    const contours = territoryGrid.extractContours(bot.ownerId);
+    if (contours.length === 0) {
+      bot.botWaypoints = [
+        { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 }
+      ];
+      return;
+    }
+    contours.sort((a, b) => polyArea(b) - polyArea(a));
+    const boundary = contours[0];
+
     let cx = 0, cz = 0;
-    for (const v of bot.areaVerts) { cx += v.x; cz += v.z; }
-    cx /= bot.areaVerts.length;
-    cz /= bot.areaVerts.length;
+    for (const v of boundary) { cx += v.x; cz += v.y; }
+    cx /= boundary.length;
+    cz /= boundary.length;
+
+    // Convert boundary to Vector3-like for closestIdx
+    const boundaryV3 = boundary.map(p => ({ x: p.x, z: p.y }));
 
     // Decide: aggro (head toward another player's territory) or normal patrol
     const doAggro = Math.random() < bot.botAggroChance;
     let outAngle;
 
     if (doAggro) {
-      // Find another alive character to target
-      const others = this.characters.filter(o => o !== bot && o.alive && o.areaVerts.length > 0);
+      const others = this.characters.filter(o => o !== bot && o.alive && territoryGrid.countCells(o.ownerId) > 0);
       if (others.length > 0) {
         const target = others[Math.floor(Math.random() * others.length)];
-        let tx = 0, tz = 0;
-        for (const v of target.areaVerts) { tx += v.x; tz += v.z; }
-        tx /= target.areaVerts.length;
-        tz /= target.areaVerts.length;
-        outAngle = Math.atan2(tx - cx, tz - cz);
+        outAngle = Math.atan2(target.pos.x - cx, target.pos.z - cz);
       } else {
         outAngle = Math.random() * Math.PI * 2;
       }
@@ -1319,22 +1129,17 @@ class Game {
     }
 
     // Build a claiming loop: exit boundary -> arc outward -> re-enter boundary
-    // Loop radius determines how far the bot goes out
-    const loopRadius = 5 + Math.random() * 6; // 5-11 units out from boundary
-    const arcSteps = 4 + Math.floor(Math.random() * 3); // 4-6 waypoints in the arc
+    const loopRadius = 5 + Math.random() * 6;
+    const arcSteps = 4 + Math.floor(Math.random() * 3);
 
-    // Find the exit point on boundary (closest to outward direction)
     const exitDir = { x: cx + Math.sin(outAngle) * 50, z: cz + Math.cos(outAngle) * 50 };
-    const exitIdx = closestIdx(bot.areaVerts, exitDir);
-    const exitPt = bot.areaVerts[exitIdx];
+    const exitIdx = closestIdx(boundaryV3, exitDir);
+    const exitPt = boundaryV3[exitIdx];
 
-    // The arc sweeps from one side to the other outside territory
-    // Start angle offset and end angle offset for the arc
-    const arcSpread = (Math.PI * 0.4) + Math.random() * (Math.PI * 0.4); // 72-144 degree arc
+    const arcSpread = (Math.PI * 0.4) + Math.random() * (Math.PI * 0.4);
     const startArcAngle = outAngle - arcSpread / 2;
     const endArcAngle = outAngle + arcSpread / 2;
 
-    // Generate arc waypoints outside territory
     const waypoints = [];
 
     // First: walk to exit point on our boundary
@@ -1344,13 +1149,10 @@ class Game {
     for (let i = 0; i <= arcSteps; i++) {
       const t = i / arcSteps;
       const angle = startArcAngle + (endArcAngle - startArcAngle) * t;
-      // Distance from territory center varies — push out then come back
-      // Minimum push of 2 units ensures waypoints are clearly outside territory
-      const pushOut = 2 + loopRadius * Math.sin(t * Math.PI); // bulge in the middle
+      const pushOut = 2 + loopRadius * Math.sin(t * Math.PI);
       const r = START_RADIUS + pushOut;
       let wx = cx + Math.sin(angle) * r;
       let wz = cz + Math.cos(angle) * r;
-      // Clamp inside arena
       const distFromOrigin = Math.sqrt(wx * wx + wz * wz);
       if (distFromOrigin > ARENA_RADIUS - 1) {
         wx *= (ARENA_RADIUS - 1) / distFromOrigin;
@@ -1359,10 +1161,10 @@ class Game {
       waypoints.push({ x: wx, z: wz });
     }
 
-    // Finally: return to a point on our boundary (near where the arc ends)
+    // Finally: return to a point on our boundary
     const reEntryDir = { x: cx + Math.sin(endArcAngle) * 50, z: cz + Math.cos(endArcAngle) * 50 };
-    const reEntryIdx = closestIdx(bot.areaVerts, reEntryDir);
-    const reEntryPt = bot.areaVerts[reEntryIdx];
+    const reEntryIdx = closestIdx(boundaryV3, reEntryDir);
+    const reEntryPt = boundaryV3[reEntryIdx];
     waypoints.push({ x: reEntryPt.x, z: reEntryPt.z });
 
     // Push toward territory center to ensure we're solidly inside for the claim
