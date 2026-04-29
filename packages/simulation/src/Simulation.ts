@@ -10,6 +10,8 @@ import { TerritoryGrid } from "./TerritoryGrid.js";
 import { updateMovement, isOutOfBounds } from "./MovementSystem.js";
 import { recordTrailPoint, isTrailTooLong, checkTrailCollision } from "./TrailSystem.js";
 import type { TrailHolder } from "./TrailSystem.js";
+import { updateBot, createBotContext, pickBotName } from "./BotAI.js";
+import type { BotContext } from "./BotAI.js";
 
 export interface SimPlayer {
   id: string;
@@ -34,6 +36,7 @@ export interface SimPlayer {
 
 export class Simulation {
   players: Map<string, SimPlayer> = new Map();
+  botContexts: Map<string, BotContext> = new Map();
   territory: TerritoryGrid;
   events: EventBus = new EventBus();
   private nextSlotId = 1;
@@ -85,6 +88,24 @@ export class Simulation {
       this.territory.clearTrail(player.slotId);
       this.players.delete(id);
     }
+    this.botContexts.delete(id);
+  }
+
+  addBot(): SimPlayer {
+    const usedNames = new Set<string>();
+    for (const p of this.players.values()) usedNames.add(p.name);
+    const name = pickBotName(usedNames);
+    const botId = `bot_${this.nextSlotId}`;
+    const player = this.addPlayer(botId, name, true);
+    this.botContexts.set(botId, createBotContext());
+    return player;
+  }
+
+  fillBots(targetCount: number): void {
+    const botCount = Array.from(this.players.values()).filter(p => p.isBot).length;
+    for (let i = botCount; i < targetCount; i++) {
+      this.addBot();
+    }
   }
 
   queueInput(playerId: string, input: PlayerInput): void {
@@ -96,6 +117,15 @@ export class Simulation {
     this.pendingTrailUpdates = [];
 
     this.processInputs();
+
+    // Update bot AI
+    for (const [botId, ctx] of this.botContexts) {
+      const player = this.players.get(botId);
+      if (player) {
+        updateBot(player, ctx, this.territory, this.players, dt);
+      }
+    }
+
     this.updateTimers(dt);
     this.updateMovement(dt);
     this.checkCollisions();
