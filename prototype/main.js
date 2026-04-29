@@ -555,8 +555,27 @@ class Character {
     // Sort loops by area descending: largest is outer boundary, smaller are holes
     this.contourLoops.sort((a, b) => polyArea(b) - polyArea(a));
 
+    const MIN_HOLE_AREA = 0.5; // ignore tiny contour artifacts (< ~200 grid cells)
+
     const outer = this.contourLoops[0];
-    const holes = this.contourLoops.slice(1);
+    const holes = [];
+    for (let i = 1; i < this.contourLoops.length; i++) {
+      const loop = this.contourLoops[i];
+      const area = polyArea(loop);
+      if (area < MIN_HOLE_AREA) continue; // skip tiny artifacts
+
+      // Check winding direction via signed area
+      let signedArea = 0;
+      for (let j = 0; j < loop.length; j++) {
+        const k = (j + 1) % loop.length;
+        signedArea += loop[j].x * loop[k].y - loop[k].x * loop[j].y;
+      }
+      // Only treat as hole if winding is CW (signedArea < 0), opposite to CCW outer
+      // If same winding (CCW, signedArea > 0), it's a disconnected island — skip
+      if (signedArea < 0) {
+        holes.push(loop);
+      }
+    }
 
     // Build flat coords for earcut
     const coords = [];
