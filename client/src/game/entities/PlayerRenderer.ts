@@ -43,7 +43,7 @@ export class PlayerRenderer {
       group.visible = true;
 
       // Game coords: x → three.js x, y → three.js -z
-      group.position.set(player.x, 0.4, -player.y);
+      group.position.set(player.x, 0.8, -player.y);
       group.rotation.y = -player.heading + Math.PI / 2;
 
       // Invulnerability flash
@@ -61,37 +61,37 @@ export class PlayerRenderer {
     const group = new THREE.Group();
 
     // Body
-    const bodyGeom = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+    const bodyGeom = new THREE.BoxGeometry(1.2, 1.2, 1.2);
     const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
     const body = new THREE.Mesh(bodyGeom, bodyMat);
     body.position.y = 0.0;
     group.add(body);
 
     // Head
-    const headGeom = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+    const headGeom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
     const headMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
     const head = new THREE.Mesh(headGeom, headMat);
-    head.position.y = 0.5;
+    head.position.y = 1.0;
     group.add(head);
 
     // Eyes
-    const eyeGeom = new THREE.BoxGeometry(0.08, 0.08, 0.08);
+    const eyeGeom = new THREE.BoxGeometry(0.16, 0.16, 0.16);
     const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const pupilGeom = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+    const pupilGeom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
     const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
-    leftEye.position.set(-0.1, 0.52, 0.22);
+    leftEye.position.set(-0.2, 1.04, 0.44);
     group.add(leftEye);
     const leftPupil = new THREE.Mesh(pupilGeom, pupilMat);
-    leftPupil.position.set(-0.1, 0.52, 0.25);
+    leftPupil.position.set(-0.2, 1.04, 0.5);
     group.add(leftPupil);
 
     const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
-    rightEye.position.set(0.1, 0.52, 0.22);
+    rightEye.position.set(0.2, 1.04, 0.44);
     group.add(rightEye);
     const rightPupil = new THREE.Mesh(pupilGeom, pupilMat);
-    rightPupil.position.set(0.1, 0.52, 0.25);
+    rightPupil.position.set(0.2, 1.04, 0.5);
     group.add(rightPupil);
 
     return group;
@@ -111,7 +111,7 @@ export class PlayerRenderer {
 
     // Project 3D position to screen
     const pos = new THREE.Vector3().copy(group.position);
-    pos.y += 1.2;
+    pos.y += 2.2;
     pos.project(this.camera);
     const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;

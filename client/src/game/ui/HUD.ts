@@ -32,7 +32,6 @@ export class HUD {
 
     // Top-right: leaderboard
     const sorted = Array.from(state.players.values())
-      .filter(p => p.alive)
       .sort((a, b) => b.territoryCount - a.territoryCount)
       .slice(0, 5);
 
