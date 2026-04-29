@@ -1,9 +1,8 @@
-// client/src/game/entities/TrailRenderer.ts
 import * as THREE from "three";
 import type { Vec2 } from "@template/shared";
 
-const TRAIL_WIDTH = 0.4;
-const TRAIL_HEIGHT = 0.15;
+const TRAIL_WIDTH = 1.2;
+const TRAIL_Y = 0.15;
 
 export class TrailRenderer {
   private scene: THREE.Scene;
@@ -26,69 +25,61 @@ export class TrailRenderer {
       return;
     }
 
-    // Get or create material
     let mat = this.materials.get(playerId);
     if (!mat) {
       mat = new THREE.MeshBasicMaterial({
         color,
-        transparent: true,
-        opacity: 0.7,
         side: THREE.DoubleSide,
       });
       this.materials.set(playerId, mat);
     }
 
-    // Build ribbon geometry from trail points
-    // Each segment: 2 triangles forming a quad, extruded perpendicular to the trail direction
+    // Subsample trail for performance (keep every 2nd point, always keep first and last)
+    const sampled = this.subsample(trail, 2);
+
+    // Build flat ribbon from trail points
     const positions: number[] = [];
     const indices: number[] = [];
+    const hw = TRAIL_WIDTH / 2;
 
-    for (let i = 0; i < trail.length; i++) {
-      const p = trail[i];
-      // Compute perpendicular direction
-      let dx = 0, dy = 0;
-      if (i < trail.length - 1) {
-        dx = trail[i + 1].x - p.x;
-        dy = trail[i + 1].y - p.y;
-      } else if (i > 0) {
-        dx = p.x - trail[i - 1].x;
-        dy = p.y - trail[i - 1].y;
+    for (let i = 0; i < sampled.length; i++) {
+      const p = sampled[i];
+
+      // Smooth normal: average direction from both neighbors
+      let dx: number, dy: number;
+      if (i > 0 && i < sampled.length - 1) {
+        dx = sampled[i + 1].x - sampled[i - 1].x;
+        dy = sampled[i + 1].y - sampled[i - 1].y;
+      } else if (i < sampled.length - 1) {
+        dx = sampled[i + 1].x - p.x;
+        dy = sampled[i + 1].y - p.y;
+      } else {
+        dx = p.x - sampled[i - 1].x;
+        dy = p.y - sampled[i - 1].y;
       }
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
       const nx = -dy / len;
       const ny = dx / len;
 
-      // Game y → three.js -z
       const wx = p.x;
       const wz = -p.y;
 
-      // Bottom-left, bottom-right, top-left, top-right of the ribbon cross-section
-      const hw = TRAIL_WIDTH / 2;
+      // Two vertices per point (left and right of ribbon)
       positions.push(
-        wx + nx * hw, 0, wz - ny * hw,            // bottom-left
-        wx - nx * hw, 0, wz + ny * hw,            // bottom-right
-        wx + nx * hw, TRAIL_HEIGHT, wz - ny * hw,  // top-left
-        wx - nx * hw, TRAIL_HEIGHT, wz + ny * hw,  // top-right
+        wx + nx * hw, TRAIL_Y, wz - ny * hw,
+        wx - nx * hw, TRAIL_Y, wz + ny * hw,
       );
 
       if (i > 0) {
-        const base = (i - 1) * 4;
-        const curr = i * 4;
-        // Bottom face
-        indices.push(base, base + 1, curr + 1, base, curr + 1, curr);
-        // Top face
-        indices.push(base + 2, curr + 2, curr + 3, base + 2, curr + 3, base + 3);
-        // Left side
-        indices.push(base, curr, curr + 2, base, curr + 2, base + 2);
-        // Right side
-        indices.push(base + 1, base + 3, curr + 3, base + 1, curr + 3, curr + 1);
+        const prev = (i - 1) * 2;
+        const curr = i * 2;
+        indices.push(prev, prev + 1, curr + 1, prev, curr + 1, curr);
       }
     }
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geom.setIndex(indices);
-    geom.computeVertexNormals();
 
     if (mesh) {
       mesh.geometry.dispose();
@@ -98,6 +89,16 @@ export class TrailRenderer {
       this.scene.add(mesh);
       this.meshes.set(playerId, mesh);
     }
+  }
+
+  private subsample(trail: Vec2[], step: number): Vec2[] {
+    if (trail.length <= 20) return trail;
+    const result: Vec2[] = [trail[0]];
+    for (let i = step; i < trail.length - 1; i += step) {
+      result.push(trail[i]);
+    }
+    result.push(trail[trail.length - 1]);
+    return result;
   }
 
   removeTrail(playerId: string): void {

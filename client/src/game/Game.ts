@@ -16,7 +16,7 @@ export class Game {
 
   constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xe8f4f8);
+    this.scene.background = new THREE.Color(0xf0f0f0);
 
     this.camera = new THREE.PerspectiveCamera(
       50, window.innerWidth / window.innerHeight, 0.1, 200

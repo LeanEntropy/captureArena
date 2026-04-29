@@ -1,5 +1,5 @@
 export const WORLD_RADIUS = 50;
-export const GRID_SIZE = 400;
+export const GRID_SIZE = 1000;
 export const CELL_SIZE = (WORLD_RADIUS * 2) / GRID_SIZE;
 export const SERVER_TICK_RATE = 20;
 export const PLAYER_SPEED = 4.0;
@@ -8,7 +8,7 @@ export const MAX_PLAYERS = 8;
 export const MAX_TRAIL_LENGTH = 2000;
 export const RESPAWN_DELAY = 3.0;
 export const INVULN_DURATION = 2.0;
-export const STARTING_TERRITORY_RADIUS = 20;
+export const STARTING_TERRITORY_RADIUS = 50;
 export const BOT_COUNT = 5;
 export const BOUNDARY_CELL = 255;
 export const UNCLAIMED_CELL = 0;

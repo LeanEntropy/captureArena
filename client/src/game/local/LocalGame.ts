@@ -74,7 +74,9 @@ export class LocalGame {
     }
     store.setPlayers(newPlayers);
 
-    // Sync territory grid
-    store.setTerritoryGrid(this.sim.territory.getFullGridCopy());
+    // Only sync territory grid when it actually changes
+    if (this.sim.pendingTerritoryPatches.length > 0) {
+      store.setTerritoryGrid(this.sim.territory.getFullGridCopy());
+    }
   }
 }
