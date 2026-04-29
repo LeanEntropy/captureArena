@@ -1,53 +1,40 @@
+// client/src/game/local/LocalGame.ts
 import { Simulation } from "@template/simulation";
-import type { SimEntity } from "@template/simulation";
 import {
-  STARTING_RESOURCES,
-  WORLD_SIZE,
-  PlayerCommand,
-  randomRange,
-  MATCH_DURATION,
+  BOT_COUNT, SERVER_TICK_RATE,
 } from "@template/shared";
-import type { PlayerInput } from "@template/shared";
 import { useStore } from "../../store.js";
-import type { ClientEntity, ClientResource, ClientPlayer } from "../../store.js";
+import type { ClientPlayer } from "../../store.js";
 
 export class LocalGame {
   sim: Simulation;
-  private aiTimer = 0;
-  private aiInterval = 2;
+  private tickAccumulator = 0;
+  private tickInterval = 1 / SERVER_TICK_RATE;
 
   constructor() {
     this.sim = new Simulation();
   }
 
-  start() {
-    this.sim.addPlayer("local", STARTING_RESOURCES);
-    this.sim.addPlayer("ai_1", STARTING_RESOURCES);
-    this.sim.spawnResources();
-    this.sim.spawnStartingEntities("local");
-    this.sim.spawnStartingEntities("ai_1");
-
+  start(playerName: string): void {
     const store = useStore.getState();
+
+    // Add human player
+    this.sim.addPlayer("local", playerName);
     store.setPlayerId("local");
-    store.setConnected(true);
-    store.setMatchPhase("playing");
-    store.setMatchDuration(MATCH_DURATION);
+    store.setGameStarted(true);
+    store.setPlayableCells(this.sim.territory.playableCells);
+
+    // Add bots
+    this.sim.fillBots(BOT_COUNT);
 
     this.syncToStore();
   }
 
-  tick(dt: number) {
-    this.sim.tick(dt);
-
-    // AI logic: wander randomly every ~2 seconds
-    this.aiTimer += dt;
-    if (this.aiTimer >= this.aiInterval) {
-      this.aiTimer = 0;
-      this.aiInterval = 1.5 + Math.random() * 1.0;
-      const half = WORLD_SIZE / 2;
-      const x = randomRange(-half + 2, half - 2);
-      const z = randomRange(-half + 2, half - 2);
-      this.sim.queueInput("ai_1", { type: PlayerCommand.Move, x, z });
+  tick(dt: number): void {
+    this.tickAccumulator += dt;
+    while (this.tickAccumulator >= this.tickInterval) {
+      this.sim.tick(this.tickInterval);
+      this.tickAccumulator -= this.tickInterval;
     }
 
     // Flush events
@@ -59,66 +46,35 @@ export class LocalGame {
     this.syncToStore();
   }
 
-  sendCommand(input: PlayerInput) {
-    this.sim.queueInput("local", input);
+  sendHeading(targetHeading: number): void {
+    this.sim.queueInput("local", { targetHeading });
   }
 
-  private syncToStore() {
+  private syncToStore(): void {
     const store = useStore.getState();
-
-    // Sync entities
-    const newEntities = new Map<number, ClientEntity>();
-    const oldEntities = store.entities;
-    for (const [id, e] of this.sim.entities) {
-      if (!e.alive) continue;
-      const old = oldEntities.get(id);
-      newEntities.set(id, {
-        id: e.id,
-        x: e.x,
-        y: e.y,
-        z: e.z,
-        vx: e.vx,
-        vy: e.vy,
-        vz: e.vz,
-        heading: e.heading,
-        hp: e.hp,
-        maxHp: e.maxHp,
-        actionState: e.actionState,
-        ownerId: e.ownerId,
-        size: e.size,
-        prevX: old ? old.x : e.x,
-        prevZ: old ? old.z : e.z,
-        targetX: e.x,
-        targetZ: e.z,
-        interpT: 1,
-      });
-    }
-    store.setEntities(newEntities);
-
-    // Sync resources
-    const newResources = new Map<number, ClientResource>();
-    for (const [id, r] of this.sim.resources) {
-      newResources.set(id, {
-        id: r.id,
-        x: r.x,
-        y: r.y,
-        z: r.z,
-        remaining: r.remaining,
-      });
-    }
-    store.setResources(newResources);
 
     // Sync players
     const newPlayers = new Map<string, ClientPlayer>();
     for (const [id, p] of this.sim.players) {
       newPlayers.set(id, {
         id: p.id,
-        score: p.score,
-        resources: p.resources,
+        slotId: p.slotId,
+        x: p.x,
+        y: p.y,
+        heading: p.heading,
+        alive: p.alive,
+        respawnTimer: p.respawnTimer,
+        invulnTimer: p.invulnTimer,
+        killCount: p.killCount,
+        territoryCount: p.territoryCount,
+        name: p.name,
+        color: p.color,
+        trail: [...p.trail],
       });
     }
     store.setPlayers(newPlayers);
 
-    store.setMatchTime(this.sim.matchTime);
+    // Sync territory grid
+    store.setTerritoryGrid(this.sim.territory.getFullGridCopy());
   }
 }
