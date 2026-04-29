@@ -1,0 +1,20 @@
+// Shared navigation component for companion pages
+// Add new pages to the pages array below
+const pages = [
+  // { href: "example.html", label: "Example Page" },
+];
+
+document.addEventListener("DOMContentLoaded", () => {
+  const navLinks = document.querySelector(".nav-links");
+  if (!navLinks) return;
+
+  for (const page of pages) {
+    const a = document.createElement("a");
+    a.href = page.href;
+    a.textContent = page.label;
+    if (window.location.pathname.endsWith(page.href)) {
+      a.style.color = "#e94560";
+    }
+    navLinks.appendChild(a);
+  }
+});

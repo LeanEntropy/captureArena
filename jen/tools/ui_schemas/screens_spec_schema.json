@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlayDreams Screens Spec",
+  "description": "Defines all screens in a game, their elements, and navigation flow. This is the structural blueprint that maps out what screens exist, what UI elements they contain, and how players navigate between them.",
+  "type": "object",
+  "required": ["game", "viewport", "screens"],
+  "properties": {
+    "game": {
+      "type": "string",
+      "description": "Game identifier (snake_case)"
+    },
+    "version": {
+      "type": "string",
+      "description": "Schema version",
+      "default": "1.0"
+    },
+    "viewport": {
+      "$ref": "#/definitions/viewport"
+    },
+    "screens": {
+      "type": "array",
+      "description": "All screens in the game",
+      "items": {
+        "$ref": "#/definitions/screen"
+      },
+      "minItems": 1
+    },
+    "flow_graph": {
+      "type": "object",
+      "description": "Navigation graph mapping screen_id to array of connected screen_ids",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "viewport": {
+      "type": "object",
+      "description": "Game viewport configuration",
+      "required": ["width", "height", "orientation"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "description": "Viewport width in pixels",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "description": "Viewport height in pixels",
+          "minimum": 1
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["portrait", "landscape"],
+          "description": "Display orientation"
+        },
+        "stretch_mode": {
+          "type": "string",
+          "description": "Godot stretch mode",
+          "default": "canvas_items"
+        }
+      },
+      "additionalProperties": false
+    },
+    "screen": {
+      "type": "object",
+      "description": "A single screen in the game",
+      "required": ["id", "name", "type", "elements"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique screen identifier (snake_case)",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["menu", "overlay", "hud", "dialog", "fullscreen"],
+          "description": "Screen type category"
+        },
+        "parent": {
+          "type": "string",
+          "description": "Parent screen id (for overlays and dialogs that appear on top of another screen)"
+        },
+        "elements": {
+          "type": "array",
+          "description": "UI elements on this screen",
+          "items": {
+            "$ref": "#/definitions/element"
+          }
+        },
+        "transitions": {
+          "type": "object",
+          "description": "Maps element_id to transition definition for navigation",
+          "additionalProperties": {
+            "$ref": "#/definitions/transition"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "element": {
+      "type": "object",
+      "description": "A UI element within a screen",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique element identifier within the screen"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "label",
+            "button",
+            "slider",
+            "toggle",
+            "dropdown",
+            "text_input",
+            "image",
+            "background",
+            "progress_bar",
+            "separator",
+            "container",
+            "icon",
+            "panel",
+            "rich_text",
+            "tab_container",
+            "scroll_container",
+            "item_list"
+          ],
+          "description": "Element type"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text content displayed by this element"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "title",
+            "subtitle",
+            "primary_action",
+            "secondary_action",
+            "nav",
+            "back",
+            "decoration",
+            "info",
+            "input"
+          ],
+          "description": "Semantic role of this element in the screen layout"
+        },
+        "children": {
+          "type": "array",
+          "description": "Child elements (for containers)",
+          "items": {
+            "$ref": "#/definitions/element"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "description": "Screen transition triggered by an element",
+      "required": ["target", "type"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Target screen id"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "fade",
+            "slide_left",
+            "slide_right",
+            "slide_up",
+            "slide_down",
+            "overlay",
+            "close_overlay",
+            "dissolve",
+            "none"
+          ],
+          "description": "Transition animation type"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

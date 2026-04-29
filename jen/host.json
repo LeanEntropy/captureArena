@@ -1,0 +1,9 @@
+{
+  "game_name": "my-game",
+  "engine": "three.js",
+  "host_root": "..",
+  "host_tools_dir": "../tools",
+  "companion_dir": "../tools/companion",
+  "host_docs_dir": "../docs",
+  "installed": "YYYY-MM-DD"
+}

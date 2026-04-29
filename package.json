@@ -1,0 +1,9 @@
+{
+  "name": "my-game",
+  "private": true,
+  "scripts": {
+    "dev:server": "pnpm --filter template-server dev",
+    "dev:client": "pnpm --filter template-client dev",
+    "build": "pnpm -r build"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "template-server",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colyseus/core": "0.16.24",
+    "@colyseus/schema": "^3.0.0",
+    "@colyseus/ws-transport": "^0.16.5",
+    "@template/shared": "workspace:*",
+    "@template/simulation": "workspace:*",
+    "colyseus": "^0.16.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
