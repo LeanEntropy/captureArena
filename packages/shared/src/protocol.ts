@@ -1,55 +1,39 @@
-import type { Vec3 } from "./types.js";
-import type { EventType, PlayerCommand } from "./types.js";
+import type { Vec2 } from "./types.js";
+import type { EventType } from "./types.js";
 
-export interface EntitySnapshot {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  heading: number;
-  hp: number;
-  maxHp: number;
-  actionState: number;
-  ownerId: string;
-  size: number;
-}
-
-export interface ResourceSnapshot {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  remaining: number;
+export interface PlayerInput {
+  targetHeading: number;
 }
 
 export interface GameEvent {
   type: EventType;
-  entityId: number;
-  position: Vec3;
-  playerId?: string;
+  playerId: string;
+  position: Vec2;
+  killerId?: string;
   data?: Record<string, unknown>;
 }
 
-export interface PlayerInput {
-  type: PlayerCommand;
-  x?: number;
-  z?: number;
-  targetId?: number;
-}
-
-export interface PlayerState {
+export interface PlayerSnapshot {
   id: string;
-  score: number;
-  resources: number;
+  slotId: number;
+  x: number;
+  y: number;
+  heading: number;
+  alive: boolean;
+  respawnTimer: number;
+  invulnTimer: number;
+  killCount: number;
+  territoryCount: number;
+  name: string;
+  color: number;
 }
 
-export interface MatchState {
-  version: number;
-  tickRate: number;
-  matchTime: number;
-  matchDuration: number;
-  phase: "waiting" | "playing" | "ended";
+export interface TrailUpdate {
+  playerId: string;
+  trail: Vec2[];
+}
+
+export interface TerritoryPatch {
+  slotId: number;
+  cells: number[];
 }
