@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import polygonClipping from "polygon-clipping";
+import earcut from "earcut";
 
 // ===================== CONSTANTS =====================
 const ARENA_RADIUS = 24.5;
@@ -30,6 +32,7 @@ const BOT_NAMES = ["K-9","Lime","Toe","Leaf Assassin","Helmet Destroyer","Star J
 // ===================== DEBUG LOG =====================
 const DEBUG_LOG = [];
 const DEBUG_MAX = 2000;
+try { localStorage.removeItem("captureArena_debug"); } catch(e) {}
 function dlog(category, msg, data) {
   const entry = { t: performance.now().toFixed(1), cat: category, msg, ...(data || {}) };
   DEBUG_LOG.push(entry);
@@ -38,46 +41,18 @@ function dlog(category, msg, data) {
   try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); } catch(e) {}
 }
 
-// ===================== TRIANGULATOR (Ear Clipping) =====================
+// ===================== TRIANGULATOR (earcut — robust, handles degenerate polygons) =====================
 function triangulate(pts) {
   const n = pts.length;
   if (n < 3) return [];
-  const indices = [];
-  const V = new Array(n);
-  let area = 0;
-  for (let p = n - 1, q = 0; q < n; p = q++) {
-    area += pts[p].x * pts[q].y - pts[q].x * pts[p].y;
+  // Flatten {x, y} array into [x0, y0, x1, y1, ...] for earcut
+  const coords = new Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    coords[i * 2] = pts[i].x;
+    coords[i * 2 + 1] = pts[i].y;
   }
-  for (let v = 0; v < n; v++) V[v] = area > 0 ? v : n - 1 - v;
-  let nv = n, count = 2 * nv, v = nv - 1;
-  while (nv > 2) {
-    if (--count <= 0) break;
-    let u = v; if (nv <= u) u = 0;
-    v = u + 1; if (nv <= v) v = 0;
-    let w = v + 1; if (nv <= w) w = 0;
-    if (snip(pts, u, v, w, nv, V)) {
-      indices.push(V[u], V[v], V[w]);
-      for (let s = v, t = v + 1; t < nv; s++, t++) V[s] = V[t];
-      nv--; count = 2 * nv;
-    }
-  }
-  indices.reverse();
-  return indices;
-}
-function snip(pts, u, v, w, n, V) {
-  const A = pts[V[u]], B = pts[V[v]], C = pts[V[w]];
-  if ((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x) < 1e-10) return false;
-  for (let p = 0; p < n; p++) {
-    if (p === u || p === v || p === w) continue;
-    if (ptInTri(A, B, C, pts[V[p]])) return false;
-  }
-  return true;
-}
-function ptInTri(A, B, C, P) {
-  const d1 = (C.x-B.x)*(P.y-B.y)-(C.y-B.y)*(P.x-B.x);
-  const d2 = (A.x-C.x)*(P.y-C.y)-(A.y-C.y)*(P.x-C.x);
-  const d3 = (B.x-A.x)*(P.y-A.y)-(B.y-A.y)*(P.x-A.x);
-  return !(((d1<0)||(d2<0)||(d3<0)) && ((d1>0)||(d2>0)||(d3>0)));
+  const indices = earcut(coords);
+  return indices.length >= 3 ? indices : [];
 }
 
 // ===================== GEOMETRY HELPERS =====================
@@ -126,257 +101,401 @@ function segmentIntersection(p1, p2, p3, p4) {
   return { x: p1.x + tc * d1x, y: p1.y + tc * d1y, t: tc, u: uc };
 }
 
+// ===================== POLYGON-CLIPPING LIBRARY HELPERS =====================
+// Convert our {x, y} 2D polygon to the library's GeoJSON-style coordinate format:
+// Polygon = [Ring], Ring = [[x,y], [x,y], ...] (closed: first == last)
+function poly2DToGeoJSON(poly2D) {
+  const ring = poly2D.map(p => [p.x, p.y]);
+  // Close the ring (GeoJSON requires first == last)
+  if (ring.length > 0) {
+    const first = ring[0], last = ring[ring.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      ring.push([first[0], first[1]]);
+    }
+  }
+  return [ring]; // Polygon = [outerRing]
+}
+
+// Convert library's MultiPolygon result back to our {x, y} format.
+// Returns the largest polygon (by area) as a flat array of {x, y} points.
+// Also returns all polygons for cases where we need fragments.
+function multiPolyFromGeoJSON(multiPoly) {
+  if (!multiPoly || multiPoly.length === 0) return { largest: [], all: [] };
+
+  const allPolys = [];
+  for (const polygon of multiPoly) {
+    // Each polygon is [outerRing, ...holeRings]. We only use the outer ring.
+    const outerRing = polygon[0];
+    if (!outerRing || outerRing.length < 3) continue;
+    // Convert to {x, y}, dropping the closing duplicate point
+    const pts = [];
+    for (let i = 0; i < outerRing.length; i++) {
+      const p = { x: outerRing[i][0], y: outerRing[i][1] };
+      // Skip closing duplicate
+      if (i === outerRing.length - 1) {
+        const first = pts[0];
+        if (first && Math.abs(p.x - first.x) < 1e-10 && Math.abs(p.y - first.y) < 1e-10) continue;
+      }
+      pts.push(p);
+    }
+    if (pts.length >= 3) allPolys.push(pts);
+  }
+
+  if (allPolys.length === 0) return { largest: [], all: [] };
+
+  // Find the largest polygon by area
+  let bestIdx = 0, bestArea = polyArea(allPolys[0]);
+  for (let i = 1; i < allPolys.length; i++) {
+    const a = polyArea(allPolys[i]);
+    if (a > bestArea) { bestArea = a; bestIdx = i; }
+  }
+
+  return { largest: allPolys[bestIdx], all: allPolys };
+}
+
 function subtractPolygon(victimPoly2D, claimerPoly2D) {
   // Subtract claimerPoly2D from victimPoly2D (victim minus claimer).
   // Returns array of 2D points forming the result polygon, or [] if fully consumed.
-  //
-  // Algorithm: Event-based Weiler-Atherton walk with degenerate filtering,
-  // event rotation for wrap-around, and try-both-directions with area comparison.
+  // Uses the polygon-clipping library (Martinez-Rueda algorithm) for robust boolean ops.
 
-  const vN = victimPoly2D.length;
-  const cN = claimerPoly2D.length;
-  if (vN < 3 || cN < 3) return [];
+  if (victimPoly2D.length < 3 || claimerPoly2D.length < 3) return [];
 
-  // Precompute which victim vertices are inside claimer
-  const insideFlags = victimPoly2D.map(v => pointInPoly(v.x, v.y, claimerPoly2D));
-
-  // If all victim vertices are inside claimer, territory is fully consumed
-  if (insideFlags.every(f => f)) return [];
-
-  // If no victim vertices are inside claimer, check for edge intersections
-  if (insideFlags.every(f => !f)) {
-    let hasIx = false;
-    for (let i = 0; i < vN && !hasIx; i++) {
-      const ni = (i + 1) % vN;
-      for (let j = 0; j < cN; j++) {
-        const nj = (j + 1) % cN;
-        if (segmentIntersection(victimPoly2D[i], victimPoly2D[ni], claimerPoly2D[j], claimerPoly2D[nj])) {
-          hasIx = true; break;
-        }
-      }
-    }
-    if (!hasIx) return victimPoly2D.slice(); // no overlap at all
-  }
-
-  // Find all intersections, filtering degenerate ones at t near 0 or 1
-  const T_EPS = 1e-9;
-  const allIx = [];
-  for (let i = 0; i < vN; i++) {
-    const ni = (i + 1) % vN;
-    for (let j = 0; j < cN; j++) {
-      const nj = (j + 1) % cN;
-      const hit = segmentIntersection(victimPoly2D[i], victimPoly2D[ni], claimerPoly2D[j], claimerPoly2D[nj]);
-      if (hit && hit.t > T_EPS && hit.t < 1 - T_EPS) {
-        // Classify as entering or exiting by testing a point just past the intersection
-        const testT = hit.t + 1e-5;
-        const tx = victimPoly2D[i].x + testT * (victimPoly2D[ni].x - victimPoly2D[i].x);
-        const ty = victimPoly2D[i].y + testT * (victimPoly2D[ni].y - victimPoly2D[i].y);
-        const entering = pointInPoly(tx, ty, claimerPoly2D);
-        allIx.push({ x: hit.x, y: hit.y, vEdge: i, cEdge: j, t: hit.t, u: hit.u, entering });
-      }
-    }
-  }
-
-  // No valid intersections — return based on inside flags
-  if (allIx.length === 0) {
-    const outside = victimPoly2D.filter((v, i) => !insideFlags[i]);
-    return outside.length >= 3 ? outside : [];
-  }
-
-  allIx.sort((a, b) => a.vEdge !== b.vEdge ? a.vEdge - b.vEdge : a.t - b.t);
-
-  // Build result polygon by walking events in a given claimer boundary direction
-  function buildResultWithDir(walkDir) {
-    // Build event list: outside vertices + intersection events, in victim-edge order
-    const events = [];
-    let ixIdx = 0;
-    for (let i = 0; i < vN; i++) {
-      if (!insideFlags[i]) events.push({ type: 'v', x: victimPoly2D[i].x, y: victimPoly2D[i].y });
-      while (ixIdx < allIx.length && allIx[ixIdx].vEdge === i) {
-        events.push({ type: 'ix', ix: allIx[ixIdx] });
-        ixIdx++;
-      }
-    }
-
-    // Find start: first vertex or exit intersection (handles wrap-around)
-    let startIdx = 0;
-    for (let i = 0; i < events.length; i++) {
-      if (events[i].type === 'v') { startIdx = i; break; }
-      if (events[i].type === 'ix' && !events[i].ix.entering) { startIdx = i; break; }
-    }
-
-    const result = [];
-    const N = events.length;
-    let i = 0;
-    while (i < N) {
-      const idx = (startIdx + i) % N;
-      const ev = events[idx];
-      if (ev.type === 'v') {
-        result.push({ x: ev.x, y: ev.y });
-        i++;
-      } else if (ev.type === 'ix') {
-        if (ev.ix.entering) {
-          // Enter claimer: add entry point, walk claimer boundary to next exit
-          result.push({ x: ev.ix.x, y: ev.ix.y });
-          let found = false;
-          for (let j = 1; j < N; j++) {
-            const eidx = (startIdx + i + j) % N;
-            if (events[eidx].type === 'ix' && !events[eidx].ix.entering) {
-              walkBoundary(ev.ix, events[eidx].ix, result, walkDir);
-              result.push({ x: events[eidx].ix.x, y: events[eidx].ix.y });
-              i += j + 1;
-              found = true;
-              break;
-            }
-          }
-          if (!found) i++;
-        } else {
-          // Exit intersection (at start due to wrap-around): add exit point
-          result.push({ x: ev.ix.x, y: ev.ix.y });
-          i++;
-        }
-      } else {
-        i++;
-      }
-    }
-    return result;
-  }
-
-  // Walk claimer boundary from entry to exit intersection
-  function walkBoundary(entry, exit, out, dir) {
-    const ee = entry.cEdge, xe = exit.cEdge;
-    if (dir === 'fwd') {
-      let idx = (ee + 1) % cN, s = 0;
-      while (s++ < cN + 2) {
-        if (idx === (xe + 1) % cN) break;
-        out.push({ x: claimerPoly2D[idx].x, y: claimerPoly2D[idx].y });
-        idx = (idx + 1) % cN;
-      }
-    } else {
-      let idx = ee, s = 0;
-      while (s++ < cN + 2) {
-        if (idx === xe) break;
-        out.push({ x: claimerPoly2D[idx].x, y: claimerPoly2D[idx].y });
-        idx = (idx - 1 + cN) % cN;
-      }
-    }
-  }
-
-  // Deduplicate very close points
-  function dedup(r) {
-    const E = 1e-6, d = [];
-    for (const p of r) {
-      if (d.length === 0) { d.push(p); }
-      else {
-        const l = d[d.length - 1];
-        if (Math.abs(p.x - l.x) > E || Math.abs(p.y - l.y) > E) d.push(p);
-      }
-    }
-    if (d.length > 1) {
-      const f = d[0], l = d[d.length - 1];
-      if (Math.abs(f.x - l.x) < E && Math.abs(f.y - l.y) < E) d.pop();
-    }
-    return d.length >= 3 ? d : [];
-  }
-
-  // Try both walk directions, pick the valid result with correct area
-  const rFwd = dedup(buildResultWithDir('fwd'));
-  const rBwd = dedup(buildResultWithDir('bwd'));
-  const aFwd = rFwd.length >= 3 ? polyArea(rFwd) : Infinity;
-  const aBwd = rBwd.length >= 3 ? polyArea(rBwd) : Infinity;
-  const aVictim = polyArea(victimPoly2D);
-
-  // Correct subtraction result must be smaller than (or equal to) victim
-  const fOk = aFwd <= aVictim * 1.001;
-  const bOk = aBwd <= aVictim * 1.001;
-
-  if (fOk && bOk) {
-    // Both valid — pick the LARGER one (removes less area = less error in edge cases)
-    return aFwd >= aBwd ? rFwd : rBwd;
-  } else if (fOk) return rFwd;
-  else if (bOk) return rBwd;
-  else {
-    // Neither is valid — damage control, pick smaller
-    return aFwd <= aBwd ? rFwd : rBwd;
+  try {
+    const victimGeo = poly2DToGeoJSON(victimPoly2D);
+    const claimerGeo = poly2DToGeoJSON(claimerPoly2D);
+    const result = polygonClipping.difference(victimGeo, claimerGeo);
+    const { largest } = multiPolyFromGeoJSON(result);
+    return largest;
+  } catch (e) {
+    dlog("SUBTRACT", "polygon-clipping difference() threw", { error: e.message });
+    return victimPoly2D.slice(); // fallback: return victim unchanged
   }
 }
 
-// ===================== CONTINUOUS LAND: FRAGMENT SPLITTING =====================
-// When a subtraction creates a self-intersecting polygon, split it into separate
-// polygon loops. This enables CONTINUOUS_LAND mode to discard disconnected pieces.
+// Union two 2D polygons. Returns the merged polygon as {x, y}[] or [] on failure.
+function unionPolygons(polyA2D, polyB2D) {
+  if (polyA2D.length < 3 && polyB2D.length < 3) return [];
+  if (polyA2D.length < 3) return polyB2D.slice();
+  if (polyB2D.length < 3) return polyA2D.slice();
 
-function splitPolygonFragments(poly2D) {
-  // Returns an array of polygon fragments. If no self-intersections, returns [poly2D].
-  // For self-intersecting polygons, splits at intersection points into separate loops.
-  if (!poly2D || poly2D.length < 3) return [];
+  try {
+    const geoA = poly2DToGeoJSON(polyA2D);
+    const geoB = poly2DToGeoJSON(polyB2D);
+    const result = polygonClipping.union(geoA, geoB);
+    const { largest } = multiPolyFromGeoJSON(result);
+    return largest;
+  } catch (e) {
+    dlog("UNION", "polygon-clipping union() threw", { error: e.message });
+    return []; // fallback: return empty (caller should handle)
+  }
+}
 
-  // Find the first self-intersection (non-adjacent edges crossing)
-  const n = poly2D.length;
-  for (let i = 0; i < n; i++) {
-    const ni = (i + 1) % n;
-    const p1 = poly2D[i];
-    const p2 = poly2D[ni];
+// Difference that returns ALL resulting polygons (for CONTINUOUS_LAND fragment splitting)
+function subtractPolygonAll(victimPoly2D, claimerPoly2D) {
+  if (victimPoly2D.length < 3 || claimerPoly2D.length < 3) return [];
 
-    // Check against all non-adjacent edges
-    for (let j = i + 2; j < n; j++) {
-      // Skip the edge that shares a vertex with edge i
-      if (j === n - 1 && i === 0) continue; // last edge wraps to vertex 0
-      const nj = (j + 1) % n;
+  try {
+    const victimGeo = poly2DToGeoJSON(victimPoly2D);
+    const claimerGeo = poly2DToGeoJSON(claimerPoly2D);
+    const result = polygonClipping.difference(victimGeo, claimerGeo);
+    const { all } = multiPolyFromGeoJSON(result);
+    return all;
+  } catch (e) {
+    dlog("SUBTRACT_ALL", "polygon-clipping difference() threw", { error: e.message });
+    return [victimPoly2D.slice()]; // fallback: return victim unchanged as single fragment
+  }
+}
 
-      const hit = segmentIntersection(p1, p2, poly2D[j], poly2D[nj]);
-      if (!hit) continue;
+// DEBUG: expose for testing (comment out in production)
+// window._subtractPolygon = subtractPolygon;
+// window._unionPolygons = unionPolygons;
+// window._polyArea = polyArea;
+// window._pointInPoly = pointInPoly;
 
-      // Skip intersections at exact endpoints (t=0,1 or u=0,1)
-      if ((hit.t < 1e-8 || hit.t > 1 - 1e-8) && (hit.u < 1e-8 || hit.u > 1 - 1e-8)) continue;
+// ===================== POLYGON SIMPLIFICATION =====================
 
-      const ix = { x: hit.x, y: hit.y };
+// --- Ramer-Douglas-Peucker for open polylines ---
+function _pointToSegmentDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-12) {
+    const ex = p.x - a.x, ey = p.y - a.y;
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = a.x + t * dx, projY = a.y + t * dy;
+  const ex = p.x - projX, ey = p.y - projY;
+  return Math.sqrt(ex * ex + ey * ey);
+}
 
-      // Split into two loops at this crossing point.
-      //
-      // Original polygon: v0, v1, ..., v_i, [ix], v_{i+1}, ..., v_j, [ix], v_{j+1}, ..., v_{n-1}
-      //
-      // Loop A: ix, v_{i+1}, v_{i+2}, ..., v_j, ix
-      //   = vertices from index (i+1) to j, bookended by the intersection point
-      //
-      // Loop B: ix, v_{j+1}, v_{j+2}, ..., v_{n-1}, v_0, v_1, ..., v_i, ix
-      //   = vertices from index (j+1) wrapping around to i, bookended by the intersection point
+function _rdpSimplify(points, epsilon, start, end) {
+  if (end - start < 2) return [points[start], points[end]];
+  let maxDist = 0, maxIdx = start;
+  const a = points[start], b = points[end];
+  for (let i = start + 1; i < end; i++) {
+    const d = _pointToSegmentDist(points[i], a, b);
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist > epsilon) {
+    const left = _rdpSimplify(points, epsilon, start, maxIdx);
+    const right = _rdpSimplify(points, epsilon, maxIdx, end);
+    return left.slice(0, -1).concat(right);
+  }
+  return [a, b];
+}
 
-      const loopA = [ix];
-      for (let k = (i + 1) % n; ; k = (k + 1) % n) {
-        loopA.push({ x: poly2D[k].x, y: poly2D[k].y });
-        if (k === j) break;
-      }
+// RDP for closed polygons: try multiple "seam" positions, pick the one that
+// produces the best result (avoids artifacts from a single fixed seam).
+function simplifyRDP(poly, epsilon) {
+  if (poly.length <= 4) return poly;
 
-      const loopB = [ix];
-      for (let k = (j + 1) % n; ; k = (k + 1) % n) {
-        loopB.push({ x: poly2D[k].x, y: poly2D[k].y });
-        if (k === i) break;
-      }
-
-      // Filter out degenerate fragments (< 3 vertices or near-zero area)
-      const MIN_FRAG_AREA = 0.1;
-      const results = [];
-
-      for (const loop of [loopA, loopB]) {
-        if (loop.length < 3) continue;
-        const area = polyArea(loop);
-        if (area < MIN_FRAG_AREA) continue;
-
-        // Recursively check each sub-loop for further self-intersections
-        const subFragments = splitPolygonFragments(loop);
-        for (const frag of subFragments) {
-          if (frag.length >= 3 && polyArea(frag) >= MIN_FRAG_AREA) {
-            results.push(frag);
-          }
-        }
-      }
-
-      return results.length > 0 ? results : [poly2D];
-    }
+  // For small polygons just use single-seam RDP
+  if (poly.length <= 20) {
+    const open = poly.concat([poly[0]]);
+    const simplified = _rdpSimplify(open, epsilon, 0, open.length - 1);
+    // Remove closing duplicate
+    if (simplified.length > 1) simplified.pop();
+    return simplified.length >= 3 ? simplified : poly;
   }
 
-  // No self-intersections found — this polygon is a single fragment
-  return [poly2D];
+  // For larger polygons, try 3 seam positions and pick the one with fewest vertices
+  // (they all respect the epsilon tolerance, so fewer = cleaner)
+  const n = poly.length;
+  let best = poly;
+  const seams = [0, Math.floor(n / 3), Math.floor(2 * n / 3)];
+  for (const seam of seams) {
+    // Rotate polygon so seam is at index 0
+    const rotated = poly.slice(seam).concat(poly.slice(0, seam));
+    const open = rotated.concat([rotated[0]]);
+    const simplified = _rdpSimplify(open, epsilon, 0, open.length - 1);
+    if (simplified.length > 1) simplified.pop();
+    if (simplified.length >= 3 && simplified.length < best.length) {
+      best = simplified;
+    }
+  }
+  return best;
+}
+
+// Remove near-duplicate vertices (vertices too close together)
+function deduplicatePolygon(verts, minDist) {
+    if (verts.length < 3) return verts;
+    const minDistSq = minDist * minDist;
+    const result = [verts[0]];
+    for (let i = 1; i < verts.length; i++) {
+        const prev = result[result.length - 1];
+        const dx = verts[i].x - prev.x, dy = verts[i].y - prev.y;
+        if (dx * dx + dy * dy >= minDistSq) {
+            result.push(verts[i]);
+        }
+    }
+    // Check last vs first
+    if (result.length > 1) {
+        const first = result[0], last = result[result.length - 1];
+        const dx = last.x - first.x, dy = last.y - first.y;
+        if (dx * dx + dy * dy < minDistSq) result.pop();
+    }
+    return result.length >= 3 ? result : verts;
+}
+
+// Remove spike patterns: three consecutive vertices A-B-C where B creates a
+// near-zero-area triangle but B is far from the AC line (thin spike).
+// Also catches backtracking edges where the polygon doubles back on itself.
+function removeSpikes(poly, areaThreshold = 0.08, minEdgeLen = 0.15) {
+    if (poly.length <= 4) return poly;
+    const minEdgeSq = minEdgeLen * minEdgeLen;
+    let changed = true;
+    let result = poly.slice();
+
+    // Iterate until stable (spikes can be nested)
+    for (let pass = 0; pass < 3 && changed; pass++) {
+        changed = false;
+        const cleaned = [];
+        const n = result.length;
+        const remove = new Uint8Array(n);
+
+        for (let i = 0; i < n; i++) {
+            const prev = result[(i - 1 + n) % n];
+            const curr = result[i];
+            const next = result[(i + 1) % n];
+
+            // Triangle area of prev-curr-next
+            const triArea = Math.abs(
+                (next.x - prev.x) * (curr.y - prev.y) -
+                (next.y - prev.y) * (curr.x - prev.x)
+            ) * 0.5;
+
+            // Edge lengths squared
+            const d_prev_curr_sq = (curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2;
+            const d_curr_next_sq = (next.x - curr.x) ** 2 + (next.y - curr.y) ** 2;
+
+            // Spike check: tiny area triangle, meaning curr is either:
+            // 1. Collinear with prev-next (harmless but redundant), or
+            // 2. A thin spike extending out and back
+            if (triArea < areaThreshold) {
+                // Check that at least one of the edges is short enough to be a spike
+                // (not just a long collinear segment we want to keep as a simplification point)
+                const d_prev_next_sq = (next.x - prev.x) ** 2 + (next.y - prev.y) ** 2;
+                const maxEdge = Math.max(d_prev_curr_sq, d_curr_next_sq);
+                const baseLen = Math.sqrt(d_prev_next_sq);
+
+                // If the "spike height" (area * 2 / base) is tiny, remove
+                if (baseLen > 1e-6) {
+                    const spikeHeight = (triArea * 2) / baseLen;
+                    if (spikeHeight < 0.15) {
+                        remove[i] = 1;
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+
+            // Micro-edge check: very short edge to next vertex
+            if (d_curr_next_sq < minEdgeSq) {
+                // Keep the vertex that's farther from the previous kept vertex
+                // (skip this one, next one will be evaluated fresh)
+                remove[i] = 1;
+                changed = true;
+            }
+        }
+
+        for (let i = 0; i < n; i++) {
+            if (!remove[i]) cleaned.push(result[i]);
+        }
+        result = cleaned.length >= 3 ? cleaned : result;
+    }
+    return result;
+}
+
+// Remove thin protrusions: detect narrow "bridge" patterns where the polygon
+// nearly touches itself, creating a thin strip. We find pairs of non-adjacent
+// vertices that are very close, and if the polygon path between them encloses
+// very little area, we shortcut across them.
+function removeThinProtrusions(poly, widthThreshold = 0.4, minProtrusionVerts = 3) {
+    if (poly.length <= 8) return poly;
+    const n = poly.length;
+    const widthSq = widthThreshold * widthThreshold;
+
+    // Find pairs of non-adjacent vertices that are close together
+    for (let i = 0; i < n; i++) {
+        for (let j = i + minProtrusionVerts; j < n; j++) {
+            // Skip adjacent pairs (including wrap-around)
+            if (j === i + 1 || (i === 0 && j === n - 1)) continue;
+
+            const dx = poly[i].x - poly[j].x;
+            const dy = poly[i].y - poly[j].y;
+            if (dx * dx + dy * dy > widthSq) continue;
+
+            // Found a close pair. Check if the path between them (the shorter arc)
+            // forms a thin protrusion (very small area relative to its perimeter).
+            const arcLen = j - i;
+            const otherArcLen = n - arcLen;
+
+            // Pick the shorter arc as the potential protrusion
+            let protStart, protEnd, protLen;
+            if (arcLen <= otherArcLen) {
+                protStart = i; protEnd = j; protLen = arcLen;
+            } else {
+                protStart = j; protEnd = i; protLen = otherArcLen;
+            }
+
+            if (protLen < minProtrusionVerts || protLen > n / 2) continue;
+
+            // Calculate the area of the protrusion arc
+            let protArea = 0;
+            for (let k = 0; k < protLen; k++) {
+                const ci = (protStart + k) % n;
+                const ni = (protStart + k + 1) % n;
+                protArea += poly[ci].x * poly[ni].y - poly[ni].x * poly[ci].y;
+            }
+            protArea = Math.abs(protArea) * 0.5;
+
+            // Calculate perimeter of the protrusion
+            let perim = 0;
+            for (let k = 0; k < protLen; k++) {
+                const ci = (protStart + k) % n;
+                const ni = (protStart + k + 1) % n;
+                const ex = poly[ni].x - poly[ci].x, ey = poly[ni].y - poly[ci].y;
+                perim += Math.sqrt(ex * ex + ey * ey);
+            }
+
+            // Thin protrusion test: area is very small relative to perimeter squared
+            // (a circle has area/perim^2 ~ 0.08, a thin strip has ~ 0)
+            if (perim > 0 && protArea / (perim * perim) < 0.01) {
+                // Remove the protrusion: keep the main body, skip the thin arc
+                // Midpoint of the close pair replaces the protrusion
+                const mid = {
+                    x: (poly[i].x + poly[j].x) * 0.5,
+                    y: (poly[i].y + poly[j].y) * 0.5
+                };
+
+                let result;
+                if (arcLen <= otherArcLen) {
+                    // Remove indices i+1 to j-1, replace with midpoint
+                    result = [];
+                    for (let k = j; k !== i; k = (k + 1) % n) {
+                        result.push(poly[k]);
+                    }
+                    result.push(mid);
+                } else {
+                    // Remove indices j+1 to i-1, replace with midpoint
+                    result = [];
+                    for (let k = i; k !== j; k = (k + 1) % n) {
+                        result.push(poly[k]);
+                    }
+                    result.push(mid);
+                }
+
+                if (result.length >= 3) {
+                    // Recurse: there might be more protrusions
+                    return removeThinProtrusions(result, widthThreshold, minProtrusionVerts);
+                }
+            }
+        }
+    }
+    return poly;
+}
+
+// Full polygon cleanup pipeline: dedup -> remove spikes -> RDP -> remove protrusions -> ensure CCW
+function cleanPolygon(poly2D) {
+    if (poly2D.length < 3) return poly2D;
+
+    let result = poly2D;
+
+    // 1. Deduplicate very close vertices
+    result = deduplicatePolygon(result, MIN_POINT_DIST * 0.5);
+
+    // 2. Remove spikes and near-degenerate triangles
+    result = removeSpikes(result, 0.08, MIN_POINT_DIST * 0.5);
+
+    // 3. RDP simplification (epsilon = 0.12 — small enough to preserve shape, large enough to clean noise)
+    result = simplifyRDP(result, 0.12);
+
+    // 4. Remove thin protrusions (near-zero-width bridges)
+    result = removeThinProtrusions(result, 0.5, 3);
+
+    // 5. Final dedup pass (RDP/protrusion removal can create new near-duplicates)
+    result = deduplicatePolygon(result, MIN_POINT_DIST);
+
+    // 6. Ensure consistent winding
+    ensureCCW(result);
+
+    return result;
+}
+
+// Ensure polygon has consistent CCW winding order (2D)
+function ensureCCW(poly2D) {
+    if (poly2D.length < 3) return poly2D;
+    let area = 0;
+    for (let i = 0; i < poly2D.length; i++) {
+        const j = (i + 1) % poly2D.length;
+        area += poly2D[i].x * poly2D[j].y - poly2D[j].x * poly2D[i].y;
+    }
+    if (area < 0) {
+        // CW winding — reverse to CCW
+        poly2D.reverse();
+    }
+    return poly2D;
 }
 
 function randomSpawn(characters) {
@@ -385,13 +504,14 @@ function randomSpawn(characters) {
     const r = ARENA_RADIUS * (0.2 + Math.random() * 0.5);
     const x = Math.cos(angle) * r, z = Math.sin(angle) * r;
     let ok = true;
+    // Reject spawn near any alive character
     for (const c of characters) {
       if (c.alive && dist2D({x,z}, c.pos) < 10) { ok = false; break; }
     }
+    // Reject spawn inside ANY character's territory (alive or dead)
     if (ok) {
-      // Reject spawn if inside any alive character's territory
       for (const c of characters) {
-        if (c.alive && c.areaVerts.length >= 3 && pointInPoly(x, z, to2D(c.areaVerts))) {
+        if (c.areaVerts.length >= 3 && pointInPoly(x, z, to2D(c.areaVerts))) {
           ok = false;
           break;
         }
@@ -479,7 +599,17 @@ class Character {
   _rebuildAreaMesh() {
     if (this.areaMesh) { this.scene.remove(this.areaMesh); this.areaMesh.geometry.dispose(); this.areaMesh = null; }
     if (this.areaVerts.length < 3) return;
-    const pts2D = to2D(this.areaVerts);
+
+    // Pre-triangulation cleanup: ensure vertices are clean before rendering
+    let pts2D = to2D(this.areaVerts);
+    pts2D = cleanPolygon(pts2D);
+    if (pts2D.length < 3) return;
+
+    // Sync cleaned vertices back to areaVerts (keeps vertex count manageable)
+    if (pts2D.length !== this.areaVerts.length) {
+      this.areaVerts = pts2D.map(p => new THREE.Vector3(p.x, 0, p.y));
+    }
+
     const idx = triangulate(pts2D);
     if (idx.length === 0) return;
     const pos = new Float32Array(this.areaVerts.length * 3);
@@ -598,129 +728,111 @@ class Character {
     const av = this.areaVerts, trail = this.trailVerts;
     const prevArea = polyArea(to2D(av));
     const prevVertCount = av.length;
-    const si = closestIdx(av, trail[0]);
-    const ei = closestIdx(av, trail[trail.length - 1]);
-
-    const trailStartDist = dist2D(av[si], trail[0]);
-    const trailEndDist = dist2D(av[ei], trail[trail.length - 1]);
 
     if (this.isPlayer) {
-      dlog("CLAIM", "starting claim", {
+      dlog("CLAIM", "starting claim (union method)", {
         prevVertCount, prevArea: prevArea.toFixed(2),
         trailLen: trail.length,
-        si, ei, avLen: av.length,
-        trailStartDist: trailStartDist.toFixed(3),
-        trailEndDist: trailEndDist.toFixed(3),
         trailStart: `${trail[0].x.toFixed(2)},${trail[0].z.toFixed(2)}`,
-        trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`,
-        closestToStart: `${av[si].x.toFixed(2)},${av[si].z.toFixed(2)}`,
-        closestToEnd: `${av[ei].x.toFixed(2)},${av[ei].z.toFixed(2)}`
+        trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`
       });
     }
 
-    // Build two candidate polygons for the merged territory.
+    // Build a trail polygon by closing the trail loop through the territory boundary.
     // The trail starts near boundary vertex si and ends near boundary vertex ei.
-    //
-    // When si != ei:
-    //   Candidate A: boundary arc (ei→si, CW) + trail forward
-    //   Candidate B: boundary arc (si→ei, CW) + trail reversed
-    //   Pick whichever has the larger area (that one includes old territory + bulge).
-    //
-    // When si == ei:
-    //   The trail forms a closed loop anchored at one boundary point.
-    //   Insert the trail into the boundary at that point to create the union.
-    //   We try both trail orientations and pick the larger.
+    // We connect trail end -> boundary arc -> trail start to form a closed polygon,
+    // then union it with the existing territory.
+    const si = closestIdx(av, trail[0]);
+    const ei = closestIdx(av, trail[trail.length - 1]);
 
-    let candA, candB;
-
+    // Build trail polygon: trail points + boundary arc from ei back to si
+    let trailPoly;
     if (si === ei) {
-      // Insert trail into boundary at position si.
-      // Candidate A: boundary[0..si] + trail forward + boundary[si+1..end]
-      candA = [];
-      for (let k = 0; k <= si; k++) candA.push(av[k].clone());
-      for (const t of trail) candA.push(t.clone());
-      for (let k = si + 1; k < av.length; k++) candA.push(av[k].clone());
-
-      // Candidate B: boundary[0..si] + trail reversed + boundary[si+1..end]
-      candB = [];
-      for (let k = 0; k <= si; k++) candB.push(av[k].clone());
-      for (let j = trail.length - 1; j >= 0; j--) candB.push(trail[j].clone());
-      for (let k = si + 1; k < av.length; k++) candB.push(av[k].clone());
+      // Trail forms a loop anchored at one boundary point — just close the trail itself
+      trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
     } else {
-      // Arc A: ei → si walking forward
-      const arcA = [];
+      // Two possible arcs to connect the trail ends through boundary: pick the shorter one
+      const arcFwd = []; // ei -> ei+1 -> ... -> si
       for (let i = ei; ; i = (i + 1) % av.length) {
-        arcA.push(av[i].clone());
+        arcFwd.push({ x: av[i].x, y: av[i].z });
         if (i === si) break;
-        if (arcA.length > av.length) break;
+        if (arcFwd.length > av.length) break;
       }
-      // Arc B: si → ei walking forward
-      const arcB = [];
-      for (let i = si; ; i = (i + 1) % av.length) {
-        arcB.push(av[i].clone());
-        if (i === ei) break;
-        if (arcB.length > av.length) break;
+      const arcBwd = []; // ei -> ei-1 -> ... -> si
+      for (let i = ei; ; i = (i - 1 + av.length) % av.length) {
+        arcBwd.push({ x: av[i].x, y: av[i].z });
+        if (i === si) break;
+        if (arcBwd.length > av.length) break;
       }
+      // Use the shorter arc
+      const arc = arcFwd.length <= arcBwd.length ? arcFwd : arcBwd;
 
-      // Candidate A: arcA + trail forward
-      candA = [...arcA];
-      for (const t of trail) candA.push(t.clone());
-
-      // Candidate B: arcB + trail reversed
-      candB = [...arcB];
-      for (let j = trail.length - 1; j >= 0; j--) candB.push(trail[j].clone());
+      // Trail polygon: trail forward + arc from ei back to si
+      trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
+      // Add arc points (skipping first since it duplicates trail end, and last since it duplicates trail start)
+      for (let i = 1; i < arc.length - 1; i++) {
+        trailPoly.push(arc[i]);
+      }
     }
 
-    const areaA = polyArea(to2D(candA)), areaB = polyArea(to2D(candB));
-    const chosen = areaA > areaB ? "A" : "B";
-    const newVerts = areaA > areaB ? candA : candB;
-    const newArea = Math.max(areaA, areaB);
+    if (trailPoly.length < 3) {
+      if (this.isPlayer) dlog("CLAIM", "aborted: trail polygon too small", { trailPolyLen: trailPoly.length });
+      this._clearTrail();
+      return;
+    }
 
-    // Safety: never shrink territory. If both candidates are smaller, abort.
-    if (newArea < prevArea) {
+    // Union the trail polygon with existing territory using polygon-clipping library
+    const existingPoly2D = to2D(av);
+    const unionResult = unionPolygons(existingPoly2D, trailPoly);
+
+    if (unionResult.length < 3) {
       if (this.isPlayer) {
-        dlog("CLAIM", "ABORTED: would shrink territory", {
-          prevArea: prevArea.toFixed(2), bestCandArea: newArea.toFixed(2),
-          candAArea: areaA.toFixed(2), candBArea: areaB.toFixed(2),
-          chosen, si, ei
+        dlog("CLAIM", "FAILED: union produced empty result", {
+          existingVerts: existingPoly2D.length,
+          trailPolyVerts: trailPoly.length
         });
       }
       this._clearTrail();
       return;
     }
 
-    if (this.isPlayer) {
-      dlog("CLAIM", "polygon options", {
-        candAVerts: candA.length, candAArea: areaA.toFixed(2),
-        candBVerts: candB.length, candBArea: areaB.toFixed(2),
-        chosen,
-        arcA_ei_to_si: candA.length - trail.length,
-        arcB_si_to_ei: candB.length - trail.length
-      });
+    const newArea = polyArea(unionResult);
+
+    // Safety: never shrink territory
+    if (newArea < prevArea - 0.1) {
+      if (this.isPlayer) {
+        dlog("CLAIM", "ABORTED: union would shrink territory", {
+          prevArea: prevArea.toFixed(2), newArea: newArea.toFixed(2)
+        });
+      }
+      this._clearTrail();
+      return;
     }
 
+    // Clean up: full pipeline (dedup, spike removal, RDP, protrusion removal, CCW)
+    let cleanPoly2D = cleanPolygon(unionResult);
+
     // Validate: try triangulating before committing
-    const testIdx = triangulate(to2D(newVerts));
+    const testIdx = triangulate(cleanPoly2D);
     if (testIdx.length > 0) {
-      this.areaVerts = newVerts;
+      this.areaVerts = cleanPoly2D.map(p => new THREE.Vector3(p.x, 0, p.y));
       this._rebuildAreaMesh();
       if (CONQUEST_MODE === "REPLACE_OWNER") {
         this._subtractFromOthers();
       }
+      const finalArea = polyArea(to2D(this.areaVerts));
       if (this.isPlayer) {
-        dlog("CLAIM", "SUCCESS", {
-          newVertCount: newVerts.length, newArea: newArea.toFixed(2),
-          areaChange: (newArea - prevArea).toFixed(2),
+        dlog("CLAIM", "SUCCESS (union)", {
+          newVertCount: this.areaVerts.length, newArea: finalArea.toFixed(2),
+          areaChange: (finalArea - prevArea).toFixed(2),
           triangles: testIdx.length / 3,
-          areaGrew: newArea > prevArea
+          areaGrew: finalArea > prevArea
         });
       }
     } else {
       if (this.isPlayer) {
-        dlog("CLAIM", "FAILED triangulation", {
-          newVertCount: newVerts.length, chosen,
-          candATriTest: triangulate(to2D(candA)).length,
-          candBTriTest: triangulate(to2D(candB)).length
+        dlog("CLAIM", "FAILED triangulation after union", {
+          unionVerts: cleanPoly2D.length
         });
       }
     }
@@ -766,9 +878,11 @@ class Character {
       if (!hasOverlap) continue;
 
       const prevArea = polyArea(victimPoly2D);
-      const resultPoly2D = subtractPolygon(victimPoly2D, claimerPoly2D);
 
-      if (resultPoly2D.length < 3) {
+      // Use subtractPolygonAll to get ALL fragments (the library handles this natively)
+      const allFragments = subtractPolygonAll(victimPoly2D, claimerPoly2D);
+
+      if (allFragments.length === 0 || allFragments.every(f => f.length < 3)) {
         // Victim's territory is fully consumed
         dlog("CONQUEST", "fully consumed " + victim.name, {
           claimer: this.name,
@@ -783,15 +897,91 @@ class Character {
         continue;
       }
 
+      // CONTINUOUS_LAND: if subtraction produced multiple fragments, keep only the connected one
+      let resultPoly2D;
+      if (CONTINUOUS_LAND && allFragments.length > 1) {
+        const fragAreas = allFragments.map(f => polyArea(f));
+        dlog("CONTINUOUS_LAND", `${victim.name}: subtraction produced ${allFragments.length} fragments`, {
+          areas: fragAreas.map(a => a.toFixed(2))
+        });
+
+        // Determine which fragment the victim is connected to:
+        // 1. Check if the victim's character is physically inside a fragment
+        // 2. If outside all fragments, check which fragment contains trail start
+        // 3. Fallback: keep the largest fragment
+        let keepIdx = -1;
+
+        // Strategy 1: player position inside a fragment
+        for (let fi = 0; fi < allFragments.length; fi++) {
+          if (pointInPoly(victim.pos.x, victim.pos.z, allFragments[fi])) {
+            keepIdx = fi;
+            dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (player inside)`, {
+              area: fragAreas[fi].toFixed(2)
+            });
+            break;
+          }
+        }
+
+        // Strategy 2: trail start point inside a fragment
+        if (keepIdx === -1 && victim.trailVerts.length > 0) {
+          const trailStart = victim.trailVerts[0];
+          for (let fi = 0; fi < allFragments.length; fi++) {
+            if (pointInPoly(trailStart.x, trailStart.z, allFragments[fi])) {
+              keepIdx = fi;
+              dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (trail start inside)`, {
+                area: fragAreas[fi].toFixed(2),
+                trailStart: { x: trailStart.x.toFixed(2), z: trailStart.z.toFixed(2) }
+              });
+              break;
+            }
+          }
+        }
+
+        // Strategy 3: fallback to largest fragment
+        if (keepIdx === -1) {
+          keepIdx = 0;
+          let maxArea = fragAreas[0];
+          for (let fi = 1; fi < allFragments.length; fi++) {
+            if (fragAreas[fi] > maxArea) {
+              maxArea = fragAreas[fi];
+              keepIdx = fi;
+            }
+          }
+          dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${keepIdx} (largest, fallback)`, {
+            area: fragAreas[keepIdx].toFixed(2)
+          });
+        }
+
+        // Calculate total area lost from discarded fragments
+        let discardedArea = 0;
+        for (let fi = 0; fi < allFragments.length; fi++) {
+          if (fi !== keepIdx) discardedArea += fragAreas[fi];
+        }
+        dlog("CONTINUOUS_LAND", `${victim.name}: discarding ${allFragments.length - 1} fragments`, {
+          keptFragment: keepIdx,
+          keptArea: fragAreas[keepIdx].toFixed(2),
+          discardedArea: discardedArea.toFixed(2),
+          totalFragments: allFragments.length
+        });
+
+        resultPoly2D = allFragments[keepIdx];
+      } else {
+        // Single fragment or CONTINUOUS_LAND disabled: use the largest
+        resultPoly2D = allFragments.reduce((best, f) => polyArea(f) > polyArea(best) ? f : best, allFragments[0]);
+      }
+
+      // Clean up result: full pipeline (dedup, spike removal, RDP, protrusion removal, CCW)
+      let cleanResult = cleanPolygon(resultPoly2D);
+
       // Convert result back to 3D
-      const newVerts3D = resultPoly2D.map(p => new THREE.Vector3(p.x, 0, p.y));
+      const newVerts3D = cleanResult.map(p => new THREE.Vector3(p.x, 0, p.y));
 
       // Validate: try triangulating and check area didn't increase
-      const testIdx = triangulate(resultPoly2D);
+      const testIdx = triangulate(cleanResult);
       if (testIdx.length > 0) {
-        const newArea = polyArea(resultPoly2D);
+        const newArea = polyArea(cleanResult);
         // Safety: subtraction must never INCREASE the victim's area
-        if (newArea > prevArea * 1.01) {
+        if (newArea > prevArea + 0.1) {
           dlog("CONQUEST", "REJECTED: subtraction would increase area for " + victim.name, {
             claimer: this.name,
             prevArea: prevArea.toFixed(2),
@@ -815,84 +1005,6 @@ class Character {
           claimer: this.name,
           resultVerts: resultPoly2D.length
         });
-      }
-
-      // CONTINUOUS_LAND: detect and discard disconnected fragments after subtraction
-      if (CONTINUOUS_LAND && victim.areaVerts.length >= 3) {
-        const fragPoly2D = to2D(victim.areaVerts);
-        const fragments = splitPolygonFragments(fragPoly2D);
-
-        if (fragments.length > 1) {
-          const fragAreas = fragments.map(f => polyArea(f));
-          dlog("CONTINUOUS_LAND", `${victim.name}: subtraction produced ${fragments.length} fragments`, {
-            areas: fragAreas.map(a => a.toFixed(2))
-          });
-
-          // Determine which fragment the victim is connected to:
-          // 1. Check if the victim's character is physically inside a fragment
-          // 2. If outside all fragments (capturing via trail), check which fragment
-          //    contains the first trail point (where they exited territory)
-          // 3. Fallback: keep the largest fragment
-          let keepIdx = -1;
-
-          // Strategy 1: player position inside a fragment
-          for (let fi = 0; fi < fragments.length; fi++) {
-            if (pointInPoly(victim.pos.x, victim.pos.z, fragments[fi])) {
-              keepIdx = fi;
-              dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (player inside)`, {
-                area: fragAreas[fi].toFixed(2)
-              });
-              break;
-            }
-          }
-
-          // Strategy 2: trail start point inside a fragment
-          if (keepIdx === -1 && victim.trailVerts.length > 0) {
-            const trailStart = victim.trailVerts[0];
-            for (let fi = 0; fi < fragments.length; fi++) {
-              if (pointInPoly(trailStart.x, trailStart.z, fragments[fi])) {
-                keepIdx = fi;
-                dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${fi} (trail start inside)`, {
-                  area: fragAreas[fi].toFixed(2),
-                  trailStart: { x: trailStart.x.toFixed(2), z: trailStart.z.toFixed(2) }
-                });
-                break;
-              }
-            }
-          }
-
-          // Strategy 3: fallback to largest fragment
-          if (keepIdx === -1) {
-            keepIdx = 0;
-            let maxArea = fragAreas[0];
-            for (let fi = 1; fi < fragments.length; fi++) {
-              if (fragAreas[fi] > maxArea) {
-                maxArea = fragAreas[fi];
-                keepIdx = fi;
-              }
-            }
-            dlog("CONTINUOUS_LAND", `${victim.name}: keeping fragment ${keepIdx} (largest, fallback)`, {
-              area: fragAreas[keepIdx].toFixed(2)
-            });
-          }
-
-          // Calculate total area lost from discarded fragments
-          let discardedArea = 0;
-          for (let fi = 0; fi < fragments.length; fi++) {
-            if (fi !== keepIdx) discardedArea += fragAreas[fi];
-          }
-          dlog("CONTINUOUS_LAND", `${victim.name}: discarding ${fragments.length - 1} fragments`, {
-            keptFragment: keepIdx,
-            keptArea: fragAreas[keepIdx].toFixed(2),
-            discardedArea: discardedArea.toFixed(2),
-            totalFragments: fragments.length
-          });
-
-          // Apply: set victim's territory to the kept fragment
-          const keptFrag = fragments[keepIdx];
-          victim.areaVerts = keptFrag.map(p => new THREE.Vector3(p.x, 0, p.y));
-          victim._rebuildAreaMesh();
-        }
       }
     }
   }

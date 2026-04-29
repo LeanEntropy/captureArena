@@ -8,8 +8,14 @@ _(observe and fill)_
 
 ## Art taste
 
-_(observe and fill — see `ART_ETHOS.md` for starting principles)_
+- **Strongly prefers angular/boxy geometry** over rounded/organic forms. Rejected capsule/sphere character bodies in v1.
+- References Paper.io 2 skins (voxel animal characters) and Crossy Road as the target aesthetic.
+- Wants "Angry Birds but blocky" -- character charm from proportions and face expressions on flat surfaces, not from rounded geometry.
+- BoxGeometry only in Three.js. No SphereGeometry, CylinderGeometry, or CapsuleGeometry.
+- Prioritizes readability at game scale over close-up detail.
 
 ## Recurring preferences
 
-_(link to `memory/halls/preferences/` entries as they accumulate)_
+- Boxes and ultra-low-poly structures over smooth/rounded shapes.
+- Sharp 90-degree edges. No curves.
+- Paper.io 2 / Crossy Road as north-star references for character style.

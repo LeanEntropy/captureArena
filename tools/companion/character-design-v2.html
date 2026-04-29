@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Character Design v2 -- Box Characters -- Capture Arena</title>
+  <link rel="stylesheet" href="shared/style.css">
+  <style>
+    .section-header {
+      margin-top: 48px;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #0f3460;
+    }
+    .section-header h2 {
+      font-size: 22px;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .section-header p {
+      color: #8888aa;
+      font-size: 14px;
+    }
+
+    .intro-hero {
+      background: linear-gradient(135deg, #16213e 0%, #1a1a2e 50%, #0f3460 100%);
+      border: 1px solid #0f3460;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 40px;
+    }
+    .intro-hero h2 { color: #e94560; margin-bottom: 8px; font-size: 20px; }
+    .intro-hero p { color: #c0c0d8; line-height: 1.7; font-size: 15px; max-width: 860px; }
+    .intro-hero ul { color: #a0a0c0; margin: 12px 0 0 20px; line-height: 1.8; font-size: 14px; }
+
+    .canvas-panel {
+      background: #111827;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .canvas-panel canvas {
+      display: block;
+      width: 100%;
+      image-rendering: auto;
+    }
+    .canvas-caption {
+      padding: 12px 16px;
+      background: #16213e;
+      font-size: 13px;
+      color: #8888aa;
+      line-height: 1.5;
+    }
+    .canvas-caption strong { color: #e94560; }
+
+    .comparison-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 800px) {
+      .comparison-row { grid-template-columns: 1fr; }
+    }
+    .comparison-label {
+      text-align: center;
+      padding: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e94560;
+      background: #16213e;
+      border-radius: 0 0 8px 8px;
+    }
+
+    .callout {
+      background: #1c2a4a;
+      border-left: 4px solid #e94560;
+      padding: 16px 20px;
+      margin: 24px 0;
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+      color: #c0c0d8;
+      line-height: 1.6;
+    }
+    .callout strong { color: #e94560; }
+
+    .three-up {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .three-up { grid-template-columns: 1fr; }
+    }
+
+    .four-up {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .four-up { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .rec-card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .rec-card h4 {
+      color: #e94560;
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+    .rec-card p {
+      color: #a0a0c0;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .rec-card .priority {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+    .rec-card .priority.high { background: #e9456033; color: #e94560; }
+    .rec-card .priority.med { background: #ff980033; color: #FF9800; }
+    .rec-card .priority.low { background: #4caf5033; color: #4CAF50; }
+
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .diff-table th {
+      text-align: left;
+      padding: 10px 16px;
+      background: #0f3460;
+      color: #e94560;
+      font-weight: 600;
+      border-bottom: 1px solid #1a3a6e;
+    }
+    .diff-table td {
+      padding: 10px 16px;
+      border-bottom: 1px solid #1a2a4a;
+      color: #c0c0d8;
+    }
+    .diff-table tr:hover td { background: #1c2a4a; }
+
+    .code-block {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 16px;
+      margin: 12px 0;
+      font-family: 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      color: #c9d1d9;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.5;
+    }
+
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .color-card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .color-swatch {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .color-swatch .label {
+      font-weight: 700;
+      font-size: 14px;
+      color: #000;
+      text-shadow: 0 0 4px rgba(255,255,255,0.5);
+    }
+    .color-swatch .hex {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: rgba(0,0,0,0.5);
+      background: rgba(255,255,255,0.3);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .color-details {
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #a0a0c0;
+      line-height: 1.5;
+    }
+    .color-details .role { color: #e94560; font-weight: 600; }
+
+    /* Three.js scene grid layouts */
+    .scene-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+    .scene-cell {
+      position: relative;
+    }
+    .scene-cell canvas {
+      display: block;
+      border-radius: 6px;
+    }
+    .scene-cell .scene-label {
+      position: absolute;
+      bottom: 6px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 11px;
+      color: #aaa;
+      font-weight: 600;
+      pointer-events: none;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    }
+    .scene-cell .scene-sublabel {
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 10px;
+      color: #666;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <nav id="topnav">
+    <a href="index.html" class="nav-brand">my-game</a>
+    <div class="nav-links"></div>
+  </nav>
+
+  <main class="container">
+    <h1>Character Design v2 -- Box Characters</h1>
+    <p class="subtitle">Paper.io 2 / Crossy Road inspired blocky character system. Live interactive Three.js scenes. Director feedback: keep everything angular. Authored by Jen, 2026-04-29.</p>
+
+    <!-- INTRO -->
+    <div class="intro-hero">
+      <h2>Director Feedback Applied</h2>
+      <p>
+        The v1 proposal recommended capsule/sphere bodies. The Director rejected this in favor of a fully box-based aesthetic
+        inspired by <strong>Paper.io 2 skins</strong> (voxel animals) and <strong>Crossy Road</strong> characters.
+        All geometry must be BoxGeometry -- no spheres, cylinders, or rounded shapes whatsoever.
+      </p>
+      <p style="margin-top:12px;">
+        This page presents the revised character design system: box-based bodies with expressive flat-surface faces,
+        personality through proportions and color, and the same team differentiation system adapted for angular characters.
+        All visuals below are <strong>live Three.js scenes</strong> with auto-rotation -- drag to rotate manually.
+      </p>
+      <ul>
+        <li><strong>Geometry constraint:</strong> BoxGeometry only. No SphereGeometry, CylinderGeometry, or CapsuleGeometry.</li>
+        <li><strong>Reference games:</strong> Paper.io 2 skins, Crossy Road, Angry Birds blocky fan art</li>
+        <li><strong>Charm source:</strong> Proportions + face expressions on flat surfaces + bold color</li>
+        <li><strong>Camera angle:</strong> ~60-degree top-down perspective, ~20 units above ground</li>
+        <li><strong>Max players:</strong> 8 simultaneous, each with a distinct color</li>
+      </ul>
+    </div>
+
+    <!-- SECTION 1: REFERENCE ANALYSIS -->
+    <div class="section-header">
+      <h2>1. Reference Style Analysis</h2>
+      <p>What makes Paper.io 2 and Crossy Road characters work, and how we adapt it.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="ref-analysis-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Key principles from reference games.</strong>
+        Paper.io 2 skins and Crossy Road characters share common traits: oversized heads relative to body,
+        flat-surface facial features, sharp 90-degree edges only, and personality via proportions rather than detail.
+        All geometry is axis-aligned boxes -- curves are approximated by stacking smaller boxes (but we avoid even that
+        for our game-scale characters where simplicity wins).
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Why boxes work for this game:</strong> At game camera distance (~20 units up), characters are 6-15 pixels
+      on screen. Rounded forms and sharp boxes look identical at that scale. The box aesthetic gives us:
+      (1) cheaper geometry, (2) clearer silhouettes from the top-down angle, (3) a style identity that matches
+      the grid-based territory system. The charm lives in close-up moments -- kill cams, menus, lobby -- where
+      facial expressions and proportions become visible.
+    </div>
+
+    <!-- SECTION 2: CHARACTER ANATOMY VARIANTS -->
+    <div class="section-header">
+      <h2>2. Box Character Variants</h2>
+      <p>Four body proportion archetypes, all built from BoxGeometry. Each has distinct personality through shape ratios alone.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="char-variants-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Four proportion archetypes.</strong>
+        (A) Chunky -- wide body, big head, Crossy Road chicken vibe. Default player shape.
+        (B) Tall -- narrow body, smaller head, more vertical. Possible future skin.
+        (C) Squat -- short and wide, big face. Angry Birds "bomb" proportions.
+        (D) Chibi -- huge head, tiny body. Maximum face readability at distance.
+        All use the same BoxGeometry primitives, just different dimensions.
+      </div>
+    </div>
+
+    <!-- SECTION 3: FACE EXPRESSIONS -->
+    <div class="section-header">
+      <h2>3. Expressive Faces on Flat Surfaces</h2>
+      <p>Eyes, eyebrows, and mouth built as flat BoxGeometry on the front face of the head. No textures needed.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="face-expressions-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Face expression system.</strong>
+        All facial features are flat BoxGeometry quads on the front face of the head box.
+        Eyes are white boxes with black box pupils. Eyebrows are thin dark boxes above eyes.
+        Mouth is a simple flat box. Expressions change by adjusting eyebrow angle, eye shape, and mouth position.
+        At game scale these are invisible, but they sell personality in close-ups and UI.
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Implementation approach:</strong> Faces can be done two ways:
+      (1) <strong>Geometry decals</strong> -- flat BoxGeometry quads positioned on the head front face. Simple, no textures needed, but more draw calls.
+      (2) <strong>Canvas texture</strong> -- draw face onto a canvas, apply as texture to head front face. One material, zero extra geometry.
+      Recommendation: start with geometry decals (current eye system but bigger), migrate to canvas textures if performance matters.
+    </div>
+
+    <!-- SECTION 4: CURRENT vs PROPOSED -->
+    <div class="section-header">
+      <h2>4. Current Design vs. Proposed</h2>
+      <p>Side-by-side comparison. Both are box-based -- the proposed version adds proportional charm and face expressiveness.</p>
+    </div>
+
+    <div class="comparison-row">
+      <div>
+        <div class="canvas-panel">
+          <div id="char-current-container" style="display:flex;justify-content:center;padding:10px;"></div>
+          <div class="comparison-label">Current Design</div>
+        </div>
+      </div>
+      <div>
+        <div class="canvas-panel">
+          <div id="char-proposed-container" style="display:flex;justify-content:center;padding:10px;"></div>
+          <div class="comparison-label">Proposed "Chunky Box" Design</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 5: ALL 8 COLORS -->
+    <div class="section-header">
+      <h2>5. All 8 Player Colors -- Box Design</h2>
+      <p>The proposed chunky box character in all 8 palette colors at medium zoom.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="color-lineup-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Full color lineup.</strong> Each character reads as a distinct color even at this medium scale.
+        The lighter head provides contrast against the dominant body color.
+        Shadow box beneath grounds each character on the plane.
+      </div>
+    </div>
+
+    <!-- SECTION 6: GAME-SCALE READABILITY -->
+    <div class="section-header">
+      <h2>6. Game-Scale Readability Test</h2>
+      <p>Characters at actual game camera distance. The real test -- can you tell them apart?</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div id="game-scale-container" style="display:flex;justify-content:center;padding:10px;"></div>
+      <div class="canvas-caption">
+        <strong>Simulated game view.</strong> Eight players at game camera distance on the white arena with colored territory patches.
+        At this scale, characters are roughly 6-10 pixels wide. Color is the primary identification system.
+        The overhead pointer (local player) and shadow box beneath are the only details that read at this zoom.
+        Box silhouette matches the grid-based territory aesthetic.
+      </div>
+    </div>
+
+    <!-- SECTION 7: SAME-TEAM DIFFERENTIATION -->
+    <div class="section-header">
+      <h2>7. Same-Team Differentiation (Adapted for Box Characters)</h2>
+      <p>The differentiation system from v1, now applied to box characters. Pointer, ground marker all work identically.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="team-diff-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Four teammates in the same blue.</strong>
+        The local player (leftmost) has: overhead diamond pointer (box rotated 45 degrees), and a flat ground marker (square box, not ring).
+        Teammates share the same base mesh. The pointer is the strongest "that is me" signal.
+      </div>
+    </div>
+
+    <table class="diff-table">
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Technique</th>
+          <th>Priority</th>
+          <th>Reads at Distance?</th>
+          <th>Box-Style Implementation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>Overhead diamond pointer (white, bobbing)</td>
+          <td style="color:#e94560;font-weight:600;">MUST HAVE</td>
+          <td>Yes -- always visible above all geometry</td>
+          <td>BoxGeometry(0.3, 0.3, 0.3) rotated 45deg, local player only</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>Name label pill background</td>
+          <td style="color:#e94560;font-weight:600;">MUST HAVE</td>
+          <td>Yes -- text always readable</td>
+          <td>CSS change in updateLabel(), local vs other</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>Ground marker (flat square)</td>
+          <td style="color:#F39C12;font-weight:600;">NICE TO HAVE</td>
+          <td>Yes -- visible at medium range</td>
+          <td>PlaneGeometry beneath local player, pulsing opacity</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- SECTION 8: TERRITORY HARMONY -->
+    <div class="section-header">
+      <h2>8. Territory Color Harmony</h2>
+      <p>Box characters standing on their own colored territory at 35% opacity.</p>
+    </div>
+
+    <div class="canvas-panel">
+      <div class="scene-row" id="territory-harmony-row" style="padding: 20px;"></div>
+      <div class="canvas-caption">
+        <strong>Character-on-territory contrast test.</strong> Each character standing on their own territory fill.
+        The shadow box and face detail provide necessary separation from the background color.
+        Box shapes harmonize naturally with the grid-based territory rendering.
+      </div>
+    </div>
+
+    <!-- SECTION 9: IMPLEMENTATION -->
+    <div class="section-header">
+      <h2>9. Implementation Plan</h2>
+      <p>Prioritized changes to PlayerRenderer.ts -- all using BoxGeometry.</p>
+    </div>
+
+    <div class="three-up">
+      <div class="rec-card">
+        <h4>Proportion Rework</h4>
+        <p>
+          Adjust body and head BoxGeometry dimensions for the "chunky" archetype:
+          Body 1.0 x 0.9 x 0.8 (wider, shorter).
+          Head 0.85 x 0.75 x 0.75 (bigger relative to body).
+          Head sits directly on body (no gap).
+          ~10 minutes, zero new geometry types.
+        </p>
+        <span class="priority high">HIGH PRIORITY</span>
+      </div>
+      <div class="rec-card">
+        <h4>Bigger Face Features</h4>
+        <p>
+          Scale up existing eye boxes from 0.16 to 0.22.
+          Add flat eyebrow rectangles (0.2 x 0.06 x 0.02) above each eye.
+          Optional: small mouth rectangle.
+          All BoxGeometry. ~15 minutes.
+        </p>
+        <span class="priority high">HIGH PRIORITY</span>
+      </div>
+      <div class="rec-card">
+        <h4>Diamond Overhead Pointer</h4>
+        <p>
+          BoxGeometry(0.3, 0.3, 0.3) rotated 45 degrees on Y and Z axes
+          to create a diamond shape. White MeshBasicMaterial. Bobbing Y animation.
+          Local player only. ~10 minutes.
+        </p>
+        <span class="priority high">HIGH PRIORITY</span>
+      </div>
+      <div class="rec-card">
+        <h4>Shadow Box</h4>
+        <p>
+          Flat BoxGeometry(1.4, 0.02, 1.0) beneath each player at Y=0.01.
+          Black MeshBasicMaterial with opacity 0.12. Grounds the character
+          and provides separation from territory. ~5 minutes.
+        </p>
+        <span class="priority med">MEDIUM PRIORITY</span>
+      </div>
+      <div class="rec-card">
+        <h4>Head Color Variation</h4>
+        <p>
+          Make head material slightly lighter than body (lighten by 15%).
+          Creates visual separation between body and head without new geometry.
+          One line in createPlayerMesh(). ~2 minutes.
+        </p>
+        <span class="priority med">MEDIUM PRIORITY</span>
+      </div>
+      <div class="rec-card">
+        <h4>Future: Skin System</h4>
+        <p>
+          Paper.io 2 / Crossy Road style unlock skins.
+          Box-based animal variants (pig, chicken, robot, etc.)
+          using additional BoxGeometry parts for ears, snout, etc.
+          Post-launch feature -- proportions + face system first.
+        </p>
+        <span class="priority low">STRETCH</span>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:32px;">
+      <strong>Three.js code reference:</strong> The current PlayerRenderer.ts already uses BoxGeometry for body (1.2, 1.2, 1.2),
+      head (0.9, 0.9, 0.9), and eyes (0.16, 0.16, 0.16). The proposed changes modify only the dimensions and add a few more
+      BoxGeometry primitives -- no new geometry types needed. Total implementation: ~45 minutes.
+    </div>
+
+    <!-- SECTION 10: CODE SNIPPET -->
+    <div class="section-header">
+      <h2>10. Reference Code -- createCharacter()</h2>
+      <p>Shared character constructor used on this page and reusable in the game. BoxGeometry only.</p>
+    </div>
+
+    <div class="code-block">function createCharacter(options) {
+  // options: { color, bodyWidth, bodyHeight, bodyDepth, headWidth, headHeight,
+  //            headDepth, expression, showPointer, showGroundMarker, showShadow }
+  const group = new THREE.Group();
+  const c = new THREE.Color(options.color);
+
+  // Body -- chunky box
+  const bodyGeom = new THREE.BoxGeometry(
+    options.bodyWidth  || 1.0,
+    options.bodyHeight || 0.9,
+    options.bodyDepth  || 0.8
+  );
+  const bodyMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 });
+  const body = new THREE.Mesh(bodyGeom, bodyMat);
+  group.add(body);
+
+  // Head -- slightly lighter color
+  const headColor = c.clone().lerp(new THREE.Color(0xffffff), 0.12);
+  const headGeom = new THREE.BoxGeometry(
+    options.headWidth  || 0.85,
+    options.headHeight || 0.75,
+    options.headDepth  || 0.75
+  );
+  const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: 0.45 });
+  const head = new THREE.Mesh(headGeom, headMat);
+  head.position.y = (options.bodyHeight || 0.9) / 2 + (options.headHeight || 0.75) / 2;
+  group.add(head);
+
+  // Eyes, eyebrows, mouth -- flat boxes on front face of head
+  addFace(group, head, options.expression || 'neutral');
+
+  // Diamond pointer (local player)
+  if (options.showPointer) {
+    const ptr = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.3, 0.3),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    ptr.rotation.set(0, Math.PI / 4, Math.PI / 4);
+    ptr.position.y = head.position.y + (options.headHeight || 0.75) / 2 + 0.5;
+    group.add(ptr);
+  }
+
+  // Ground marker (flat square)
+  if (options.showGroundMarker) {
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.02, 1.2),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.25
+      })
+    );
+    marker.position.y = -(options.bodyHeight || 0.9) / 2 - 0.01;
+    group.add(marker);
+  }
+
+  // Shadow box beneath
+  if (options.showShadow !== false) {
+    const shadow = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 0.02, 1.0),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.12
+      })
+    );
+    shadow.position.y = -(options.bodyHeight || 0.9) / 2 - 0.01;
+    group.add(shadow);
+  }
+
+  return group;
+}</div>
+
+  </main>
+
+  <footer>
+    <p>Capture Arena Art Direction Companion -- Jen (Art Director) -- v2 Box Characters</p>
+  </footer>
+
+  <script src="shared/nav.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module">
+    // ===============================================================
+    // CHARACTER DESIGN v2 -- RENDER-TO-IMAGE APPROACH
+    // ===============================================================
+    // FIX: The old code created 35 mini-scenes and rendered all of them
+    // every frame via a single shared WebGLRenderer + 2D canvas blit.
+    // While this used only 1 WebGL context, the constant setSize() calls
+    // (reallocating framebuffers 35x per frame) and missing
+    // preserveDrawingBuffer caused blank canvases and context loss.
+    //
+    // NEW APPROACH: Render-to-image.
+    // 1. ONE WebGLRenderer with preserveDrawingBuffer: true
+    // 2. Each scene is rendered ONCE at multiple rotation angles
+    // 3. Output captured as <img> via toDataURL()
+    // 4. Drag-to-rotate: renders a strip of frames at init, then
+    //    swaps which frame is visible based on drag position
+    // 5. Auto-rotation: CSS animation cycling through pre-rendered frames
+    // 6. Result: 0 WebGL contexts at runtime (renderer disposed after init)
+    // ===============================================================
+
+    import * as THREE from 'three';
+
+    const COLORS = [
+      { hex: '#4CAF50', name: 'Green',  three: 0x4CAF50 },
+      { hex: '#2196F3', name: 'Blue',   three: 0x2196F3 },
+      { hex: '#FF9800', name: 'Orange', three: 0xFF9800 },
+      { hex: '#E91E63', name: 'Pink',   three: 0xE91E63 },
+      { hex: '#9C27B0', name: 'Purple', three: 0x9C27B0 },
+      { hex: '#00897B', name: 'Teal',   three: 0x00897B },
+      { hex: '#F9A825', name: 'Amber',  three: 0xF9A825 },
+      { hex: '#D84315', name: 'Rust',   three: 0xD84315 },
+    ];
+
+    const EXPRESSIONS = ['neutral', 'happy', 'angry', 'surprised', 'smug'];
+
+    // Number of rotation frames to pre-render for interactive scenes.
+    // More frames = smoother rotation but longer init. 24 is a good balance.
+    const ROTATION_FRAMES = 24; // every 15 degrees
+    // Fewer frames for small thumbnails (color lineup, territory harmony)
+    const ROTATION_FRAMES_SMALL = 16;
+    // Auto-rotation speed: ms per frame
+    const AUTO_ROTATE_MS = 140;
+
+    // ================================================================
+    // SINGLE RENDERER -- created once, used during init, then disposed
+    // ================================================================
+
+    let renderer = null;
+
+    function getRenderer() {
+      if (!renderer) {
+        renderer = new THREE.WebGLRenderer({
+          antialias: true,
+          alpha: false,
+          preserveDrawingBuffer: true,
+        });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = false;
+      }
+      return renderer;
+    }
+
+    function disposeRenderer() {
+      if (renderer) {
+        renderer.dispose();
+        renderer.forceContextLoss();
+        renderer = null;
+      }
+    }
+
+    // ================================================================
+    // SCENE SETUP HELPER -- creates scene + camera + lighting
+    // Returns { scene, camera, pivot } -- no renderer, no canvas
+    // ================================================================
+
+    function createSceneSetup(width, height, options = {}) {
+      const {
+        bgColor = 0x111827,
+        cameraY = 2.5,
+        cameraZ = 4.0,
+        cameraFov = 35,
+        lookAtY = 0.4,
+      } = options;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(bgColor);
+
+      const camera = new THREE.PerspectiveCamera(cameraFov, width / height, 0.1, 100);
+      camera.position.set(0, cameraY, cameraZ);
+      camera.lookAt(0, lookAtY, 0);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+      scene.add(ambient);
+
+      const directional = new THREE.DirectionalLight(0xffffff, 0.6);
+      directional.position.set(3, 5, 4);
+      scene.add(directional);
+
+      const pivot = new THREE.Group();
+      scene.add(pivot);
+
+      return { scene, camera, pivot };
+    }
+
+    // ================================================================
+    // RENDER-TO-IMAGE: renders a scene at N rotation angles, returns
+    // an array of data-URL strings (or a single one if frames === 1)
+    // ================================================================
+
+    function renderToImages(setup, width, height, frames = 1) {
+      const r = getRenderer();
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      const w = Math.round(width * dpr);
+      const h = Math.round(height * dpr);
+      r.setSize(w, h, false);
+      r.setViewport(0, 0, w, h);
+
+      const urls = [];
+      for (let i = 0; i < frames; i++) {
+        const angle = (i / frames) * Math.PI * 2;
+        setup.pivot.rotation.y = angle;
+        r.render(setup.scene, setup.camera);
+        urls.push(r.domElement.toDataURL('image/png'));
+      }
+      return urls;
+    }
+
+    // ================================================================
+    // INTERACTIVE IMAGE VIEWER
+    // Creates an <img> element with drag-to-rotate using pre-rendered
+    // frames, and optional auto-rotation via a JS interval.
+    // ================================================================
+
+    function createInteractiveViewer(urls, width, height, options = {}) {
+      const { autoRotate = true } = options;
+
+      const container = document.createElement('div');
+      container.style.position = 'relative';
+      container.style.width = width + 'px';
+      container.style.height = height + 'px';
+      container.style.overflow = 'hidden';
+      container.style.cursor = 'grab';
+
+      const img = document.createElement('img');
+      img.src = urls[0];
+      img.width = width;
+      img.height = height;
+      img.style.display = 'block';
+      img.style.borderRadius = '6px';
+      img.draggable = false;
+      container.appendChild(img);
+
+      let currentFrame = 0;
+      let isDragging = false;
+      let prevX = 0;
+      let dragAccum = 0;
+      let autoInterval = null;
+
+      function showFrame(idx) {
+        const f = ((idx % urls.length) + urls.length) % urls.length;
+        currentFrame = f;
+        img.src = urls[f];
+      }
+
+      // Auto-rotation
+      if (autoRotate && urls.length > 1) {
+        autoInterval = setInterval(() => {
+          if (!isDragging) {
+            showFrame(currentFrame + 1);
+          }
+        }, AUTO_ROTATE_MS);
+      }
+
+      // Drag-to-rotate
+      if (urls.length > 1) {
+        container.addEventListener('pointerdown', (e) => {
+          isDragging = true;
+          prevX = e.clientX;
+          dragAccum = 0;
+          container.style.cursor = 'grabbing';
+          container.setPointerCapture(e.pointerId);
+        });
+
+        container.addEventListener('pointermove', (e) => {
+          if (!isDragging) return;
+          const dx = e.clientX - prevX;
+          prevX = e.clientX;
+          dragAccum += dx;
+          // Every ~10px of drag = 1 frame
+          const frameDelta = Math.round(dragAccum / 10);
+          if (frameDelta !== 0) {
+            showFrame(currentFrame + frameDelta);
+            dragAccum -= frameDelta * 10;
+          }
+        });
+
+        container.addEventListener('pointerup', (e) => {
+          isDragging = false;
+          container.style.cursor = 'grab';
+          container.releasePointerCapture(e.pointerId);
+        });
+      }
+
+      // Pause auto-rotate when off-screen for performance
+      if (autoRotate && urls.length > 1) {
+        const observer = new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              if (!autoInterval) {
+                autoInterval = setInterval(() => {
+                  if (!isDragging) showFrame(currentFrame + 1);
+                }, AUTO_ROTATE_MS);
+              }
+            } else {
+              if (autoInterval) {
+                clearInterval(autoInterval);
+                autoInterval = null;
+              }
+            }
+          }
+        }, { threshold: 0.1 });
+        observer.observe(container);
+      }
+
+      return container;
+    }
+
+    // ================================================================
+    // STATIC IMAGE -- render once, return <img>
+    // ================================================================
+
+    function renderStaticImage(setup, width, height, pivotAngle = 0.4) {
+      setup.pivot.rotation.y = pivotAngle;
+      const urls = renderToImages(setup, width, height, 1);
+      const img = document.createElement('img');
+      img.src = urls[0];
+      img.width = width;
+      img.height = height;
+      img.style.display = 'block';
+      img.style.borderRadius = '6px';
+      return img;
+    }
+
+    // ================================================================
+    // SHARED CHARACTER BUILDER -- createCharacter(options)
+    // Reusable function: both this page and the game can use it.
+    // All geometry is BoxGeometry. No spheres/cylinders/capsules.
+    // ================================================================
+
+    function createCharacter(options = {}) {
+      const {
+        color = 0x4CAF50,
+        bodyWidth = 1.0,
+        bodyHeight = 0.9,
+        bodyDepth = 0.8,
+        headWidth = 0.85,
+        headHeight = 0.75,
+        headDepth = 0.75,
+        expression = 'neutral',
+        showPointer = false,
+        showGroundMarker = false,
+        showShadow = true,
+      } = options;
+
+      const group = new THREE.Group();
+      const c = new THREE.Color(color);
+
+      // -- Body --
+      const bodyGeom = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyDepth);
+      const bodyMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 });
+      const body = new THREE.Mesh(bodyGeom, bodyMat);
+      group.add(body);
+
+      // -- Head (slightly lighter) --
+      const headColor = c.clone().lerp(new THREE.Color(0xffffff), 0.12);
+      const headGeom = new THREE.BoxGeometry(headWidth, headHeight, headDepth);
+      const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: 0.45 });
+      const head = new THREE.Mesh(headGeom, headMat);
+      head.position.y = bodyHeight / 2 + headHeight / 2;
+      group.add(head);
+
+      // -- Face features (flat boxes on front face of head) --
+      addFace(group, head, expression, headWidth, headHeight, headDepth);
+
+      // -- Diamond pointer (local player marker) --
+      if (showPointer) {
+        const ptrGeom = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        const ptrMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const ptr = new THREE.Mesh(ptrGeom, ptrMat);
+        ptr.rotation.set(0, Math.PI / 4, Math.PI / 4);
+        ptr.position.y = head.position.y + headHeight / 2 + 0.5;
+        ptr.userData.isPointer = true;
+        group.add(ptr);
+      }
+
+      // -- Ground marker (flat square, local player) --
+      if (showGroundMarker) {
+        const markerGeom = new THREE.BoxGeometry(1.6, 0.02, 1.2);
+        const markerMat = new THREE.MeshBasicMaterial({
+          color: 0xffffff, transparent: true, opacity: 0.25
+        });
+        const marker = new THREE.Mesh(markerGeom, markerMat);
+        marker.position.y = -bodyHeight / 2 - 0.01;
+        group.add(marker);
+      }
+
+      // -- Shadow box beneath --
+      if (showShadow) {
+        const shadowGeom = new THREE.BoxGeometry(1.4, 0.02, 1.0);
+        const shadowMat = new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: 0.12
+        });
+        const shadow = new THREE.Mesh(shadowGeom, shadowMat);
+        shadow.position.y = -bodyHeight / 2 - 0.02;
+        group.add(shadow);
+      }
+
+      return group;
+    }
+
+    // ================================================================
+    // FACE BUILDER
+    // Eyes, eyebrows, mouth -- all flat BoxGeometry
+    // ================================================================
+
+    function addFace(group, head, expression, headW, headH, headD) {
+      const faceZ = headD / 2 + 0.01; // just in front of head face
+      const headY = head.position.y;
+
+      // -- Eyes (white boxes) --
+      const eyeW = headW * 0.22;
+      const eyeH = headH * 0.26;
+      const eyeD = 0.03;
+      const eyeSpacing = headW * 0.22;
+
+      const eyeGeom = new THREE.BoxGeometry(eyeW, eyeH, eyeD);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+      const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
+      leftEye.position.set(-eyeSpacing, headY + headH * 0.05, faceZ);
+      group.add(leftEye);
+
+      const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
+      rightEye.position.set(eyeSpacing, headY + headH * 0.05, faceZ);
+      group.add(rightEye);
+
+      // -- Pupils (black boxes inside eyes) --
+      const pupilW = eyeW * 0.55;
+      const pupilH = eyeH * 0.6;
+      const pupilGeom = new THREE.BoxGeometry(pupilW, pupilH, eyeD);
+      const pupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+
+      let pupilOffsetX = eyeW * 0.05;
+      let pupilOffsetY = -eyeH * 0.05;
+
+      // Adjust pupils per expression
+      if (expression === 'surprised') {
+        pupilOffsetY = 0;
+      }
+
+      const leftPupil = new THREE.Mesh(pupilGeom, pupilMat);
+      leftPupil.position.set(-eyeSpacing + pupilOffsetX, headY + headH * 0.05 + pupilOffsetY, faceZ + 0.005);
+      group.add(leftPupil);
+
+      const rightPupil = new THREE.Mesh(pupilGeom, pupilMat);
+      rightPupil.position.set(eyeSpacing + pupilOffsetX, headY + headH * 0.05 + pupilOffsetY, faceZ + 0.005);
+      group.add(rightPupil);
+
+      // -- Eyebrows (thin dark boxes) --
+      const browW = eyeW * 1.15;
+      const browH = eyeH * 0.2;
+      const browGeom = new THREE.BoxGeometry(browW, browH, eyeD);
+      const browMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+
+      const browBaseY = headY + headH * 0.05 + eyeH / 2 + browH + 0.02;
+
+      const leftBrow = new THREE.Mesh(browGeom, browMat);
+      const rightBrow = new THREE.Mesh(browGeom, browMat);
+
+      if (expression === 'angry') {
+        leftBrow.position.set(-eyeSpacing, browBaseY - 0.02, faceZ);
+        leftBrow.rotation.z = 0.25; // angle down toward center
+        rightBrow.position.set(eyeSpacing, browBaseY - 0.02, faceZ);
+        rightBrow.rotation.z = -0.25;
+      } else if (expression === 'surprised') {
+        leftBrow.position.set(-eyeSpacing, browBaseY + 0.06, faceZ);
+        rightBrow.position.set(eyeSpacing, browBaseY + 0.06, faceZ);
+      } else if (expression === 'happy') {
+        leftBrow.position.set(-eyeSpacing, browBaseY + 0.02, faceZ);
+        rightBrow.position.set(eyeSpacing, browBaseY + 0.02, faceZ);
+      } else if (expression === 'smug') {
+        leftBrow.position.set(-eyeSpacing, browBaseY + 0.04, faceZ);
+        rightBrow.position.set(eyeSpacing, browBaseY, faceZ);
+        rightBrow.rotation.z = 0.15;
+      } else {
+        // neutral
+        leftBrow.position.set(-eyeSpacing, browBaseY, faceZ);
+        rightBrow.position.set(eyeSpacing, browBaseY, faceZ);
+      }
+
+      group.add(leftBrow);
+      group.add(rightBrow);
+
+      // -- Mouth (flat box) --
+      const mouthMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+      const mouthY = headY - headH * 0.15;
+
+      if (expression === 'happy') {
+        // Wide mouth
+        const mouthGeom = new THREE.BoxGeometry(headW * 0.35, headH * 0.06, eyeD);
+        const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+        mouth.position.set(0, mouthY, faceZ);
+        group.add(mouth);
+        // Smile corners (two small boxes angled up)
+        const cornerGeom = new THREE.BoxGeometry(headW * 0.08, headH * 0.05, eyeD);
+        const lCorner = new THREE.Mesh(cornerGeom, mouthMat);
+        lCorner.position.set(-headW * 0.19, mouthY + headH * 0.02, faceZ);
+        lCorner.rotation.z = 0.4;
+        group.add(lCorner);
+        const rCorner = new THREE.Mesh(cornerGeom, mouthMat);
+        rCorner.position.set(headW * 0.19, mouthY + headH * 0.02, faceZ);
+        rCorner.rotation.z = -0.4;
+        group.add(rCorner);
+      } else if (expression === 'surprised') {
+        // Small open square mouth
+        const mouthGeom = new THREE.BoxGeometry(headW * 0.14, headH * 0.14, eyeD);
+        const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+        mouth.position.set(0, mouthY - 0.02, faceZ);
+        group.add(mouth);
+      } else if (expression === 'angry') {
+        // Flat frown
+        const mouthGeom = new THREE.BoxGeometry(headW * 0.3, headH * 0.065, eyeD);
+        const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+        mouth.position.set(0, mouthY - 0.02, faceZ);
+        group.add(mouth);
+      } else if (expression === 'smug') {
+        // Off-center smirk
+        const mouthGeom = new THREE.BoxGeometry(headW * 0.2, headH * 0.05, eyeD);
+        const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+        mouth.position.set(headW * 0.06, mouthY, faceZ);
+        group.add(mouth);
+        const smirkGeom = new THREE.BoxGeometry(headW * 0.06, headH * 0.04, eyeD);
+        const smirk = new THREE.Mesh(smirkGeom, mouthMat);
+        smirk.position.set(headW * 0.18, mouthY + headH * 0.03, faceZ);
+        group.add(smirk);
+      } else {
+        // Neutral line
+        const mouthGeom = new THREE.BoxGeometry(headW * 0.25, headH * 0.045, eyeD);
+        const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+        mouth.position.set(0, mouthY, faceZ);
+        group.add(mouth);
+      }
+    }
+
+    // ================================================================
+    // CURRENT CHARACTER (for comparison -- matches existing game code)
+    // Body 1.2x1.2x1.2, Head 0.9x0.9x0.9, tiny 0.16 eyes, no brows/mouth
+    // ================================================================
+
+    function createCurrentCharacter(color) {
+      const group = new THREE.Group();
+      const c = new THREE.Color(color);
+
+      // Body -- uniform cube
+      const bodyGeom = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+      const bodyMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 });
+      const body = new THREE.Mesh(bodyGeom, bodyMat);
+      group.add(body);
+
+      // Head -- same color, smaller cube
+      const headGeom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+      const headMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 });
+      const head = new THREE.Mesh(headGeom, headMat);
+      head.position.y = 1.0;
+      group.add(head);
+
+      // Tiny eyes -- 0.16 cubes
+      const eyeGeom = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const pupilGeom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+      const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+      const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
+      leftEye.position.set(-0.2, 1.04, 0.44);
+      group.add(leftEye);
+      const leftPupil = new THREE.Mesh(pupilGeom, pupilMat);
+      leftPupil.position.set(-0.2, 1.04, 0.5);
+      group.add(leftPupil);
+
+      const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
+      rightEye.position.set(0.2, 1.04, 0.44);
+      group.add(rightEye);
+      const rightPupil = new THREE.Mesh(pupilGeom, pupilMat);
+      rightPupil.position.set(0.2, 1.04, 0.5);
+      group.add(rightPupil);
+
+      // Shadow
+      const shadowGeom = new THREE.BoxGeometry(1.4, 0.02, 1.0);
+      const shadowMat = new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.12
+      });
+      const shadow = new THREE.Mesh(shadowGeom, shadowMat);
+      shadow.position.y = -0.62;
+      group.add(shadow);
+
+      return group;
+    }
+
+    // ================================================================
+    // SCENE DISPOSER -- frees GPU memory after rendering to images
+    // ================================================================
+
+    function disposeScene(setup) {
+      setup.scene.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(m => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+
+    // ================================================================
+    // SECTION BUILDERS
+    // Each builds scene(s), renders to images, inserts <img> elements,
+    // then disposes the scene. Zero WebGL contexts remain after init.
+    // ================================================================
+
+    // -- 1. Reference Analysis --
+    function buildRefAnalysis() {
+      const row = document.getElementById('ref-analysis-row');
+      const examples = [
+        { color: 0x4CAF50, label: 'Default Player', body: {}, head: {}, expression: 'neutral' },
+        { color: 0xFF9800, label: 'Crossy Road Style', body: { bodyWidth: 0.85, bodyHeight: 0.65 }, head: { headWidth: 0.95, headHeight: 0.9, headDepth: 0.85 }, expression: 'happy' },
+        { color: 0xE91E63, label: 'Chunky Box Style', body: { bodyWidth: 1.15, bodyHeight: 1.0, bodyDepth: 0.9 }, head: { headWidth: 0.8, headHeight: 0.7, headDepth: 0.7 }, expression: 'smug' },
+      ];
+
+      examples.forEach(ex => {
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+
+        const setup = createSceneSetup(300, 300);
+        const char = createCharacter({
+          color: ex.color, ...ex.body, ...ex.head,
+          expression: ex.expression, showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 300, 300, ROTATION_FRAMES);
+        const viewer = createInteractiveViewer(urls, 300, 300);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.textContent = ex.label;
+        cell.appendChild(labelEl);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // -- 2. Character Variants --
+    function buildCharVariants() {
+      const row = document.getElementById('char-variants-row');
+      const variants = [
+        { label: 'A: Chunky (Default)', color: 0x4CAF50, body: { bodyWidth: 1.0, bodyHeight: 0.9, bodyDepth: 0.8 }, head: { headWidth: 0.85, headHeight: 0.75, headDepth: 0.75 }, expression: 'neutral', recommended: true },
+        { label: 'B: Tall', color: 0x2196F3, body: { bodyWidth: 0.7, bodyHeight: 1.3, bodyDepth: 0.6 }, head: { headWidth: 0.65, headHeight: 0.6, headDepth: 0.6 }, expression: 'neutral' },
+        { label: 'C: Squat', color: 0xFF9800, body: { bodyWidth: 1.25, bodyHeight: 0.55, bodyDepth: 0.95 }, head: { headWidth: 0.9, headHeight: 0.8, headDepth: 0.8 }, expression: 'angry' },
+        { label: 'D: Chibi', color: 0xE91E63, body: { bodyWidth: 0.6, bodyHeight: 0.55, bodyDepth: 0.5 }, head: { headWidth: 1.0, headHeight: 0.95, headDepth: 0.9 }, expression: 'happy' },
+      ];
+
+      variants.forEach(v => {
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+
+        const setup = createSceneSetup(240, 300, { cameraY: 2.2, cameraZ: 3.8 });
+        const char = createCharacter({
+          color: v.color, ...v.body, ...v.head,
+          expression: v.expression, showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 240, 300, ROTATION_FRAMES);
+        const viewer = createInteractiveViewer(urls, 240, 300);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.textContent = v.label;
+        if (v.recommended) {
+          labelEl.style.color = '#e94560';
+          labelEl.style.fontWeight = '700';
+        }
+        cell.appendChild(labelEl);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // -- 3. Face Expressions --
+    function buildFaceExpressions() {
+      const row = document.getElementById('face-expressions-row');
+
+      EXPRESSIONS.forEach(expr => {
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+
+        const setup = createSceneSetup(190, 260, {
+          cameraY: 1.8, cameraZ: 3.0, cameraFov: 30, lookAtY: 0.5,
+        });
+        const char = createCharacter({
+          color: 0x2196F3, expression: expr, showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 190, 260, ROTATION_FRAMES);
+        const viewer = createInteractiveViewer(urls, 190, 260);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.textContent = expr.charAt(0).toUpperCase() + expr.slice(1);
+        cell.appendChild(labelEl);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // -- 4. Current vs Proposed --
+    function buildComparison() {
+      // Current design
+      const currentContainer = document.getElementById('char-current-container');
+      const currentSetup = createSceneSetup(400, 400, {
+        cameraY: 2.8, cameraZ: 5.0, cameraFov: 30, lookAtY: 0.5,
+      });
+      const currentChar = createCurrentCharacter(0x4CAF50);
+      currentSetup.pivot.add(currentChar);
+
+      const currentUrls = renderToImages(currentSetup, 400, 400, ROTATION_FRAMES);
+      const currentViewer = createInteractiveViewer(currentUrls, 400, 400);
+      currentContainer.appendChild(currentViewer);
+      disposeScene(currentSetup);
+
+      // Proposed design
+      const proposedContainer = document.getElementById('char-proposed-container');
+      const proposedSetup = createSceneSetup(400, 400, {
+        cameraY: 2.8, cameraZ: 5.0, cameraFov: 30, lookAtY: 0.5,
+      });
+      const proposedChar = createCharacter({
+        color: 0x4CAF50, expression: 'neutral',
+        showPointer: true, showGroundMarker: true, showShadow: true,
+      });
+      proposedSetup.pivot.add(proposedChar);
+
+      const proposedUrls = renderToImages(proposedSetup, 400, 400, ROTATION_FRAMES);
+      const proposedViewer = createInteractiveViewer(proposedUrls, 400, 400);
+      proposedContainer.appendChild(proposedViewer);
+      disposeScene(proposedSetup);
+    }
+
+    // -- 5. Color Lineup --
+    function buildColorLineup() {
+      const row = document.getElementById('color-lineup-row');
+      const faces = ['neutral', 'happy', 'angry', 'surprised', 'smug', 'neutral', 'happy', 'angry'];
+
+      COLORS.forEach((c, i) => {
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+        cell.style.marginBottom = '18px';
+
+        const setup = createSceneSetup(130, 180, {
+          cameraY: 2.0, cameraZ: 3.2, cameraFov: 30, lookAtY: 0.4,
+        });
+        const char = createCharacter({
+          color: c.three, expression: faces[i], showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 130, 180, ROTATION_FRAMES_SMALL);
+        const viewer = createInteractiveViewer(urls, 130, 180);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.textContent = `P${i + 1}`;
+        cell.appendChild(labelEl);
+
+        const sublabel = document.createElement('div');
+        sublabel.className = 'scene-sublabel';
+        sublabel.textContent = `${c.name} ${c.hex}`;
+        cell.appendChild(sublabel);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // -- 6. Game Scale (top-down view with territory) -- STATIC, no rotation
+    function buildGameScale() {
+      const container = document.getElementById('game-scale-container');
+
+      const width = 900;
+      const height = 550;
+      const setup = createSceneSetup(width, height, {
+        cameraY: 22, cameraZ: 12, cameraFov: 45, lookAtY: 0,
+      });
+      setup.camera.position.set(0, 22, 12);
+      setup.camera.lookAt(0, 0, 0);
+
+      // White ground plane (arena)
+      const groundGeom = new THREE.BoxGeometry(40, 0.1, 40);
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.9 });
+      const ground = new THREE.Mesh(groundGeom, groundMat);
+      ground.position.y = -0.5;
+      setup.scene.add(ground);
+
+      // Grid dots on ground
+      const dotGeom = new THREE.BoxGeometry(0.08, 0.02, 0.08);
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0xcccccc });
+      for (let gx = -18; gx <= 18; gx += 2) {
+        for (let gz = -18; gz <= 18; gz += 2) {
+          const dot = new THREE.Mesh(dotGeom, dotMat);
+          dot.position.set(gx, -0.44, gz);
+          setup.scene.add(dot);
+        }
+      }
+
+      // Territory patches
+      const territories = [
+        { x: -8, z: -5, w: 7, d: 6 },
+        { x:  4, z: -4, w: 6, d: 5 },
+        { x: -4, z:  4, w: 5.5, d: 5 },
+        { x:  6, z:  3, w: 5, d: 4.5 },
+        { x: -12, z: -1, w: 4.5, d: 4 },
+        { x:  1, z: -9, w: 4, d: 3.5 },
+        { x:  3, z:  9, w: 4.5, d: 4 },
+        { x: -9, z: -11, w: 4, d: 3.5 },
+      ];
+
+      territories.forEach((t, i) => {
+        const tColor = new THREE.Color(COLORS[i].three);
+        const terrGeom = new THREE.BoxGeometry(t.w, 0.05, t.d);
+        const terrMat = new THREE.MeshStandardMaterial({
+          color: tColor, transparent: true, opacity: 0.30, roughness: 0.8
+        });
+        const terr = new THREE.Mesh(terrGeom, terrMat);
+        terr.position.set(t.x, -0.45, t.z);
+        setup.scene.add(terr);
+      });
+
+      // Players at game scale
+      const playerPositions = [
+        { x: -5,  z: -2 },
+        { x:  4,  z:  1 },
+        { x: -1,  z:  4 },
+        { x:  8,  z:  3 },
+        { x: -10, z:  1 },
+        { x:  2,  z: -8 },
+        { x:  3,  z:  9 },
+        { x: -7,  z: -10 },
+      ];
+
+      playerPositions.forEach((pos, i) => {
+        const char = createCharacter({
+          color: COLORS[i].three,
+          bodyWidth: 0.8, bodyHeight: 0.7, bodyDepth: 0.6,
+          headWidth: 0.65, headHeight: 0.55, headDepth: 0.55,
+          expression: 'neutral',
+          showPointer: i === 0, showGroundMarker: i === 0,
+          showShadow: true,
+        });
+        char.position.set(pos.x, -0.05, pos.z);
+        setup.scene.add(char);
+
+        // Trail lines for first 3 players
+        if (i < 3) {
+          const t = territories[i];
+          const trailColor = new THREE.Color(COLORS[i].three);
+          const trailMat = new THREE.MeshBasicMaterial({ color: trailColor });
+
+          const dx = pos.x - t.x;
+          const dz = pos.z - t.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          const angle = Math.atan2(dx, dz);
+
+          const trail = new THREE.Mesh(
+            new THREE.BoxGeometry(0.18, 0.04, dist),
+            trailMat
+          );
+          trail.position.set(
+            (pos.x + t.x) / 2,
+            -0.43,
+            (pos.z + t.z) / 2
+          );
+          trail.rotation.y = angle;
+          setup.scene.add(trail);
+        }
+      });
+
+      // Static render -- no rotation needed for top-down view
+      const img = renderStaticImage(setup, width, height, 0);
+      img.style.width = '100%';
+      img.style.height = 'auto';
+      container.appendChild(img);
+      disposeScene(setup);
+    }
+
+    // -- 7. Same-Team Differentiation --
+    function buildTeamDiff() {
+      const row = document.getElementById('team-diff-row');
+      const names = ['You (Local)', 'Teammate A', 'Teammate B', 'Teammate C'];
+      const teamColor = 0x2196F3;
+
+      names.forEach((name, i) => {
+        const isLocal = i === 0;
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+
+        const setup = createSceneSetup(240, 320, {
+          cameraY: 2.5, cameraZ: 4.0, cameraFov: 32, lookAtY: 0.4,
+        });
+        const char = createCharacter({
+          color: teamColor,
+          expression: isLocal ? 'happy' : 'neutral',
+          showPointer: isLocal, showGroundMarker: isLocal,
+          showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 240, 320, ROTATION_FRAMES);
+        const viewer = createInteractiveViewer(urls, 240, 320);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.textContent = name;
+        if (isLocal) {
+          labelEl.style.color = '#e94560';
+          labelEl.style.fontWeight = '700';
+        }
+        cell.appendChild(labelEl);
+
+        const sublabel = document.createElement('div');
+        sublabel.className = 'scene-sublabel';
+        sublabel.textContent = isLocal ? '+ pointer + ground marker' : 'Same mesh, no extras';
+        cell.appendChild(sublabel);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // -- 8. Territory Harmony --
+    function buildTerritoryHarmony() {
+      const row = document.getElementById('territory-harmony-row');
+
+      COLORS.forEach((c, i) => {
+        const cell = document.createElement('div');
+        cell.className = 'scene-cell';
+        cell.style.marginBottom = '18px';
+
+        const setup = createSceneSetup(130, 180, {
+          bgColor: 0xf0f0f0, cameraY: 2.5, cameraZ: 3.5, cameraFov: 30, lookAtY: 0.2,
+        });
+
+        // Add brighter lighting for light bg
+        const extraLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        extraLight.position.set(-2, 3, -1);
+        setup.scene.add(extraLight);
+
+        // Territory ground patch
+        const terrColor = new THREE.Color(c.three);
+        const terrGeom = new THREE.BoxGeometry(3, 0.08, 3);
+        const terrMat = new THREE.MeshStandardMaterial({
+          color: terrColor, transparent: true, opacity: 0.3, roughness: 0.8
+        });
+        const terr = new THREE.Mesh(terrGeom, terrMat);
+        terr.position.y = -0.5;
+        setup.pivot.add(terr);
+
+        // White ground beneath territory
+        const groundGeom = new THREE.BoxGeometry(3.5, 0.05, 3.5);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+        const gnd = new THREE.Mesh(groundGeom, groundMat);
+        gnd.position.y = -0.55;
+        setup.pivot.add(gnd);
+
+        // Character on territory
+        const char = createCharacter({
+          color: c.three, expression: 'neutral', showShadow: true,
+        });
+        setup.pivot.add(char);
+
+        const urls = renderToImages(setup, 130, 180, ROTATION_FRAMES_SMALL);
+        const viewer = createInteractiveViewer(urls, 130, 180);
+        cell.appendChild(viewer);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'scene-label';
+        labelEl.style.color = '#555';
+        labelEl.textContent = c.name;
+        cell.appendChild(labelEl);
+
+        disposeScene(setup);
+        row.appendChild(cell);
+      });
+    }
+
+    // ================================================================
+    // INIT
+    // ================================================================
+
+    // Yield to the browser event loop so the GPU can flush its command queue.
+    // This prevents "Cannot read properties of null (reading 'trim')" errors
+    // that occur when too many shader compilations happen synchronously.
+    function yieldToGPU() {
+      return new Promise(resolve => requestAnimationFrame(resolve));
+    }
+
+    async function init() {
+      buildRefAnalysis();
+      await yieldToGPU();
+      buildCharVariants();
+      await yieldToGPU();
+      buildFaceExpressions();
+      await yieldToGPU();
+      buildComparison();
+      await yieldToGPU();
+      buildColorLineup();
+      await yieldToGPU();
+      buildGameScale();
+      await yieldToGPU();
+      buildTeamDiff();
+      await yieldToGPU();
+      buildTerritoryHarmony();
+
+      // All scenes rendered to images -- dispose the WebGL context entirely.
+      // Result: ZERO active WebGL contexts on the page at runtime.
+      disposeRenderer();
+
+      console.log('[character-design-v2] All scenes rendered to images. WebGL context disposed. 0 active contexts.');
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

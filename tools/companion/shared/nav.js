@@ -1,7 +1,8 @@
 // Shared navigation component for companion pages
 // Add new pages to the pages array below
 const pages = [
-  { href: "character-design.html", label: "Character Design" },
+  { href: "character-design.html", label: "Character Design v1" },
+  { href: "character-design-v2.html", label: "Character Design v2 (Box)" },
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
