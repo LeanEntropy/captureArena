@@ -4,6 +4,10 @@
   "scripts": {
     "dev:server": "pnpm --filter template-server dev",
     "dev:client": "pnpm --filter template-client dev",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "screenshot": "node tools/screenshot.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
   }
 }
