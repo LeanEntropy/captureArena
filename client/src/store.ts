@@ -1,84 +1,78 @@
 import { createStore } from "zustand/vanilla";
-import type { GameEvent } from "@template/shared";
-
-export interface ClientEntity {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  heading: number;
-  hp: number;
-  maxHp: number;
-  actionState: number;
-  ownerId: string;
-  size: number;
-  prevX: number;
-  prevZ: number;
-  targetX: number;
-  targetZ: number;
-  interpT: number;
-}
-
-export interface ClientResource {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  remaining: number;
-}
+import type { GameEvent, Vec2 } from "@template/shared";
 
 export interface ClientPlayer {
   id: string;
-  score: number;
-  resources: number;
+  slotId: number;
+  x: number;
+  y: number;
+  heading: number;
+  alive: boolean;
+  respawnTimer: number;
+  invulnTimer: number;
+  killCount: number;
+  territoryCount: number;
+  name: string;
+  color: number;
+  trail: Vec2[];
 }
 
 export interface GameState {
   playerId: string;
+  playerName: string;
   connected: boolean;
-  matchPhase: "waiting" | "playing" | "ended";
-  matchTime: number;
-  matchDuration: number;
-  entities: Map<number, ClientEntity>;
-  resources: Map<number, ClientResource>;
+  gameStarted: boolean;
+  territoryGrid: Uint8Array | null;
   players: Map<string, ClientPlayer>;
   events: GameEvent[];
+  playableCells: number;
 
   setPlayerId: (id: string) => void;
+  setPlayerName: (name: string) => void;
   setConnected: (connected: boolean) => void;
-  setMatchPhase: (phase: "waiting" | "playing" | "ended") => void;
-  setMatchTime: (time: number) => void;
-  setMatchDuration: (duration: number) => void;
-  setEntities: (entities: Map<number, ClientEntity>) => void;
-  setResources: (resources: Map<number, ClientResource>) => void;
+  setGameStarted: (started: boolean) => void;
+  setTerritoryGrid: (grid: Uint8Array) => void;
   setPlayers: (players: Map<string, ClientPlayer>) => void;
+  updatePlayer: (id: string, updates: Partial<ClientPlayer>) => void;
+  removePlayer: (id: string) => void;
   pushEvents: (events: GameEvent[]) => void;
   clearEvents: () => void;
+  setPlayableCells: (count: number) => void;
 }
 
 export const useStore = createStore<GameState>((set) => ({
   playerId: "",
+  playerName: "",
   connected: false,
-  matchPhase: "waiting",
-  matchTime: 0,
-  matchDuration: 300,
-  entities: new Map(),
-  resources: new Map(),
+  gameStarted: false,
+  territoryGrid: null,
   players: new Map(),
   events: [],
+  playableCells: 0,
 
-  setPlayerId: (id: string) => set({ playerId: id }),
-  setConnected: (connected: boolean) => set({ connected }),
-  setMatchPhase: (phase: "waiting" | "playing" | "ended") => set({ matchPhase: phase }),
-  setMatchTime: (time: number) => set({ matchTime: time }),
-  setMatchDuration: (duration: number) => set({ matchDuration: duration }),
-  setEntities: (entities: Map<number, ClientEntity>) => set({ entities }),
-  setResources: (resources: Map<number, ClientResource>) => set({ resources }),
-  setPlayers: (players: Map<string, ClientPlayer>) => set({ players }),
-  pushEvents: (newEvents: GameEvent[]) =>
+  setPlayerId: (id) => set({ playerId: id }),
+  setPlayerName: (name) => set({ playerName: name }),
+  setConnected: (connected) => set({ connected }),
+  setGameStarted: (started) => set({ gameStarted: started }),
+  setTerritoryGrid: (grid) => set({ territoryGrid: grid }),
+  setPlayers: (players) => set({ players }),
+  updatePlayer: (id, updates) =>
+    set((state) => {
+      const players = new Map(state.players);
+      const existing = players.get(id);
+      if (existing) {
+        players.set(id, { ...existing, ...updates });
+      }
+      return { players };
+    }),
+  removePlayer: (id) =>
+    set((state) => {
+      const players = new Map(state.players);
+      players.delete(id);
+      return { players };
+    }),
+  pushEvents: (newEvents) =>
     set((state) => ({ events: [...state.events, ...newEvents] })),
   clearEvents: () => set({ events: [] }),
+  setPlayableCells: (count) => set({ playableCells: count }),
 }));
