@@ -11,6 +11,7 @@ import { PlayerRenderer } from "./game/entities/PlayerRenderer.js";
 import { ParticleSystem } from "./game/entities/ParticleSystem.js";
 import { useStore } from "./store.js";
 import { EventType } from "@template/shared";
+import type { NetClient } from "./game/net/NetClient.js";
 
 const game = new Game();
 const hud = new HUD();
@@ -22,19 +23,32 @@ const trailRenderer = new TrailRenderer(game.scene);
 const playerRenderer = new PlayerRenderer(game.scene, game.camera);
 const particleSystem = new ParticleSystem(game.scene);
 
+const isMultiplayer = new URLSearchParams(window.location.search).get("mp") === "true";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? "ws://localhost:2567";
+
 let localGame: LocalGame | null = null;
+let netClient: NetClient | null = null;
 let wasAlive = true;
 
-nameEntry.setOnPlay((name) => {
+nameEntry.setOnPlay(async (name) => {
   useStore.getState().setPlayerName(name);
-  localGame = new LocalGame();
-  localGame.start(name);
+
+  if (isMultiplayer) {
+    // Multiplayer: connect via NetClient
+    const { NetClient: NetClientClass } = await import("./game/net/NetClient.js");
+    netClient = new NetClientClass(SERVER_URL);
+    await netClient.connect(name);
+  } else {
+    // Single-player: run simulation locally
+    localGame = new LocalGame();
+    localGame.start(name);
+  }
 });
 
 game.onUpdate = (dt: number) => {
   const store = useStore.getState();
 
-  if (!localGame || !store.gameStarted) return;
+  if (!store.gameStarted) return;
 
   // Send input
   game.inputHandler.update();
@@ -42,12 +56,18 @@ game.onUpdate = (dt: number) => {
   if (myPlayer && myPlayer.alive) {
     game.inputHandler.setPlayerPosition(myPlayer.x, -myPlayer.y);
     if (game.inputHandler.hasInput) {
-      localGame.sendHeading(game.inputHandler.targetHeading);
+      if (netClient) {
+        netClient.sendHeading(game.inputHandler.targetHeading);
+      } else if (localGame) {
+        localGame.sendHeading(game.inputHandler.targetHeading);
+      }
     }
   }
 
-  // Tick simulation
-  localGame.tick(dt);
+  // Tick simulation (single-player only)
+  if (localGame && !netClient) {
+    localGame.tick(dt);
+  }
 
   // Re-read store after tick
   const freshStore = useStore.getState();

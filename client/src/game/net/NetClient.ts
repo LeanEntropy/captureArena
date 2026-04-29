@@ -1,170 +1,143 @@
 import { Client, Room, getStateCallbacks } from "colyseus.js";
-import type { PlayerInput, GameEvent } from "@template/shared";
+import type { GameEvent, Vec2 } from "@template/shared";
+import { initBoundaryGrid } from "@template/shared";
 import { useStore } from "../../store.js";
-import type { ClientEntity, ClientResource, ClientPlayer } from "../../store.js";
+import type { ClientPlayer } from "../../store.js";
 
 export class NetClient {
   private client: Client;
   private room: Room | null = null;
+  private localGrid: Uint8Array;
 
   constructor(serverUrl: string) {
     this.client = new Client(serverUrl);
+    this.localGrid = initBoundaryGrid();
   }
 
-  async connect() {
-    this.room = await this.client.joinOrCreate("game_room");
+  async connect(playerName: string): Promise<void> {
+    this.room = await this.client.joinOrCreate("game_room", { name: playerName });
+
     const store = useStore.getState();
     store.setPlayerId(this.room.sessionId);
     store.setConnected(true);
+    store.setGameStarted(true);
 
     const $ = getStateCallbacks(this.room);
 
-    // Entity listeners
-    $(this.room.state).entities.onAdd((entity: any, key: string) => {
-      const id = entity.id as number;
-      const clientEntity: ClientEntity = {
-        id,
-        x: entity.x,
-        y: entity.y,
-        z: entity.z,
-        vx: entity.vx,
-        vy: entity.vy,
-        vz: entity.vz,
-        heading: entity.heading,
-        hp: entity.hp,
-        maxHp: entity.maxHp,
-        actionState: entity.actionState,
-        ownerId: entity.ownerId,
-        size: entity.size,
-        prevX: entity.x,
-        prevZ: entity.z,
-        targetX: entity.x,
-        targetZ: entity.z,
-        interpT: 1,
-      };
-      const entities = new Map(useStore.getState().entities);
-      entities.set(id, clientEntity);
-      useStore.getState().setEntities(entities);
-
-      $(entity).onChange(() => {
-        const entities = new Map(useStore.getState().entities);
-        const existing = entities.get(id);
-        if (existing) {
-          existing.prevX = existing.targetX;
-          existing.prevZ = existing.targetZ;
-          existing.targetX = entity.x;
-          existing.targetZ = entity.z;
-          existing.interpT = 0;
-          existing.vx = entity.vx;
-          existing.vy = entity.vy;
-          existing.vz = entity.vz;
-          existing.heading = entity.heading;
-          existing.hp = entity.hp;
-          existing.maxHp = entity.maxHp;
-          existing.actionState = entity.actionState;
-          existing.ownerId = entity.ownerId;
-          existing.size = entity.size;
-        }
-        useStore.getState().setEntities(entities);
-      });
-    });
-
-    $(this.room.state).entities.onRemove((_entity: any, key: string) => {
-      const id = Number(key);
-      const entities = new Map(useStore.getState().entities);
-      entities.delete(id);
-      useStore.getState().setEntities(entities);
-    });
-
-    // Resource listeners
-    $(this.room.state).resources.onAdd((resource: any, key: string) => {
-      const id = resource.id as number;
-      const clientResource: ClientResource = {
-        id,
-        x: resource.x,
-        y: resource.y,
-        z: resource.z,
-        remaining: resource.remaining,
-      };
-      const resources = new Map(useStore.getState().resources);
-      resources.set(id, clientResource);
-      useStore.getState().setResources(resources);
-
-      $(resource).onChange(() => {
-        const resources = new Map(useStore.getState().resources);
-        const existing = resources.get(id);
-        if (existing) {
-          existing.remaining = resource.remaining;
-        }
-        useStore.getState().setResources(resources);
-      });
-    });
-
-    $(this.room.state).resources.onRemove((_resource: any, key: string) => {
-      const id = Number(key);
-      const resources = new Map(useStore.getState().resources);
-      resources.delete(id);
-      useStore.getState().setResources(resources);
-    });
-
-    // Player listeners
-    $(this.room.state).players.onAdd((player: any, key: string) => {
+    // Player onAdd
+    $(this.room.state as any).players.onAdd((player: any, key: string) => {
       const clientPlayer: ClientPlayer = {
-        id: player.id,
-        score: player.score,
-        resources: player.resources,
+        id: key,
+        slotId: player.slotId,
+        x: player.x,
+        y: player.y,
+        heading: player.heading,
+        alive: player.alive,
+        respawnTimer: player.respawnTimer,
+        invulnTimer: player.invulnTimer,
+        killCount: player.killCount,
+        territoryCount: player.territoryCount,
+        name: player.name,
+        color: player.color,
+        trail: [],
       };
       const players = new Map(useStore.getState().players);
       players.set(key, clientPlayer);
       useStore.getState().setPlayers(players);
 
+      // Player onChange
       $(player).onChange(() => {
         const players = new Map(useStore.getState().players);
         const existing = players.get(key);
         if (existing) {
-          existing.score = player.score;
-          existing.resources = player.resources;
+          players.set(key, {
+            ...existing,
+            slotId: player.slotId,
+            x: player.x,
+            y: player.y,
+            heading: player.heading,
+            alive: player.alive,
+            respawnTimer: player.respawnTimer,
+            invulnTimer: player.invulnTimer,
+            killCount: player.killCount,
+            territoryCount: player.territoryCount,
+            name: player.name,
+            color: player.color,
+          });
+        } else {
+          players.set(key, {
+            id: key,
+            slotId: player.slotId,
+            x: player.x,
+            y: player.y,
+            heading: player.heading,
+            alive: player.alive,
+            respawnTimer: player.respawnTimer,
+            invulnTimer: player.invulnTimer,
+            killCount: player.killCount,
+            territoryCount: player.territoryCount,
+            name: player.name,
+            color: player.color,
+            trail: [],
+          });
         }
         useStore.getState().setPlayers(players);
       });
     });
 
-    $(this.room.state).players.onRemove((_player: any, key: string) => {
+    // Player onRemove
+    $(this.room.state as any).players.onRemove((_player: any, key: string) => {
+      useStore.getState().removePlayer(key);
+    });
+
+    // Full territory grid (binary)
+    this.room.onMessage("territory_full", (data: Uint8Array) => {
+      this.localGrid.set(data);
+      useStore.getState().setTerritoryGrid(new Uint8Array(this.localGrid));
+    });
+
+    // Territory patch (binary): byte 0 = slotId, then 3 bytes per cell index
+    this.room.onMessage("territory_patch", (data: Uint8Array) => {
+      const slotId = data[0];
+      const cellCount = (data.length - 1) / 3;
+      for (let i = 0; i < cellCount; i++) {
+        const offset = 1 + i * 3;
+        const cellIdx = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16);
+        this.localGrid[cellIdx] = slotId;
+      }
+      useStore.getState().setTerritoryGrid(new Uint8Array(this.localGrid));
+    });
+
+    // Trail updates: array of { id, trail }
+    this.room.onMessage("trails", (updates: Array<{ id: string; trail: Vec2[] }>) => {
       const players = new Map(useStore.getState().players);
-      players.delete(key);
+      for (const update of updates) {
+        const existing = players.get(update.id);
+        if (existing) {
+          players.set(update.id, { ...existing, trail: update.trail });
+        }
+      }
       useStore.getState().setPlayers(players);
     });
 
-    // Match state listeners
-    $(this.room.state).listen("phase", (value: string) => {
-      useStore.getState().setMatchPhase(value as "waiting" | "playing" | "ended");
-    });
-
-    $(this.room.state).listen("matchTime", (value: number) => {
-      useStore.getState().setMatchTime(value);
-    });
-
-    $(this.room.state).listen("matchDuration", (value: number) => {
-      useStore.getState().setMatchDuration(value);
-    });
-
-    // Event messages
+    // Game events (kills, deaths, territory claims)
     this.room.onMessage("events", (events: GameEvent[]) => {
       useStore.getState().pushEvents(events);
     });
 
-    this.room.onMessage("match_end", () => {
-      useStore.getState().setMatchPhase("ended");
+    this.room.onLeave(() => {
+      useStore.getState().setConnected(false);
+      useStore.getState().setGameStarted(false);
     });
   }
 
-  sendInput(input: PlayerInput) {
+  sendHeading(targetHeading: number): void {
     if (this.room) {
-      this.room.send("input", input);
+      this.room.send("input", { targetHeading });
     }
   }
 
-  disconnect() {
+  disconnect(): void {
     if (this.room) {
       this.room.leave();
       this.room = null;
