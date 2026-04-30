@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 30;
-const CAMERA_Z_OFFSET = 20;
+const CAMERA_HEIGHT = 34;
+const CAMERA_Z_OFFSET = 26;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
@@ -738,28 +738,27 @@ class Game {
   constructor() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf0f0f0);
-    this.camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.1, 300);
+    this.camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 300);
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.VSMShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(this.renderer.domElement);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     const dl = new THREE.DirectionalLight(0xffffff, 0.6);
     dl.position.set(5, 15, 5);
     dl.castShadow = true;
-    dl.shadow.mapSize.width = 1024;
-    dl.shadow.mapSize.height = 1024;
+    dl.shadow.mapSize.width = 2048;
+    dl.shadow.mapSize.height = 2048;
     dl.shadow.camera.near = 0.5;
     dl.shadow.camera.far = 60;
     dl.shadow.camera.left = -40;
     dl.shadow.camera.right = 40;
     dl.shadow.camera.top = 40;
     dl.shadow.camera.bottom = -40;
-    dl.shadow.radius = 4;
-    dl.shadow.blurSamples = 8;
+    dl.shadow.radius = 2;
     this.scene.add(dl);
     this.scene.add(dl.target);
     this.shadowLight = dl;
@@ -1254,8 +1253,8 @@ class Game {
 
     this.territoryTexture = new THREE.CanvasTexture(this._territoryCanvas);
     this.territoryTexture.colorSpace = THREE.SRGBColorSpace;
-    this.territoryTexture.minFilter = THREE.LinearFilter;
-    this.territoryTexture.magFilter = THREE.LinearFilter;
+    this.territoryTexture.minFilter = THREE.NearestFilter;
+    this.territoryTexture.magFilter = THREE.NearestFilter;
     this.territoryTexture.wrapS = THREE.ClampToEdgeWrapping;
     this.territoryTexture.wrapT = THREE.ClampToEdgeWrapping;
 
