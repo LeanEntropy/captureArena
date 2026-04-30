@@ -739,6 +739,72 @@ class Game {
       }
     };
 
+    // Initial grid snapshot (gzipped) — apply once we receive it. If the
+    // snapshot arrives before _initRendererFromOnlineState has aliased the
+    // grid, buffer it and apply on init.
+    this.mp.onGridSnapshot = async (b64) => {
+      try {
+        const compressed = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        const raw = await this._inflateGzip(compressed);
+        const bytes = new Uint8Array(raw);
+        if (!this.onlineInitialized) {
+          this._pendingSnapshot = bytes;
+          console.log(`[online] grid snapshot buffered (${bytes.byteLength} bytes) — pending state init`);
+          return;
+        }
+        if (territoryGrid.grid.length !== bytes.length) {
+          console.warn(`[online] gridSnapshot size mismatch: ${bytes.length} vs ${territoryGrid.grid.length}`);
+          return;
+        }
+        territoryGrid.grid.set(bytes);
+        this.territoryDirty = true;
+        this._flushOnlineEventQueue();
+        console.log(`[online] grid snapshot applied (${bytes.byteLength} bytes)`);
+      } catch (err) {
+        console.error("[online] gridSnapshot apply failed:", err);
+      }
+    };
+
+    // Buffer for claim/heal/trail events that arrive before snapshot+init.
+    // Events received before _onlineGridReady is true are queued and replayed
+    // immediately after the snapshot is applied, in arrival order.
+    this._onlineGridReady = false;
+    this._onlineEventQueue = [];
+
+    // Per-claim event: replay claim against the shared grid via local sim.
+    this.mp.onClaim = (charId, trailPoints, factionId) => {
+      if (!this._onlineGridReady) {
+        this._onlineEventQueue.push({ type: "claim", charId, trailPoints, factionId });
+        return;
+      }
+      this._applyOnlineClaim(charId, trailPoints, factionId);
+    };
+
+    // Per-heal event: server already healed; apply the same diff to our grid.
+    this.mp.onHeal = ({ changedCells }) => {
+      if (!changedCells) return;
+      if (!this._onlineGridReady) {
+        this._onlineEventQueue.push({ type: "heal", changedCells });
+        return;
+      }
+      for (let i = 0; i < changedCells.length; i += 2) {
+        territoryGrid.grid[changedCells[i]] = changedCells[i + 1];
+      }
+      this.territoryDirty = true;
+    };
+
+    // Trail vertices: append to renderer character trail so the line is visible.
+    this.mp.onTrailVertex = (charId, x, z) => {
+      if (!this._onlineGridReady) {
+        this._onlineEventQueue.push({ type: "trail", charId, x, z });
+        return;
+      }
+      const r = this._findRendererCharBySimId(charId);
+      if (!r) return;
+      r.trailVerts.push(new THREE.Vector3(x, 0, z));
+      r._rebuildTrailMesh();
+    };
+
     try {
       await this.mp.connect(name, null);
       console.log("[online] connected, sessionId =", this.mp.room.sessionId);
@@ -747,10 +813,90 @@ class Game {
     }
   }
 
+  // Decompress a gzip Uint8Array into an ArrayBuffer (browser-native API).
+  async _inflateGzip(bytes) {
+    const ds = new DecompressionStream("gzip");
+    const stream = new Blob([bytes]).stream().pipeThrough(ds);
+    return await new Response(stream).arrayBuffer();
+  }
+
+  // Replay any claim/heal/trail events that arrived before the snapshot was
+  // applied. After flush, _onlineGridReady becomes true and subsequent events
+  // apply directly without queueing.
+  _flushOnlineEventQueue() {
+    this._onlineGridReady = true;
+    const queue = this._onlineEventQueue;
+    this._onlineEventQueue = [];
+    for (const ev of queue) {
+      if (ev.type === "claim") {
+        this._applyOnlineClaim(ev.charId, ev.trailPoints, ev.factionId);
+      } else if (ev.type === "heal") {
+        for (let i = 0; i < ev.changedCells.length; i += 2) {
+          territoryGrid.grid[ev.changedCells[i]] = ev.changedCells[i + 1];
+        }
+        this.territoryDirty = true;
+      } else if (ev.type === "trail") {
+        const r = this._findRendererCharBySimId(ev.charId);
+        if (r) {
+          r.trailVerts.push(new THREE.Vector3(ev.x, 0, ev.z));
+          r._rebuildTrailMesh();
+        }
+      }
+    }
+    if (queue.length > 0) console.log(`[online] flushed ${queue.length} buffered events`);
+  }
+
+  _findRendererCharBySimId(simCharId) {
+    for (const r of this.characters) {
+      if (r.simChar && r.simChar.id === simCharId) return r;
+    }
+    return null;
+  }
+
+  // Replay a server-broadcast claim on the client by running the local sim's
+  // claim() against the shared grid. Uses the matching sim character (id-keyed)
+  // so faction logic uses the right faction id.
+  _applyOnlineClaim(charId, trailPoints, factionId) {
+    const simChar = this.sim.characters[charId];
+    if (!simChar) return;
+    // Reconstruct trailVerts on the sim char from the flat [x, z, x, z, ...] array.
+    simChar.trailVerts = [];
+    for (let i = 0; i < trailPoints.length; i += 2) {
+      simChar.trailVerts.push({ x: trailPoints[i], z: trailPoints[i + 1] });
+    }
+    // Server may have reassigned faction — sync.
+    simChar.factionId = factionId;
+    // Run sim.claim() against the aliased grid. With onClaim/onHeal nulled out,
+    // this won't re-broadcast; it'll just mutate territoryGrid.grid in place.
+    this.sim.claim(simChar);
+    // Clear renderer trail mesh — claim consumed the trail.
+    const r = this._findRendererCharBySimId(charId);
+    if (r) r._clearTrail();
+    this.territoryDirty = true;
+  }
+
   _initRendererFromOnlineState(state) {
-    // Online mode does not run the local sim. Initialize a blank territory
-    // grid so the texture rasterizer doesn't crash; Task 16 will sync claims.
-    territoryGrid.init();
+    // Online mode: keep a local Simulation around so we can re-run claim() to
+    // mutate the shared territoryGrid.grid in lockstep with the server. We
+    // never call sim.tick() in online mode — only sim.claim() on incoming
+    // claim events, against a grid alias shared with territoryGrid.
+    this.sim.start();
+    // Alias the renderer's territoryGrid.grid to sim.grid so the texture
+    // rasterizer reads the same buffer that sim.claim() writes. The server's
+    // gridSnapshot message will overwrite this with authoritative data.
+    territoryGrid.grid = this.sim.grid;
+    territoryGrid.totalArenaCells = this.sim.totalArenaCells;
+    // If a gridSnapshot arrived before the schema state, apply it now.
+    if (this._pendingSnapshot) {
+      territoryGrid.grid.set(this._pendingSnapshot);
+      this._pendingSnapshot = null;
+      this._flushOnlineEventQueue();
+      console.log("[online] applied buffered gridSnapshot after state init");
+    }
+    // Suppress event re-emission on the client: we don't want our local
+    // sim.claim() to fire onClaim/onHeal again (we already applied them).
+    this.sim.onClaim = null;
+    this.sim.onHeal = null;
     this.factionManager = null;
     this.matchManager = { phase: "playing", timeRemaining: 0, getTimeString: () => "" };
     this.scoreTracker = null;

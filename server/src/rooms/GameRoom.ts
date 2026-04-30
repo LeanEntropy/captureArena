@@ -1,4 +1,5 @@
 import { Room, Client } from "@colyseus/core";
+import { gzipSync } from "zlib";
 import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameState.js";
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
@@ -139,7 +140,12 @@ export class GameRoom extends Room<GameStateSchema> {
 
   onJoin(client: Client) {
     this.clientMeta.set(client.sessionId, { charId: null, playerToken: null });
-    console.log(`[GameRoom] join: ${client.sessionId}`);
+    // Send the current territory grid as a gzipped snapshot so the new client
+    // can populate its local grid copy. Subsequent claim/heal events keep the
+    // copy in sync.
+    const compressed = gzipSync(Buffer.from(this.sim.grid));
+    client.send("gridSnapshot", { bytes: compressed.toString("base64") });
+    console.log(`[GameRoom] join: ${client.sessionId} (snapshot ${compressed.length} bytes gzip)`);
   }
 
   onLeave(client: Client) {

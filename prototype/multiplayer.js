@@ -14,6 +14,7 @@ export class MultiplayerClient {
     this.onTrailVertex = null;  // (charId, x, z) => void
     this.onKill = null;         // (killerId, victimId) => void
     this.onYourCharId = null;   // (charId) => void
+    this.onGridSnapshot = null; // (b64) => void
   }
 
   async connect(playerName, playerToken) {
@@ -35,6 +36,9 @@ export class MultiplayerClient {
     });
     this.room.onMessage("yourCharId", ({ charId }) => {
       if (this.onYourCharId) this.onYourCharId(charId);
+    });
+    this.room.onMessage("gridSnapshot", ({ bytes }) => {
+      if (this.onGridSnapshot) this.onGridSnapshot(bytes);
     });
     return this.room;
   }
