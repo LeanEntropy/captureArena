@@ -1141,23 +1141,39 @@ class Game {
   // Client-side prediction step for the local online player. Mirrors the
   // server's Simulation._stepCharacter math (TURN_SPEED rad/s steer,
   // PLAYER_SPEED * dt advance, arena-radius clamp). Reconciles to the
-  // authoritative server position when drift exceeds a small threshold.
+  // authoritative server position via a soft tether instead of a hard snap:
+  // small drifts (< RECON_HARD_SNAP) are pulled toward server pos at
+  // RECON_PULL_RATE per second so movement looks smooth; large drifts (e.g.
+  // respawn / teleport) hard-snap so the player doesn't slide across the
+  // map. Without input prediction the round-trip lag (~150-200ms) makes the
+  // local character feel rubbery; with the old 2-unit snap, every direction
+  // change naturally drifted past threshold and visibly teleported. The
+  // soft pull keeps the predicted pos within ~1 unit of the server while
+  // never visibly jumping.
   _stepPrediction(dt) {
     if (this.mode !== "online") return;
     if (!this.player || !this.predicted) return;
     if (!this.player.alive) return;
 
     const sc = this.player.simChar;
-    // Reconcile: snap predicted state if the server's authoritative position
-    // has diverged by more than ~2 units (e.g. server-side correction,
-    // collision, respawn). The visual lerp in syncVisuals smooths the snap.
+    const RECON_HARD_SNAP = 8;       // units — only respawn/teleport scale
+    const RECON_PULL_RATE = 5;       // units/sec of drift correction
     const ddx = sc.pos.x - this.predicted.posX;
     const ddz = sc.pos.z - this.predicted.posZ;
-    if (ddx * ddx + ddz * ddz > 4) {
+    const distSq = ddx * ddx + ddz * ddz;
+    if (distSq > RECON_HARD_SNAP * RECON_HARD_SNAP) {
+      // Catastrophic drift (respawn, teleport, extended disconnect) — snap.
       this.predicted.posX = sc.pos.x;
       this.predicted.posZ = sc.pos.z;
       this.predicted.dirX = sc.dir.x || this.predicted.dirX;
       this.predicted.dirZ = sc.dir.z || this.predicted.dirZ;
+    } else if (distSq > 1e-6) {
+      // Soft tether: pull predicted toward server at RECON_PULL_RATE u/s.
+      // Clamped so a single frame can't pull more than the actual drift.
+      const dist = Math.sqrt(distSq);
+      const pull = Math.min(1, (RECON_PULL_RATE * dt) / dist);
+      this.predicted.posX += ddx * pull;
+      this.predicted.posZ += ddz * pull;
     }
 
     // Steer predicted dir toward this.player.targetDir at TURN_SPEED rad/s.
