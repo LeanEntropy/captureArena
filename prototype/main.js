@@ -1,8 +1,8 @@
 import * as THREE from "three";
 
-import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./faction.js";
-import { ScoreTracker } from "./scoring.js";
-import { MatchManager } from "./match.js";
+import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
+import { ScoreTracker } from "./sim/scoring.js";
+import { MatchManager } from "./sim/match.js";
 import { UIManager } from "./ui.js";
 
 // ===================== CONSTANTS =====================

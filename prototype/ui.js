@@ -1,4 +1,4 @@
-import { FACTION_COLORS, FACTION_COUNT } from "./faction.js";
+import { FACTION_COLORS, FACTION_COUNT } from "./sim/faction.js";
 
 // ===================== UI MANAGER =====================
 // Manages HUD elements: timer, faction ranking, player stats, minimap,
