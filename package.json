@@ -1,6 +1,7 @@
 {
   "name": "my-game",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev:server": "pnpm --filter template-server dev",
     "dev:client": "pnpm --filter template-client dev",

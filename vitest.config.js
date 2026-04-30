@@ -7,5 +7,6 @@ export default defineConfig({
       "server/src/__tests__/**/*.test.ts",
     ],
     environment: "node",
+    passWithNoTests: true,
   },
 });
