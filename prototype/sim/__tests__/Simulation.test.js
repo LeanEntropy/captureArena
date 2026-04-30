@@ -45,4 +45,24 @@ describe("Simulation", () => {
     expect(sim.totalArenaCells).toBeGreaterThan(0);
     expect(sim.totalArenaCells).toBeLessThan(GRID_SIZE * GRID_SIZE);
   });
+
+  it("tick advances a character along its dir vector", () => {
+    const c = sim.characters[0];
+    c.setPos(0, 0);
+    c.dir = { x: 1, z: 0 };
+    c.targetDir = { x: 1, z: 0 };
+    const speedBefore = c.speed;
+    sim.tick(0.1);
+    // After 0.1s at default bot speed (6), char should have moved approximately 0.6 along x
+    expect(c.pos.x).toBeGreaterThan(0.3);
+    expect(c.pos.x).toBeLessThan(0.9);
+    expect(Math.abs(c.pos.z)).toBeLessThan(0.05);
+  });
+
+  it("invuln timer decreases over time", () => {
+    const c = sim.characters[0];
+    c.invulnTimer = 1.0;
+    sim.tick(0.5);
+    expect(c.invulnTimer).toBeCloseTo(0.5, 1);
+  });
 });
