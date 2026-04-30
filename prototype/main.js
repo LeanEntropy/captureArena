@@ -35,6 +35,17 @@ function dlog(category, msg, data) {
   try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); } catch(e) {}
 }
 
+// ===================== SHAPE DIAGNOSTICS =====================
+const SHAPE_DIAG = [];
+window.shapeDiagnostics = SHAPE_DIAG;
+const SHAPE_DIAG_MAX = 600; // 5 minutes at 2/sec
+let shapeDiagSampleCount = 0;
+let shapeDiagTimer = 0;
+const SHAPE_DIAG_INTERVAL = 0.5; // seconds between samples
+const SHAPE_DIAG_SAVE_EVERY = 10; // save to localStorage every N samples
+
+window.dumpShapeDiag = () => JSON.stringify(SHAPE_DIAG);
+
 // ===================== TERRITORY GRID =====================
 const GRID_SIZE = 1024;
 const WORLD_MIN = -ARENA_RADIUS;  // -24.5
@@ -296,7 +307,7 @@ const territoryGrid = {
         });
 
         // Simplify with RDP
-        const simplified = simplifyContour(worldLoop, 0.15);
+        const simplified = simplifyContour(worldLoop, 0.08);
         if (simplified.length >= 3) {
           loops.push(simplified);
         }
@@ -307,65 +318,57 @@ const territoryGrid = {
   },
 
   floodFillConnected(ownerId, startWX, startWZ) {
-    // Flood fill from world position to find all connected cells of ownerId.
+    // Find all connected components of ownerId and keep only the largest.
     // Returns count of disconnected cells cleared.
-    const { gx: startGX, gy: startGY } = this.worldToGrid(startWX, startWZ);
+    const visited = new Uint8Array(GRID_SIZE * GRID_SIZE);
+    const components = []; // array of cell index arrays
 
-    // If start cell doesn't belong to owner, find nearest owned cell
-    let sgx = startGX, sgy = startGY;
-    if (this.getOwnerGrid(sgx, sgy) !== ownerId) {
-      // Search nearby for an owned cell
-      let found = false;
-      for (let r = 1; r < 100 && !found; r++) {
-        for (let dy = -r; dy <= r && !found; dy++) {
-          for (let dx = -r; dx <= r && !found; dx++) {
-            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only check ring
-            const nx = sgx + dx, ny = sgy + dy;
-            if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-              if (this.grid[ny * GRID_SIZE + nx] === ownerId) {
-                sgx = nx;
-                sgy = ny;
-                found = true;
-              }
-            }
-          }
+    for (let i = 0; i < this.grid.length; i++) {
+      if (this.grid[i] !== ownerId || visited[i]) continue;
+
+      // BFS from this cell to discover its connected component
+      const component = [];
+      const gy0 = Math.floor(i / GRID_SIZE);
+      const gx0 = i % GRID_SIZE;
+      const queue = [gx0, gy0];
+      visited[i] = 1;
+      let head = 0;
+
+      while (head < queue.length) {
+        const cx = queue[head++];
+        const cy = queue[head++];
+        component.push(cy * GRID_SIZE + cx);
+
+        const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
+        for (const [nx, ny] of neighbors) {
+          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+          const nIdx = ny * GRID_SIZE + nx;
+          if (visited[nIdx] || this.grid[nIdx] !== ownerId) continue;
+          visited[nIdx] = 1;
+          queue.push(nx, ny);
         }
       }
-      if (!found) return 0; // no owned cells at all
+
+      components.push(component);
     }
 
-    // BFS flood fill to mark connected cells
-    const visited = new Uint8Array(GRID_SIZE * GRID_SIZE);
-    const queue = [sgx, sgy]; // flat pairs
-    visited[sgy * GRID_SIZE + sgx] = 1;
-    let head = 0;
+    if (components.length <= 1) return 0; // already connected (or empty)
 
-    while (head < queue.length) {
-      const cx = queue[head++];
-      const cy = queue[head++];
-
-      const neighbors = [
-        [cx - 1, cy], [cx + 1, cy],
-        [cx, cy - 1], [cx, cy + 1]
-      ];
-      for (const [nx, ny] of neighbors) {
-        if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
-        const nIdx = ny * GRID_SIZE + nx;
-        if (visited[nIdx]) continue;
-        if (this.grid[nIdx] !== ownerId) continue;
-        visited[nIdx] = 1;
-        queue.push(nx, ny);
-      }
+    // Keep the largest component, clear the rest
+    let largestIdx = 0;
+    for (let i = 1; i < components.length; i++) {
+      if (components[i].length > components[largestIdx].length) largestIdx = i;
     }
 
-    // Clear any unvisited cells that belong to this owner
     let cleared = 0;
-    for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] === ownerId && !visited[i]) {
-        this.grid[i] = 0;
+    for (let i = 0; i < components.length; i++) {
+      if (i === largestIdx) continue;
+      for (const cellIdx of components[i]) {
+        this.grid[cellIdx] = 0;
         cleared++;
       }
     }
+
     return cleared;
   }
 };
@@ -557,54 +560,83 @@ class Character {
     this.contourLoops = territoryGrid.extractContours(this.ownerId);
     if (this.contourLoops.length === 0) return;
 
-    // Sort loops by area descending: largest is outer boundary, smaller are holes
-    this.contourLoops.sort((a, b) => polyArea(b) - polyArea(a));
+    const MIN_LOOP_AREA = 0.5; // ignore tiny contour artifacts
 
-    const MIN_HOLE_AREA = 0.5; // ignore tiny contour artifacts (< ~200 grid cells)
+    // Classify loops by winding: CCW (signedArea > 0) = outer boundaries, CW = holes
+    const outers = []; // {loop, area, signedArea}
+    const holes = [];  // {loop, area, signedArea}
 
-    const outer = this.contourLoops[0];
-    const holes = [];
-    for (let i = 1; i < this.contourLoops.length; i++) {
-      const loop = this.contourLoops[i];
-      const area = polyArea(loop);
-      if (area < MIN_HOLE_AREA) continue; // skip tiny artifacts
-
-      // Check winding direction via signed area
+    for (const loop of this.contourLoops) {
       let signedArea = 0;
       for (let j = 0; j < loop.length; j++) {
         const k = (j + 1) % loop.length;
         signedArea += loop[j].x * loop[k].y - loop[k].x * loop[j].y;
       }
-      // Only treat as hole if winding is CW (signedArea < 0), opposite to CCW outer
-      // If same winding (CCW, signedArea > 0), it's a disconnected island — skip
+      const area = Math.abs(signedArea / 2);
+      if (area < MIN_LOOP_AREA) continue; // skip tiny artifacts
+
       if (signedArea < 0) {
-        holes.push(loop);
+        // Marching squares produces CW outers; reverse to CCW for earcut
+        outers.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
+      } else {
+        // Marching squares produces CCW holes; reverse to CW for earcut
+        holes.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
       }
     }
 
-    // Build flat coords for earcut
-    const coords = [];
-    for (const p of outer) { coords.push(p.x, p.y); }
-    const holeIndices = [];
+    if (outers.length === 0) return;
+
+    // For each hole, assign it to the smallest outer boundary that contains it
+    // (smallest containing outer is the most specific parent)
+    // Sort outers by area ascending so we check smallest first
+    outers.sort((a, b) => a.area - b.area);
+    const holesByOuter = new Map();
+    for (const outer of outers) holesByOuter.set(outer, []);
+
     for (const hole of holes) {
-      holeIndices.push(coords.length / 2);
-      for (const p of hole) { coords.push(p.x, p.y); }
+      const testPt = hole.loop[0];
+      for (const outer of outers) {
+        if (pointInPoly(testPt.x, testPt.y, outer.loop)) {
+          holesByOuter.get(outer).push(hole.loop);
+          break; // assigned to smallest containing outer
+        }
+      }
     }
 
-    const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
-    if (indices.length < 3) return;
+    // Triangulate each outer boundary + its holes, combine into one mesh
+    const allCoords = [];
+    const allIndices = [];
+    let vertexOffset = 0;
 
-    const totalPts = coords.length / 2;
-    const pos = new Float32Array(totalPts * 3);
-    for (let i = 0; i < totalPts; i++) {
-      pos[i * 3] = coords[i * 2];       // x (world)
-      pos[i * 3 + 1] = 0.02;            // y (slightly above ground)
-      pos[i * 3 + 2] = coords[i * 2 + 1]; // z (world y -> three.js z)
+    for (const outer of outers) {
+      const coords = [];
+      for (const p of outer.loop) coords.push(p.x, p.y);
+      const holeIndices = [];
+      const assignedHoles = holesByOuter.get(outer);
+
+      for (const holeLoop of assignedHoles) {
+        holeIndices.push(coords.length / 2);
+        for (const p of holeLoop) coords.push(p.x, p.y);
+      }
+
+      const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
+      for (const idx of indices) {
+        allIndices.push(idx + vertexOffset);
+      }
+
+      const totalPts = coords.length / 2;
+      for (let i = 0; i < totalPts; i++) {
+        allCoords.push(coords[i * 2], 0.02, coords[i * 2 + 1]);
+      }
+      vertexOffset += totalPts;
     }
 
+    if (allIndices.length < 3) return;
+
+    const pos = new Float32Array(allCoords);
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.setIndex(indices);
+    geom.setIndex(allIndices);
     geom.computeVertexNormals();
 
     this.areaMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
@@ -879,6 +911,95 @@ class Character {
   }
 }
 
+// ===================== SHAPE DIAGNOSTICS SAMPLING =====================
+let shapeDiagFrameCount = 0;
+
+function signedPolyArea(pts) {
+  let a = 0;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const j = (i + 1) % n;
+    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return a / 2;
+}
+
+function sampleShapeDiagnostics(characters) {
+  const sample = {
+    t: performance.now(),
+    frame: shapeDiagFrameCount,
+    characters: []
+  };
+
+  for (const c of characters) {
+    const gridCells = territoryGrid.countCells(c.ownerId);
+    const gridArea = gridCells * CELL_SIZE * CELL_SIZE;
+
+    const contourData = [];
+    let contourTotalArea = 0;
+    if (c.contourLoops) {
+      for (const loop of c.contourLoops) {
+        const sa = signedPolyArea(loop);
+        const absArea = Math.abs(sa);
+        contourTotalArea += absArea;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of loop) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+
+        contourData.push({
+          vertCount: loop.length,
+          area: absArea,
+          signedArea: sa,
+          bbox: { minX, minY, maxX, maxY }
+        });
+      }
+    }
+
+    let meshExists = false;
+    let meshVertexCount = 0;
+    let meshTriCount = 0;
+    if (c.areaMesh && c.areaMesh.geometry) {
+      meshExists = true;
+      const geom = c.areaMesh.geometry;
+      const posAttr = geom.getAttribute("position");
+      if (posAttr) meshVertexCount = posAttr.count;
+      if (geom.index) meshTriCount = geom.index.count / 3;
+    }
+
+    const areaRatio = gridArea > 0 ? contourTotalArea / gridArea : 0;
+
+    sample.characters.push({
+      name: c.name,
+      ownerId: c.ownerId,
+      alive: c.alive,
+      pos: { x: c.pos.x, z: c.pos.z },
+      gridCells,
+      contourCount: c.contourLoops ? c.contourLoops.length : 0,
+      contours: contourData,
+      meshExists,
+      meshVertexCount,
+      meshTriCount,
+      gridArea,
+      contourTotalArea,
+      areaRatio
+    });
+  }
+
+  SHAPE_DIAG.push(sample);
+  if (SHAPE_DIAG.length > SHAPE_DIAG_MAX) SHAPE_DIAG.shift();
+  shapeDiagSampleCount++;
+
+  if (shapeDiagSampleCount % SHAPE_DIAG_SAVE_EVERY === 0) {
+    try {
+      localStorage.setItem("captureArena_shapeDiag", JSON.stringify(SHAPE_DIAG));
+    } catch (e) { /* localStorage full or unavailable */ }
+  }
+}
+
 // ===================== GAME =====================
 class Game {
   constructor() {
@@ -1109,6 +1230,14 @@ class Game {
 
     // HUD
     this._updateHUD();
+
+    // Shape diagnostics sampling
+    shapeDiagFrameCount++;
+    shapeDiagTimer += dt;
+    if (shapeDiagTimer >= SHAPE_DIAG_INTERVAL) {
+      shapeDiagTimer -= SHAPE_DIAG_INTERVAL;
+      sampleShapeDiagnostics(this.characters);
+    }
   }
 
   _killCharacter(victim, killer) {
