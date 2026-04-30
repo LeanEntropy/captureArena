@@ -10,7 +10,6 @@ export const BOT_SPEED = 6;
 export const TURN_SPEED = 5;
 
 // Trail
-export const TRAIL_WIDTH = 0.8;
 export const TRAIL_KILL_DIST = 0.6;
 export const SELF_TRAIL_SKIP = 5;
 
@@ -18,10 +17,6 @@ export const SELF_TRAIL_SKIP = 5;
 export const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 export const RESPAWN_DELAY = 3;
 export const INVULN_TIME = 2;
-
-// Camera
-export const CAMERA_HEIGHT = 34;
-export const CAMERA_Z_OFFSET = 26;
 
 // Gameplay
 export const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss

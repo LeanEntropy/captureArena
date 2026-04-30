@@ -6,11 +6,16 @@ import { MatchManager } from "./sim/match.js";
 import { UIManager } from "./ui.js";
 import {
   ARENA_RADIUS, MIN_POINT_DIST, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
-  TRAIL_WIDTH, TRAIL_KILL_DIST, SELF_TRAIL_SKIP, BOT_COUNT,
-  RESPAWN_DELAY, INVULN_TIME, CAMERA_HEIGHT, CAMERA_Z_OFFSET,
+  TRAIL_KILL_DIST, SELF_TRAIL_SKIP, BOT_COUNT,
+  RESPAWN_DELAY, INVULN_TIME,
   CONTINUOUS_LAND, BOT_NAMES,
   GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
 } from "./sim/constants.js";
+
+// Renderer-only tuning (client-side; not part of shared simulation)
+const CAMERA_HEIGHT = 34;
+const CAMERA_Z_OFFSET = 26;
+const TRAIL_WIDTH = 0.8;
 
 // ===================== DEBUG LOG =====================
 const DEBUG_LOG = [];
