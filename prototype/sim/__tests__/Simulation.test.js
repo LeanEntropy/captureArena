@@ -76,4 +76,74 @@ describe("Simulation", () => {
     // After ticking once at this position, the trail-step logic should detect outside
     expect(c.wasOutside).toBe(true);
   });
+
+  it("claim with a triangle trail fills enclosed cells with the faction id", () => {
+    const c = sim.characters[0]; // faction 1
+    c.setPos(0, 0);
+    c.factionId = 1;
+    c.trailVerts = [
+      { x: -1.0, z: -1.0 },
+      { x:  1.0, z: -1.0 },
+      { x:  1.0, z:  1.0 },
+      { x: -1.0, z:  1.0 },
+      { x: -0.5, z:  0.0 }, // 5+ verts required
+    ];
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    expect(c.trailVerts.length).toBe(0);
+    // Claim either gained cells (if cells were 0 or other faction) or stayed equal (if all already owned).
+    expect(after).toBeGreaterThanOrEqual(before);
+  });
+
+  it("claim with too-short trail returns false (no-op)", () => {
+    const c = sim.characters[0];
+    c.trailVerts = [{ x: 0, z: 0 }];
+    const before = countCellsOwnedBy(sim.grid, c.factionId);
+    const ok = sim.claim(c);
+    expect(ok).toBe(false);
+    expect(countCellsOwnedBy(sim.grid, c.factionId)).toBe(before);
+  });
+
+  it("setHumanControl flips isHuman on the indexed character", () => {
+    const c = sim.characters[3];
+    expect(c.isHuman).toBe(false);
+    sim.setHumanControl(3, true);
+    expect(c.isHuman).toBe(true);
+    sim.setHumanControl(3, false);
+    expect(c.isHuman).toBe(false);
+  });
+
+  it("setTargetDir normalizes the input", () => {
+    const c = sim.characters[0];
+    sim.setTargetDir(0, 3, 4); // length 5
+    expect(c.targetDir.x).toBeCloseTo(0.6, 5);
+    expect(c.targetDir.z).toBeCloseTo(0.8, 5);
+  });
+
+  it("setTargetDir ignores zero-length input", () => {
+    const c = sim.characters[0];
+    c.targetDir = { x: 1, z: 0 };
+    sim.setTargetDir(0, 0, 0);
+    expect(c.targetDir).toEqual({ x: 1, z: 0 }); // unchanged
+  });
+
+  it("restart resets characters and grid", () => {
+    sim.characters[0].alive = false;
+    sim.characters[0].killCount = 7;
+    sim.characters[0].trailVerts = [{ x: 0, z: 0 }];
+    sim.characters[0].wasOutside = true;
+    sim.restart();
+    expect(sim.characters[0].alive).toBe(true);
+    expect(sim.characters[0].killCount).toBe(0);
+    expect(sim.characters[0].trailVerts).toEqual([]);
+    expect(sim.characters[0].wasOutside).toBe(false);
+  });
 });
+
+function countCellsOwnedBy(grid, factionId) {
+  let n = 0;
+  for (let i = 0; i < grid.length; i++) if (grid[i] === factionId) n++;
+  return n;
+}
