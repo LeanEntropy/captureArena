@@ -16,11 +16,13 @@
     "@colyseus/ws-transport": "^0.16.5",
     "@template/shared": "workspace:*",
     "@template/simulation": "workspace:*",
-    "colyseus": "^0.16.5"
+    "colyseus": "^0.16.5",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@colyseus/testing": "^0.16.3",
     "@colyseus/tools": "^0.16.20",
+    "@types/express": "^5.0.6",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

@@ -1,17 +1,33 @@
-import { Server } from "colyseus";
+import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import http from "http";
 import { GameRoom } from "./rooms/GameRoom.js";
+import express from "express";
+import { createServer } from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const port = Number(process.env.PORT) || 2567;
-const server = http.createServer();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// In dev (`tsx watch src/index.ts`), __dirname is server/src/.
+// In prod (`node dist/index.js`), __dirname is server/dist/.
+// Both resolve to the repo root via "../.." then we go to "prototype/".
+const PROTOTYPE_DIR = path.resolve(__dirname, "../../prototype");
+
+const app = express();
+app.use(express.static(PROTOTYPE_DIR));
+app.get("/health", (_req, res) => { res.send("ok"); });
+
+const httpServer = createServer(app);
 
 const gameServer = new Server({
-  transport: new WebSocketTransport({ server }),
+  transport: new WebSocketTransport({ server: httpServer }),
 });
 
 gameServer.define("game", GameRoom);
 
-server.listen(port, () => {
-  console.log(`Game server listening on port ${port}`);
+const PORT = Number(process.env.PORT ?? 2567);
+httpServer.listen(PORT, () => {
+  console.log(`[Server] listening on http://localhost:${PORT}`);
+  console.log(`[Server] static: ${PROTOTYPE_DIR}`);
 });
