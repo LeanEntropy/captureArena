@@ -519,28 +519,38 @@ class Character {
     this.dir.set(tgtDirX, 0, tgtDirZ);
     this.factionId = this.simChar.factionId;
 
-    // Frame-rate independent lerp toward target (smooths 20 Hz server updates
-    // over ~3 frames at 60 FPS). Snap if too far (prevents long lerps after
-    // teleport / respawn / drift reconciliation).
-    const t = 0.30;
-    let mx = this.group.position.x;
-    let mz = this.group.position.z;
-    const dx = tgtX - mx;
-    const dz = tgtZ - mz;
-    if (dx * dx + dz * dz > 9) {
-      // > 3 units away: snap.
-      this.group.position.set(tgtX, this.group.position.y, tgtZ);
+    // Local player (solo or online-with-prediction) is already authoritative:
+    // sim pos is exact for solo; predicted pos is already advanced this frame
+    // for online. Lerping would introduce ~3-frame visual lag. Snap directly.
+    // Remote characters keep the lerp to smooth 20 Hz server updates.
+    if (this.isPlayer) {
+      this.group.position.x = tgtX;
+      this.group.position.z = tgtZ;
+      this.group.rotation.y = Math.atan2(tgtDirX, tgtDirZ);
     } else {
-      this.group.position.x = mx + dx * t;
-      this.group.position.z = mz + dz * t;
-    }
+      // Frame-rate independent lerp toward target (smooths 20 Hz server updates
+      // over ~3 frames at 60 FPS). Snap if too far (prevents long lerps after
+      // teleport / respawn / drift reconciliation).
+      const t = 0.30;
+      let mx = this.group.position.x;
+      let mz = this.group.position.z;
+      const dx = tgtX - mx;
+      const dz = tgtZ - mz;
+      if (dx * dx + dz * dz > 9) {
+        // > 3 units away: snap.
+        this.group.position.set(tgtX, this.group.position.y, tgtZ);
+      } else {
+        this.group.position.x = mx + dx * t;
+        this.group.position.z = mz + dz * t;
+      }
 
-    // Shortest-arc lerp of rotation.
-    const targetRot = Math.atan2(tgtDirX, tgtDirZ);
-    let drot = targetRot - this.group.rotation.y;
-    while (drot > Math.PI) drot -= 2 * Math.PI;
-    while (drot < -Math.PI) drot += 2 * Math.PI;
-    this.group.rotation.y += drot * t;
+      // Shortest-arc lerp of rotation.
+      const targetRot = Math.atan2(tgtDirX, tgtDirZ);
+      let drot = targetRot - this.group.rotation.y;
+      while (drot > Math.PI) drot -= 2 * Math.PI;
+      while (drot < -Math.PI) drot += 2 * Math.PI;
+      this.group.rotation.y += drot * t;
+    }
 
     this.group.visible = (this.isPlayer && this.invulnTimer > 0)
       ? Math.sin(performance.now() * 0.01) > 0
