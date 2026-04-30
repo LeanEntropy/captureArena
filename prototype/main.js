@@ -1,9 +1,12 @@
 import * as THREE from "three";
 import earcut from "earcut";
+import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./faction.js";
+import { ScoreTracker } from "./scoring.js";
+import { MatchManager } from "./match.js";
+import { UIManager } from "./ui.js";
 
 // ===================== CONSTANTS =====================
 const ARENA_RADIUS = 24.5;
-const START_RADIUS = 3;
 const MIN_POINT_DIST = 0.3;
 const PLAYER_SPEED = 8;
 const BOT_SPEED = 6;
@@ -11,17 +14,15 @@ const TURN_SPEED = 5;
 const TRAIL_WIDTH = 0.8;
 const TRAIL_KILL_DIST = 0.6;
 const SELF_TRAIL_SKIP = 5;
-const BOT_COUNT = 2;
+const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
 const CAMERA_HEIGHT = 30;
 const CAMERA_Z_OFFSET = 14;
-const TOTAL_AREA = Math.PI * ARENA_RADIUS * ARENA_RADIUS;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
-const COLORS = [0x4CAF50, 0x2196F3, 0xFF9800, 0xE91E63, 0x9C27B0, 0x00BCD4, 0xCDDC39, 0xFF5722];
-const BOT_NAMES = ["K-9","Lime","Toe","Leaf Assassin","Helmet Destroyer","Star Jammer","Sky Bully","Daisy Stick"];
+const BOT_NAMES = ["K-9","Lime","Toe","Leaf Assassin","Helmet Destroyer","Star Jammer","Sky Bully","Daisy Stick","Claw","Blitz","Nova","Shade","Rook","Pixel","Echo","Drift","Fang","Jinx","Bolt"];
 
 // ===================== DEBUG LOG =====================
 const DEBUG_LOG = [];
@@ -34,17 +35,6 @@ function dlog(category, msg, data) {
   console.log(`[${entry.t}][${category}] ${msg}`, data || "");
   try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); } catch(e) {}
 }
-
-// ===================== SHAPE DIAGNOSTICS =====================
-const SHAPE_DIAG = [];
-window.shapeDiagnostics = SHAPE_DIAG;
-const SHAPE_DIAG_MAX = 600; // 5 minutes at 2/sec
-let shapeDiagSampleCount = 0;
-let shapeDiagTimer = 0;
-const SHAPE_DIAG_INTERVAL = 0.5; // seconds between samples
-const SHAPE_DIAG_SAVE_EVERY = 10; // save to localStorage every N samples
-
-window.dumpShapeDiag = () => JSON.stringify(SHAPE_DIAG);
 
 // ===================== TERRITORY GRID =====================
 const GRID_SIZE = 1024;
@@ -412,19 +402,6 @@ function simplifyContour(points, epsilon) {
   return result.length >= 3 ? result : points;
 }
 
-// ===================== TRIANGULATOR (earcut) =====================
-function triangulate(pts) {
-  const n = pts.length;
-  if (n < 3) return [];
-  const coords = new Array(n * 2);
-  for (let i = 0; i < n; i++) {
-    coords[i * 2] = pts[i].x;
-    coords[i * 2 + 1] = pts[i].y;
-  }
-  const indices = earcut(coords);
-  return indices.length >= 3 ? indices : [];
-}
-
 // ===================== GEOMETRY HELPERS =====================
 function pointInPoly(px, py, poly) {
   let inside = false;
@@ -442,7 +419,6 @@ function polyArea(pts) {
   }
   return Math.abs(a / 2);
 }
-function to2D(v3arr) { return v3arr.map(v => ({ x: v.x, y: v.z })); }
 function closestIdx(verts, target) {
   let best = 0, bestD = Infinity;
   for (let i = 0; i < verts.length; i++) {
@@ -455,28 +431,6 @@ function closestIdx(verts, target) {
 function dist2D(a, b) {
   const dx = a.x-b.x, dz = a.z-b.z;
   return Math.sqrt(dx*dx + dz*dz);
-}
-
-function randomSpawn(characters) {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = ARENA_RADIUS * (0.2 + Math.random() * 0.5);
-    const x = Math.cos(angle) * r, z = Math.sin(angle) * r;
-    let ok = true;
-    // Reject spawn near any alive character
-    for (const c of characters) {
-      if (c.alive && dist2D({x,z}, c.pos) < 10) { ok = false; break; }
-    }
-    // Reject spawn inside ANY character's territory
-    if (ok) {
-      if (territoryGrid.getOwner(x, z) !== 0) {
-        ok = false;
-      }
-    }
-    if (ok) return { x, z };
-  }
-  const a = Math.random() * Math.PI * 2, r = ARENA_RADIUS * 0.4;
-  return { x: Math.cos(a)*r, z: Math.sin(a)*r };
 }
 
 // ===================== CHARACTER =====================
@@ -494,10 +448,7 @@ class Character {
     this.respawnTimer = 0;
     this.invulnTimer = INVULN_TIME;
     this.killCount = 0;
-    this.ownerId = 0; // set when game starts, 1-based
-    this.territoryDirty = true;
-    this.contourLoops = []; // cached contour for rendering
-    this.areaMesh = null;
+    this.factionId = 0; // set when game starts, 1-based
     this.trailVerts = [];
     this.trailMesh = null;
     this.wasOutside = false;
@@ -540,111 +491,6 @@ class Character {
     return g;
   }
 
-  _initTerritory() {
-    territoryGrid.stampCircle(this.pos.x, this.pos.z, START_RADIUS, this.ownerId);
-    this.territoryDirty = true;
-    this._rebuildAreaMesh();
-  }
-
-  _rebuildAreaMesh() {
-    if (this.areaMesh) {
-      this.scene.remove(this.areaMesh);
-      this.areaMesh.geometry.dispose();
-      this.areaMesh = null;
-    }
-
-    if (!this.territoryDirty) return;
-    this.territoryDirty = false;
-
-    // Extract contours
-    this.contourLoops = territoryGrid.extractContours(this.ownerId);
-    if (this.contourLoops.length === 0) return;
-
-    const MIN_LOOP_AREA = 0.5; // ignore tiny contour artifacts
-
-    // Classify loops by winding: CCW (signedArea > 0) = outer boundaries, CW = holes
-    const outers = []; // {loop, area, signedArea}
-    const holes = [];  // {loop, area, signedArea}
-
-    for (const loop of this.contourLoops) {
-      let signedArea = 0;
-      for (let j = 0; j < loop.length; j++) {
-        const k = (j + 1) % loop.length;
-        signedArea += loop[j].x * loop[k].y - loop[k].x * loop[j].y;
-      }
-      const area = Math.abs(signedArea / 2);
-      if (area < MIN_LOOP_AREA) continue; // skip tiny artifacts
-
-      if (signedArea < 0) {
-        // Marching squares produces CW outers; reverse to CCW for earcut
-        outers.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
-      } else {
-        // Marching squares produces CCW holes; reverse to CW for earcut
-        holes.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
-      }
-    }
-
-    if (outers.length === 0) return;
-
-    // For each hole, assign it to the smallest outer boundary that contains it
-    // (smallest containing outer is the most specific parent)
-    // Sort outers by area ascending so we check smallest first
-    outers.sort((a, b) => a.area - b.area);
-    const holesByOuter = new Map();
-    for (const outer of outers) holesByOuter.set(outer, []);
-
-    for (const hole of holes) {
-      const testPt = hole.loop[0];
-      for (const outer of outers) {
-        if (pointInPoly(testPt.x, testPt.y, outer.loop)) {
-          holesByOuter.get(outer).push(hole.loop);
-          break; // assigned to smallest containing outer
-        }
-      }
-    }
-
-    // Triangulate each outer boundary + its holes, combine into one mesh
-    const allCoords = [];
-    const allIndices = [];
-    let vertexOffset = 0;
-
-    for (const outer of outers) {
-      const coords = [];
-      for (const p of outer.loop) coords.push(p.x, p.y);
-      const holeIndices = [];
-      const assignedHoles = holesByOuter.get(outer);
-
-      for (const holeLoop of assignedHoles) {
-        holeIndices.push(coords.length / 2);
-        for (const p of holeLoop) coords.push(p.x, p.y);
-      }
-
-      const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
-      for (const idx of indices) {
-        allIndices.push(idx + vertexOffset);
-      }
-
-      const totalPts = coords.length / 2;
-      for (let i = 0; i < totalPts; i++) {
-        allCoords.push(coords[i * 2], 0.02, coords[i * 2 + 1]);
-      }
-      vertexOffset += totalPts;
-    }
-
-    if (allIndices.length < 3) return;
-
-    const pos = new Float32Array(allCoords);
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.setIndex(allIndices);
-    geom.computeVertexNormals();
-
-    this.areaMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
-      color: this.color, transparent: false, opacity: 1.0, side: THREE.DoubleSide, depthWrite: false
-    }));
-    this.scene.add(this.areaMesh);
-  }
-
   _rebuildTrailMesh() {
     if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
     if (this.trailVerts.length < 2) return;
@@ -680,7 +526,7 @@ class Character {
   }
 
   insideOwn(x, z) {
-    return territoryGrid.getOwner(x, z) === this.ownerId;
+    return territoryGrid.getOwner(x, z) === this.factionId;
   }
 
   update(dt) {
@@ -746,7 +592,7 @@ class Character {
     }
     const trail = this.trailVerts;
 
-    const areaBefore = territoryGrid.countCells(this.ownerId);
+    const areaBefore = territoryGrid.countCells(this.factionId);
     dlog("CLAIM", `${this.name}: starting claim`, {
       trailLen: trail.length,
       areaBefore,
@@ -755,9 +601,7 @@ class Character {
     });
 
     // Build a trail polygon by closing the trail loop through the territory boundary.
-    // We need boundary vertices to form the arc. Extract a boundary polygon from contours.
-    // Use fresh contour extraction to get boundary points.
-    const contours = territoryGrid.extractContours(this.ownerId);
+    const contours = territoryGrid.extractContours(this.factionId);
     if (contours.length === 0) {
       dlog("CLAIM", `${this.name}: aborted, no contours found`);
       this._clearTrail();
@@ -795,9 +639,6 @@ class Character {
       const arc = arcFwd.length <= arcBwd.length ? arcFwd : arcBwd;
 
       trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
-      // Include ALL arc points: arc[0] is the boundary point near trail end,
-      // arc[last] is the boundary point near trail start. Skipping them
-      // creates gaps between the trail and boundary, producing broken polygons.
       for (let i = 0; i < arc.length; i++) {
         trailPoly.push(arc[i]);
       }
@@ -823,47 +664,44 @@ class Character {
     }
 
     // Stamp the trail polygon onto the grid
-    const overwritten = territoryGrid.stampPolygon(trailPoly, this.ownerId);
+    const overwritten = territoryGrid.stampPolygon(trailPoly, this.factionId);
 
     dlog("CLAIM", `${this.name}: stamped polygon`, {
       polyVerts: trailPoly.length,
       overwrittenOwners: [...overwritten]
     });
 
-    // Handle CONTINUOUS_LAND for victims
+    // Handle CONTINUOUS_LAND for victims (per-faction flood fill)
     if (CONTINUOUS_LAND && overwritten.size > 0) {
-      for (const victimId of overwritten) {
-        // Find the victim character
-        const victim = this.allCharacters ? this.allCharacters.find(c => c.ownerId === victimId) : null;
-        if (victim) {
-          const cleared = territoryGrid.floodFillConnected(victimId, victim.pos.x, victim.pos.z);
-          if (cleared > 0) {
-            dlog("CONTINUOUS_LAND", `${victim.name}: cleared ${cleared} disconnected cells`);
-          }
-          victim.territoryDirty = true;
-          victim._rebuildAreaMesh();
-        }
-      }
-    } else if (overwritten.size > 0) {
-      // Even without CONTINUOUS_LAND, rebuild overwritten victims' meshes
-      for (const victimId of overwritten) {
-        const victim = this.allCharacters ? this.allCharacters.find(c => c.ownerId === victimId) : null;
-        if (victim) {
-          victim.territoryDirty = true;
-          victim._rebuildAreaMesh();
+      for (const victimFactionId of overwritten) {
+        const cleared = territoryGrid.floodFillConnected(victimFactionId, 0, 0);
+        if (cleared > 0) {
+          dlog("CONTINUOUS_LAND", `faction ${victimFactionId}: cleared ${cleared} disconnected cells`);
         }
       }
     }
 
-    // Rebuild our own mesh
-    this.territoryDirty = true;
-    this._rebuildAreaMesh();
+    // Mark factions dirty for mesh rebuild
+    if (window._game) {
+      window._game.factionsDirty.add(this.factionId);
+      for (const victimFactionId of overwritten) {
+        window._game.factionsDirty.add(victimFactionId);
+      }
+    }
 
-    const areaAfter = territoryGrid.countCells(this.ownerId);
+    const areaAfter = territoryGrid.countCells(this.factionId);
+    const cellsGained = areaAfter - areaBefore;
+
+    // Report to score tracker
+    if (window._scoreTracker && window._factionManager) {
+      if (cellsGained > 0) window._scoreTracker.onCapture(this, cellsGained, window._factionManager);
+      window._scoreTracker.onClaim(this, window._factionManager);
+    }
+
     dlog("CLAIM", `${this.name}: SUCCESS`, {
       cellsBefore: areaBefore,
       cellsAfter: areaAfter,
-      cellsGained: areaAfter - areaBefore,
+      cellsGained,
       areaPct: ((areaAfter / territoryGrid.totalArenaCells) * 100).toFixed(2),
       overwritten: [...overwritten]
     });
@@ -877,14 +715,6 @@ class Character {
   }
 
   die() {
-    territoryGrid.clearOwner(this.ownerId);
-    this.territoryDirty = true;
-    if (this.areaMesh) {
-      this.scene.remove(this.areaMesh);
-      this.areaMesh.geometry.dispose();
-      this.areaMesh = null;
-    }
-    this.contourLoops = [];
     this.alive = false;
     this.respawnTimer = RESPAWN_DELAY;
     this.wasOutside = false;
@@ -900,103 +730,12 @@ class Character {
     this.invulnTimer = INVULN_TIME;
     this.wasOutside = false;
     this.group.visible = true;
-    this._initTerritory();
-    // Reset bot AI state
     this.botWaypoints = [];
     this.botPhase = "idle";
   }
 
   getAreaPct() {
-    return (territoryGrid.countCells(this.ownerId) / territoryGrid.totalArenaCells) * 100;
-  }
-}
-
-// ===================== SHAPE DIAGNOSTICS SAMPLING =====================
-let shapeDiagFrameCount = 0;
-
-function signedPolyArea(pts) {
-  let a = 0;
-  for (let i = 0, n = pts.length; i < n; i++) {
-    const j = (i + 1) % n;
-    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-  }
-  return a / 2;
-}
-
-function sampleShapeDiagnostics(characters) {
-  const sample = {
-    t: performance.now(),
-    frame: shapeDiagFrameCount,
-    characters: []
-  };
-
-  for (const c of characters) {
-    const gridCells = territoryGrid.countCells(c.ownerId);
-    const gridArea = gridCells * CELL_SIZE * CELL_SIZE;
-
-    const contourData = [];
-    let contourTotalArea = 0;
-    if (c.contourLoops) {
-      for (const loop of c.contourLoops) {
-        const sa = signedPolyArea(loop);
-        const absArea = Math.abs(sa);
-        contourTotalArea += absArea;
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const p of loop) {
-          if (p.x < minX) minX = p.x;
-          if (p.y < minY) minY = p.y;
-          if (p.x > maxX) maxX = p.x;
-          if (p.y > maxY) maxY = p.y;
-        }
-
-        contourData.push({
-          vertCount: loop.length,
-          area: absArea,
-          signedArea: sa,
-          bbox: { minX, minY, maxX, maxY }
-        });
-      }
-    }
-
-    let meshExists = false;
-    let meshVertexCount = 0;
-    let meshTriCount = 0;
-    if (c.areaMesh && c.areaMesh.geometry) {
-      meshExists = true;
-      const geom = c.areaMesh.geometry;
-      const posAttr = geom.getAttribute("position");
-      if (posAttr) meshVertexCount = posAttr.count;
-      if (geom.index) meshTriCount = geom.index.count / 3;
-    }
-
-    const areaRatio = gridArea > 0 ? contourTotalArea / gridArea : 0;
-
-    sample.characters.push({
-      name: c.name,
-      ownerId: c.ownerId,
-      alive: c.alive,
-      pos: { x: c.pos.x, z: c.pos.z },
-      gridCells,
-      contourCount: c.contourLoops ? c.contourLoops.length : 0,
-      contours: contourData,
-      meshExists,
-      meshVertexCount,
-      meshTriCount,
-      gridArea,
-      contourTotalArea,
-      areaRatio
-    });
-  }
-
-  SHAPE_DIAG.push(sample);
-  if (SHAPE_DIAG.length > SHAPE_DIAG_MAX) SHAPE_DIAG.shift();
-  shapeDiagSampleCount++;
-
-  if (shapeDiagSampleCount % SHAPE_DIAG_SAVE_EVERY === 0) {
-    try {
-      localStorage.setItem("captureArena_shapeDiag", JSON.stringify(SHAPE_DIAG));
-    } catch (e) { /* localStorage full or unavailable */ }
+    return (territoryGrid.countCells(this.factionId) / territoryGrid.totalArenaCells) * 100;
   }
 }
 
@@ -1039,6 +778,12 @@ class Game {
     this.started = false;
     this.playerName = "";
     this.killedBy = "";
+    this.factionManager = null;
+    this.matchManager = null;
+    this.scoreTracker = null;
+    this.uiManager = null;
+    this.factionMeshes = new Map();
+    this.factionsDirty = new Set();
 
     // Input
     this.mouseNDC = new THREE.Vector2();
@@ -1094,33 +839,69 @@ class Game {
     this.playerName = name;
     this.started = true;
 
-    // Initialize the territory grid
     territoryGrid.init();
 
-    // Create player
-    const sp = randomSpawn([]);
-    this.player = new Character(this.scene, sp.x, sp.z, COLORS[0], name, true);
-    this.player.ownerId = 1;
-    this.characters.push(this.player);
-    this.player._initTerritory();
+    this.factionManager = new FactionManager();
+    this.scoreTracker = new ScoreTracker();
 
-    // Create bots
-    for (let i = 0; i < BOT_COUNT; i++) {
-      const pos = randomSpawn(this.characters);
-      const bot = new Character(this.scene, pos.x, pos.z, COLORS[(i+1) % COLORS.length], BOT_NAMES[i], false);
-      bot.ownerId = i + 2;
-      this.characters.push(bot);
-      bot._initTerritory();
+    this.factionManager.init(
+      territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL
+    );
+
+    window._factionManager = this.factionManager;
+    window._scoreTracker = this.scoreTracker;
+    window._game = this;
+
+    const playerFactionId = Math.floor(Math.random() * FACTION_COUNT) + 1;
+
+    const playerSpawn = this.factionManager.getSpawnPoint(
+      playerFactionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+    );
+    this.player = new Character(this.scene, playerSpawn.x, playerSpawn.z, FACTION_COLORS[playerFactionId - 1], name, true);
+    this.factionManager.addCharacter(this.player, playerFactionId);
+    this.scoreTracker.register(this.player);
+    this.characters.push(this.player);
+
+    let botIdx = 0;
+    for (let fid = 1; fid <= FACTION_COUNT; fid++) {
+      const botsNeeded = (fid === playerFactionId) ? CHARS_PER_FACTION - 1 : CHARS_PER_FACTION;
+      for (let b = 0; b < botsNeeded; b++) {
+        const sp = this.factionManager.getSpawnPoint(
+          fid, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+        );
+        const offset = (b + 1) * 2;
+        const angle = Math.random() * Math.PI * 2;
+        const bx = sp.x + Math.cos(angle) * offset;
+        const bz = sp.z + Math.sin(angle) * offset;
+
+        const bot = new Character(this.scene, bx, bz, FACTION_COLORS[fid - 1], BOT_NAMES[botIdx % BOT_NAMES.length], false);
+        this.factionManager.addCharacter(bot, fid);
+        this.scoreTracker.register(bot);
+        this.characters.push(bot);
+        botIdx++;
+      }
     }
 
-    // Give each character a reference to all characters
     for (const c of this.characters) {
       c.allCharacters = this.characters;
     }
 
-    this.camera.position.set(sp.x, CAMERA_HEIGHT, sp.z + CAMERA_Z_OFFSET);
-    this.camera.lookAt(sp.x, 0, sp.z);
-    this.camCurrent.set(sp.x, 0, sp.z);
+    this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
+    this.matchManager.startMatch();
+
+    this.uiManager = new UIManager(
+      this.factionManager, this.matchManager, this.scoreTracker,
+      territoryGrid.grid, GRID_SIZE, GRID_SENTINEL
+    );
+    this.uiManager.setPlayer(this.player);
+
+    for (let fid = 1; fid <= FACTION_COUNT; fid++) {
+      this._rebuildFactionMesh(fid);
+    }
+
+    this.camera.position.set(playerSpawn.x, CAMERA_HEIGHT, playerSpawn.z + CAMERA_Z_OFFSET);
+    this.camera.lookAt(playerSpawn.x, 0, playerSpawn.z);
+    this.camCurrent.set(playerSpawn.x, 0, playerSpawn.z);
     this.camTarget.copy(this.camCurrent);
   }
 
@@ -1178,15 +959,56 @@ class Game {
       }
     }
 
+    // Match manager update
+    if (this.matchManager) {
+      this.matchManager.update(dt, territoryGrid.grid, GRID_SIZE, GRID_SENTINEL);
+      if (this.matchManager.phase === "ended") {
+        this._updateLabels();
+        if (this.uiManager) this.uiManager.update(dt);
+        // Rebuild any pending faction meshes
+        for (const fid of this.factionsDirty) this._rebuildFactionMesh(fid);
+        this.factionsDirty.clear();
+        return;
+      }
+    }
+
     // Update all characters
     for (const c of this.characters) {
       c.update(dt);
       // Respawn
       if (!c.alive && c.respawnTimer <= 0) {
-        const sp = randomSpawn(this.characters);
-        c.respawn(sp.x, sp.z);
-        dlog("RESPAWN", `${c.name} respawned`, { x: sp.x.toFixed(1), z: sp.z.toFixed(1) });
-        if (c === this.player) this.deathScreen.classList.remove("visible");
+        const faction = this.factionManager._factions.get(c.factionId);
+        if (faction && faction.respawnsEnabled) {
+          const sp = this.factionManager.getSpawnPoint(
+            c.factionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+          );
+          c.respawn(sp.x, sp.z);
+          dlog("RESPAWN", `${c.name} respawned in ${faction.name}`, { x: sp.x.toFixed(1), z: sp.z.toFixed(1) });
+          if (c === this.player) this.deathScreen.classList.remove("visible");
+        } else {
+          const newFaction = this.factionManager.reassignCharacter(c);
+          if (newFaction) {
+            c.color = newFaction.color;
+            c.group.children.forEach(child => {
+              if (child.material && child.material.color) child.material.color.setHex(newFaction.color);
+            });
+            this.scoreTracker.onFactionChange(c);
+            const sp = this.factionManager.getSpawnPoint(
+              c.factionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+            );
+            c.respawn(sp.x, sp.z);
+            dlog("REASSIGN", `${c.name} reassigned to ${newFaction.name}`, { factionId: newFaction.id });
+            if (c === this.player) {
+              this.deathScreen.classList.remove("visible");
+              this.uiManager.setPlayer(this.player);
+            }
+          }
+          for (const [id] of this.factionManager._factions) {
+            if (this.factionManager.checkElimination(id)) {
+              dlog("ELIMINATED", `Faction ${id} eliminated`);
+            }
+          }
+        }
       }
     }
 
@@ -1203,8 +1025,8 @@ class Game {
               break;
             }
           }
-        } else {
-          // Enemy trail collision
+        } else if (other.factionId !== c.factionId) {
+          // Enemy trail collision only
           for (const tv of other.trailVerts) {
             if (dist2D(c.pos, tv) < TRAIL_KILL_DIST) {
               this._killCharacter(other, c);
@@ -1215,6 +1037,12 @@ class Game {
         if (!c.alive) break;
       }
     }
+
+    // Rebuild dirty faction meshes
+    for (const fid of this.factionsDirty) {
+      this._rebuildFactionMesh(fid);
+    }
+    this.factionsDirty.clear();
 
     // Camera
     if (this.player && this.player.alive) {
@@ -1228,16 +1056,8 @@ class Game {
     // Labels
     this._updateLabels();
 
-    // HUD
-    this._updateHUD();
-
-    // Shape diagnostics sampling
-    shapeDiagFrameCount++;
-    shapeDiagTimer += dt;
-    if (shapeDiagTimer >= SHAPE_DIAG_INTERVAL) {
-      shapeDiagTimer -= SHAPE_DIAG_INTERVAL;
-      sampleShapeDiagnostics(this.characters);
-    }
+    // UI
+    if (this.uiManager) this.uiManager.update(dt);
   }
 
   _killCharacter(victim, killer) {
@@ -1247,7 +1067,10 @@ class Game {
       isPlayer: victim.isPlayer
     });
     victim.die();
-    if (killer) killer.killCount++;
+    if (killer) {
+      killer.killCount++;
+      if (this.scoreTracker) this.scoreTracker.onKill(killer, this.factionManager);
+    }
     if (victim === this.player) {
       this.killedBy = killer ? killer.name : "";
       this.deathMsg.textContent = killer ? `Killed by ${killer.name}` : "You died!";
@@ -1257,7 +1080,7 @@ class Game {
 
   _planBotLoop(bot) {
     // If territory was fully consumed, bot has no home -- just wander toward center
-    const cellCount = territoryGrid.countCells(bot.ownerId);
+    const cellCount = territoryGrid.countCells(bot.factionId);
     if (cellCount === 0) {
       dlog("BOT_AI", `${bot.name} has no territory, wandering toward center`);
       bot.botWaypoints = [
@@ -1268,7 +1091,7 @@ class Game {
     }
 
     // Compute territory center from contour loops
-    const contours = territoryGrid.extractContours(bot.ownerId);
+    const contours = territoryGrid.extractContours(bot.factionId);
     if (contours.length === 0) {
       bot.botWaypoints = [
         { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 }
@@ -1286,12 +1109,12 @@ class Game {
     // Convert boundary to Vector3-like for closestIdx
     const boundaryV3 = boundary.map(p => ({ x: p.x, z: p.y }));
 
-    // Decide: aggro (head toward another player's territory) or normal patrol
+    // Decide: aggro (head toward another faction's territory) or normal patrol
     const doAggro = Math.random() < bot.botAggroChance;
     let outAngle;
 
     if (doAggro) {
-      const others = this.characters.filter(o => o !== bot && o.alive && territoryGrid.countCells(o.ownerId) > 0);
+      const others = this.characters.filter(o => o !== bot && o.alive && o.factionId !== bot.factionId && territoryGrid.countCells(o.factionId) > 0);
       if (others.length > 0) {
         const target = others[Math.floor(Math.random() * others.length)];
         outAngle = Math.atan2(target.pos.x - cx, target.pos.z - cz);
@@ -1324,7 +1147,7 @@ class Game {
       const t = i / arcSteps;
       const angle = startArcAngle + (endArcAngle - startArcAngle) * t;
       const pushOut = 2 + loopRadius * Math.sin(t * Math.PI);
-      const r = START_RADIUS + pushOut;
+      const r = pushOut;
       let wx = cx + Math.sin(angle) * r;
       let wz = cz + Math.cos(angle) * r;
       const distFromOrigin = Math.sqrt(wx * wx + wz * wz);
@@ -1372,24 +1195,88 @@ class Game {
     }
   }
 
-  _updateHUD() {
-    if (!this.player) return;
-    const pct = this.player.getAreaPct().toFixed(1);
-    const colorStr = `#${this.player.color.toString(16).padStart(6,"0")}`;
-    this.hudTL.innerHTML = `<div style="background:${colorStr};color:white;padding:4px 12px;border-radius:4px;display:inline-block;margin-bottom:4px;">${pct}%</div><div style="margin-top:4px;">Kills: ${this.player.killCount}</div>`;
-
-    const sorted = [...this.characters].sort((a,b) => b.getAreaPct() - a.getAreaPct());
-    let lb = "<div style='font-weight:bold;margin-bottom:4px;'>Leaderboard</div>";
-    sorted.forEach((c, i) => {
-      const col = `#${c.color.toString(16).padStart(6,"0")}`;
-      const me = c === this.player;
-      lb += `<div style="display:flex;align-items:center;gap:6px;margin:2px 0;${me?"font-weight:bold;":""}"><span style="display:inline-block;width:10px;height:10px;background:${col};border-radius:2px;"></span><span>${i+1}.</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;">${c.name}</span><span>${c.getAreaPct().toFixed(1)}%</span></div>`;
-    });
-    this.hudTR.innerHTML = lb;
-
-    if (!this.player.alive) {
-      this.deathTimer.textContent = `Respawning in ${Math.ceil(this.player.respawnTimer)}...`;
+  _rebuildFactionMesh(factionId) {
+    const oldMesh = this.factionMeshes.get(factionId);
+    if (oldMesh) {
+      this.scene.remove(oldMesh);
+      oldMesh.geometry.dispose();
+      this.factionMeshes.delete(factionId);
     }
+
+    const contourLoops = territoryGrid.extractContours(factionId);
+    if (contourLoops.length === 0) return;
+
+    const MIN_LOOP_AREA = 0.5;
+    const outers = [];
+    const holes = [];
+
+    for (const loop of contourLoops) {
+      let signedArea = 0;
+      for (let j = 0; j < loop.length; j++) {
+        const k = (j + 1) % loop.length;
+        signedArea += loop[j].x * loop[k].y - loop[k].x * loop[j].y;
+      }
+      const area = Math.abs(signedArea / 2);
+      if (area < MIN_LOOP_AREA) continue;
+
+      if (signedArea < 0) {
+        outers.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
+      } else {
+        holes.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
+      }
+    }
+
+    if (outers.length === 0) return;
+
+    outers.sort((a, b) => a.area - b.area);
+    const holesByOuter = new Map();
+    for (const outer of outers) holesByOuter.set(outer, []);
+
+    for (const hole of holes) {
+      const testPt = hole.loop[0];
+      for (const outer of outers) {
+        if (pointInPoly(testPt.x, testPt.y, outer.loop)) {
+          holesByOuter.get(outer).push(hole.loop);
+          break;
+        }
+      }
+    }
+
+    const allCoords = [];
+    const allIndices = [];
+    let vertexOffset = 0;
+
+    for (const outer of outers) {
+      const coords = [];
+      for (const p of outer.loop) coords.push(p.x, p.y);
+      const holeIndices = [];
+      for (const holeLoop of holesByOuter.get(outer)) {
+        holeIndices.push(coords.length / 2);
+        for (const p of holeLoop) coords.push(p.x, p.y);
+      }
+      const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
+      for (const idx of indices) allIndices.push(idx + vertexOffset);
+      const totalPts = coords.length / 2;
+      for (let i = 0; i < totalPts; i++) {
+        allCoords.push(coords[i * 2], 0.02, coords[i * 2 + 1]);
+      }
+      vertexOffset += totalPts;
+    }
+
+    if (allIndices.length < 3) return;
+
+    const pos = new Float32Array(allCoords);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geom.setIndex(allIndices);
+    geom.computeVertexNormals();
+
+    const color = FACTION_COLORS[factionId - 1] || 0x999999;
+    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+      color, transparent: false, opacity: 1.0, side: THREE.DoubleSide, depthWrite: false
+    }));
+    this.scene.add(mesh);
+    this.factionMeshes.set(factionId, mesh);
   }
 
   render() {
