@@ -283,6 +283,7 @@
     .fx-matrix .col-B { background: rgba(90,180,255,0.07); }
     .fx-matrix .col-C { background: rgba(180,150,200,0.07); }
     .fx-matrix .col-D { background: rgba(120,180,90,0.07); }
+    .fx-matrix .col-E { background: rgba(70,160,180,0.10); }
 
     /* Countdown pulse animation — used by the JS overlay */
     @keyframes cd-pulse {
@@ -298,11 +299,12 @@
   </nav>
 
   <main class="container">
-    <h1>Visual Direction Plan <span class="round-tag">Round 2</span></h1>
-    <p class="subtitle">Four art directions with per-direction FX, notifications, banners, countdown, and game-win moments. Each direction now has its OWN claim FX, kill FX, respawn FX, and HUD treatment.</p>
+    <h1>Visual Direction Plan <span class="round-tag">Round 3</span></h1>
+    <p class="subtitle">Five art directions with per-direction FX, notifications, banners, countdown, and game-win moments. Round 3 adds <strong>E — Castaway Atoll</strong> (island in animated water) per Director request.</p>
 
     <div class="intro">
-      <p><strong>What's new in round 2.</strong> Director feedback: the four directions felt too similar — same trigger claim, only 2 distinct kill FX. Round 2 fixes that:</p>
+      <p><strong>What's new in round 3.</strong> Director: "at least one suggestion should be of the background as water or sea and the arena as an island." Added Direction E — Castaway Atoll. Animated procedural water (vertex sin waves + foam ring + sun-glitter, ~0.4ms/frame), grass-on-sand cylindrical island with cube cliff-rocks rim, distant atolls in the haze, a sailor-cap on each character, sundial countdown, and a victory flag that rises on a wooden pole at game-end.</p>
+      <p><strong>What's new in round 2 (kept).</strong> Director feedback: the four directions felt too similar — same trigger claim, only 2 distinct kill FX. Round 2 fixed that:</p>
       <p style="margin-left:18px;">
         <strong>Per-direction claim FX:</strong> A sunburst rays · B shockwave + strobe · C ink-bleed splotches · D stamp wave + dust puff.<br>
         <strong>Per-direction kill FX:</strong> A warm confetti shards · B implode + white shockwave · C white petals float up · D bouncy voxel debris.<br>
@@ -355,15 +357,33 @@
             <th class="col-B">B — Neon Pulse</th>
             <th class="col-C">C — Painted Plains</th>
             <th class="col-D">D — Voxel Plate</th>
+            <th class="col-E">E — Castaway Atoll</th>
           </tr>
         </thead>
         <tbody>
+          <tr>
+            <td>Background</td>
+            <td class="col-A">Peach-to-coral sky gradient, sand outer ring.</td>
+            <td class="col-B">Navy radial fade, dark grid, void.</td>
+            <td class="col-C">Watercolor pastel sky, painted-sea border.</td>
+            <td class="col-D">Light blue sky, dark wood tabletop plate.</td>
+            <td class="col-E">Dawn-peach sky over animated teal sea + foam ring + distant atolls.</td>
+          </tr>
+          <tr>
+            <td>Arena treatment</td>
+            <td class="col-A">Cream ground.</td>
+            <td class="col-B">Dark slate ground.</td>
+            <td class="col-C">Parchment-grain ground.</td>
+            <td class="col-D">Grass with faction dither.</td>
+            <td class="col-E">Grass top on raised sand cylinder, cube cliff-rocks rim it.</td>
+          </tr>
           <tr>
             <td>Claim FX</td>
             <td class="col-A">Sunburst — 8 light rays radiate from entry, soft cream flash on territory, 0.4s.</td>
             <td class="col-B">Shockwave — expanding cyan ring + 60Hz strobe on territory, sharp 0.28s.</td>
             <td class="col-C">Ink-bleed — slow watercolor bloom + 5 ink splotches near entry, 0.7s.</td>
             <td class="col-D">Stamp wave — wave radiates from entry across faction territory + dust puff, 0.45s.</td>
+            <td class="col-E">Wave-ripple — 3 concentric water rings + 8 droplet splatters, 0.55s.</td>
           </tr>
           <tr>
             <td>Kill FX</td>
@@ -371,6 +391,7 @@
             <td class="col-B">Implode — particles converge to corpse + white shockwave ring, 0.65s.</td>
             <td class="col-C">Petals — 14 white squares float up with wobble, 1.6s.</td>
             <td class="col-D">Voxel debris — 12 cubes bounce on ground, gravity + rotation, 1.2s.</td>
+            <td class="col-E">Splash — 14 light-blue droplets shoot up + 2 white foam rings expand, 1.1s.</td>
           </tr>
           <tr>
             <td>Respawn FX</td>
@@ -378,6 +399,7 @@
             <td class="col-B">Glitch-in — character flickers visible 3 times + cyan scanline sweeps up.</td>
             <td class="col-C">Page-turn — ink drop spreads, character "blooms" with soft overshoot.</td>
             <td class="col-D">Build-up — character rises from below ground + white dust puffs.</td>
+            <td class="col-E">Wash-ashore — character rises from below + 2 foam rings sweep + droplets.</td>
           </tr>
           <tr>
             <td>Notification toast</td>
@@ -385,6 +407,7 @@
             <td class="col-B">Terminal-green-on-navy, "&gt; " prefix, Space Mono, neon glow.</td>
             <td class="col-C">Parchment card, dashed faction-color border, Caveat Brush hand-letter.</td>
             <td class="col-D">Wooden tag — dark wood BG, cream text, faction stripe, Lilita One.</td>
+            <td class="col-E">Driftwood plank — sun-bleached wood gradient, double-stripe faction edge.</td>
           </tr>
           <tr>
             <td>Faction banner</td>
@@ -392,6 +415,7 @@
             <td class="col-B">Sharp horizontal cyber-stripe, no border-radius, mono font, glow.</td>
             <td class="col-C">Rolled-scroll asymmetric border-radius, italic.</td>
             <td class="col-D">Wooden stamp — solid faction BG, dark border, Lilita One block lettering.</td>
+            <td class="col-E">Sail banner — canvas gradient, faction-color top stripe, rope edge curl.</td>
           </tr>
           <tr>
             <td>Countdown</td>
@@ -399,6 +423,7 @@
             <td class="col-B">Dark monospace, cyan glow, lettered spacing, pulse animation when intense.</td>
             <td class="col-C">Parchment, dashed border, hand-lettered, scale-up when intense.</td>
             <td class="col-D">Dark wood block, yellow text, Lilita One, chunky shadow.</td>
+            <td class="col-E">Sundial — round sandy disc with brass accent, coral when critical.</td>
           </tr>
           <tr>
             <td>Game win FX</td>
@@ -406,6 +431,7 @@
             <td class="col-B">3 expanding rings from center + DOM grid sweep + tint flash.</td>
             <td class="col-C">Arena-wide watercolor wash in winning color + DOM radial bloom.</td>
             <td class="col-D">30 voxel cubes rain down in winning color, bouncing.</td>
+            <td class="col-E">Faction flag rises on a wooden pole at center + 3 foam-ring sweeps + 3 seagulls cross sky.</td>
           </tr>
           <tr>
             <td>Character treatment</td>
@@ -413,6 +439,7 @@
             <td class="col-B">Neon edge — emissive + bright LED-trim cubes top/bottom.</td>
             <td class="col-C">Ink outline (inverted-hull pass, 0x222 backside).</td>
             <td class="col-D">Voxel-cubed — darker rim feet block as faked AO.</td>
+            <td class="col-E">Sailor cap — white-cube top + faction-color band on the head + dark feet block.</td>
           </tr>
           <tr>
             <td>Trail style</td>
@@ -420,6 +447,7 @@
             <td class="col-B">Fluorescent — wide low-opacity glow plane + bright inner stroke.</td>
             <td class="col-C">Brush-stroke — wider, semi-transparent, darker edge.</td>
             <td class="col-D">Pixelated chevron segments — looks stamped on the grass.</td>
+            <td class="col-E">Smooth ribbon, darker outline (read as a damp footprint trail on grass).</td>
           </tr>
           <tr>
             <td>Minimap (planned)</td>
@@ -427,6 +455,7 @@
             <td class="col-B">HUD scope-lines, monospace coordinates, cyan crosshair.</td>
             <td class="col-C">Parchment circle, hand-drawn dashed border.</td>
             <td class="col-D">Tabletop chip — wood-frame with rounded corners.</td>
+            <td class="col-E">Nautical chart — parchment with compass rose, latitude/longitude grid, ink dots.</td>
           </tr>
         </tbody>
       </table>
@@ -460,7 +489,7 @@
 
     <h2>Four Art Directions — Live</h2>
     <p style="color:#8888aa;margin-bottom:24px;font-size:14px;">
-      Each direction now has 8 trigger buttons. Click <strong>Claim / Kill / Respawn</strong> for in-world FX.
+      Each direction now has 10 trigger buttons. Click <strong>Claim / Kill / Respawn</strong> for in-world FX.
       <strong>Notify</strong> shows 3 example side notifications. <strong>Endangered / Eliminated / Recovered</strong> show faction-state banners.
       <strong>Win</strong> plays the game-win celebration. <strong>Countdown</strong> toggles last-minute intensified styling.
     </p>
@@ -655,12 +684,68 @@
         </div>
       </div>
 
+      <!-- Direction E: Castaway Atoll (NEW in Round 3) -->
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="panel-header">
+          <div class="panel-title">E — Castaway Atoll <span class="badge recommended" style="margin-left:8px; background:#3F8DA0;">Round 3 — water + island</span></div>
+          <div class="panel-subtitle">Grass-on-sand island floating in animated cartoon sea. Sailor caps, sundial timer, victory flag.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~3 days</span>
+            <span class="badge">+0.7ms (water shader fillrate)</span>
+            <span class="badge">Most distinctive setting</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap" style="height:480px;"><canvas id="scene-E" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn" data-scene="E" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="E" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="E" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="E" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="E" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="E" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="E" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="E" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="E" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="E" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Background:</td><td>Dawn-peach sky over animated teal sea (vertex sin waves + foam ring + sun-glitter)</td></tr>
+            <tr><td>Arena:</td><td>Grass top on raised sand cylinder; cube cliff-rocks rim it; distant atolls in fog</td></tr>
+            <tr><td>Claim FX:</td><td>3 concentric water ripples + 8 droplet splashes from entry</td></tr>
+            <tr><td>Kill FX:</td><td>14 light-blue droplets shoot up + 2 white foam shockwaves</td></tr>
+            <tr><td>Respawn:</td><td>Character washes ashore — rises from below + 2 foam rings sweep</td></tr>
+            <tr><td>Win FX:</td><td>Faction flag rises on a wooden pole at arena center + foam sweeps + 3 seagulls</td></tr>
+            <tr><td>Character:</td><td>Sailor cap (white cube + faction-color band) + dark feet block</td></tr>
+            <tr><td>HUD font:</td><td>Fredoka — driftwood notifications, sail banners, sundial countdown</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#E74A3F;" title="Red"></div>
+            <div class="swatch" style="background:#3D6CD0;" title="Blue (desaturated away from sea)"></div>
+            <div class="swatch" style="background:#52B856;" title="Green"></div>
+            <div class="swatch" style="background:#FFCF2A;" title="Yellow (boosted vs teal water)"></div>
+            <div class="swatch" style="background:#A94BBE;" title="Purple"></div>
+            <div class="swatch" style="background:#1E6F7E; border-color:#fff;" title="Sea (not faction)"></div>
+            <div class="swatch" style="background:#E2C58A; border-color:#fff;" title="Sand (not faction)"></div>
+          </div>
+          <p style="margin-top:10px;color:#a0a0c0;font-size:11px;line-height:1.5;">
+            <strong>Faction-readability check:</strong> sea hue (#1E6F7E deep teal) is sufficiently distinct from Blue faction (#3D6CD0, desaturated/cooler-shifted from earlier rounds). Sand (#E2C58A) is non-faction. Yellow boosted to read against teal reflections at distance. The cliff-rocks rim helps visually separate "playable green island" from "sea" at the boundary.
+          </p>
+        </div>
+      </div>
+
     </div>
 
     <div class="recommendation">
-      <h2>Jen's recommendation (unchanged from round 1)</h2>
+      <h2>Jen's recommendation (round 3)</h2>
       <p><strong>Ship Tier 0 (#1–#5) immediately, regardless of direction.</strong> They are universally needed and direction-neutral.</p>
       <p><strong>Primary direction: D (Voxel Plate).</strong> Maximum expression of the box constraint. Lowest perf (+0.3ms), lowest risk. The voxel-debris kill FX, the build-up respawn, and the voxel-rain win all reinforce the tabletop identity. The wooden-tag notification is the standout — it makes every event feel like a label clipped onto the diorama.</p>
+      <p><strong>Strongest "world": E (Castaway Atoll).</strong> Round 3's new direction is the only one that answers <em>"what is this arena sitting on"</em> with a real environment instead of an abstract surface. The animated water gives gameplay a sense of place; the foam-ring kill FX, wash-ashore respawn, and rising-flag win all sell the castaway fantasy. Trade-off: needs a few more days of art tuning (cliff rocks, distant atolls, cap variants) and a faction-palette retune to keep Blue clear of the sea hue. If the Director wants the game to read as a <em>place</em> at a glance, E is the pick.</p>
       <p><strong>If energy needed: B (Neon Pulse).</strong> Sharpest, most "alive" FX of the four. The implode-kill and laser-grid win are the most dramatic. Trade-off is yellow/green palette overlap.</p>
       <p><strong>Most artistically distinctive: C (Painted Plains).</strong> The petals-kill, ink-bleed claim, and watercolor-wash win are the most recognizable from a screenshot. Highest tuning cost.</p>
       <p><strong>Safe arcade default: A (Sunset Arcade).</strong> If D feels too "twee" or B too aggressive, A is the friendly arcade middle ground.</p>

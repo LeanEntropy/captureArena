@@ -54,6 +54,22 @@ export class UIManager {
 
     // End-screen shown-once guard
     this._endShown = false;
+
+    // Wheel-scroll fix: #ui has pointer-events:none which blocks native wheel
+    // events from reaching .lb-list even though it has pointer-events:auto.
+    // We attach a window wheel listener and manually forward scroll to lb-list.
+    this._onWheel = (e) => {
+      const listEl = this.leaderboardEl && this.leaderboardEl.querySelector(".lb-list");
+      if (!listEl) return;
+      const rect = listEl.getBoundingClientRect();
+      const overList =
+        e.clientX >= rect.left && e.clientX <= rect.right &&
+        e.clientY >= rect.top  && e.clientY <= rect.bottom;
+      if (!overList) return;
+      e.preventDefault();
+      listEl.scrollTop += e.deltaY;
+    };
+    window.addEventListener("wheel", this._onWheel, { passive: false });
   }
 
   /** Store a reference to the player character. */

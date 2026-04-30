@@ -1,10 +1,14 @@
 # Visual Direction Plan — captureArena
 
-_Author: Jen (Art Director). Date: 2026-04-30. **Updated 2026-04-30 — Round 2.**_
+_Author: Jen (Art Director). Date: 2026-04-30. **Updated 2026-04-30 — Round 3.**_
 
-> **Companion live mockup:** `tools/companion/visual-direction.html` — four art-direction options rendered side-by-side as real Three.js scenes with the actual cube character mesh, territory texture, and proposed VFX. Open it after starting the companion server. **The mockup page is the primary deliverable; this document is the rationale.**
+> **Companion live mockup:** `tools/companion/visual-direction.html` — five art-direction options rendered side-by-side as real Three.js scenes with the actual cube character mesh, territory texture, and proposed VFX. Open it after starting the companion server. **The mockup page is the primary deliverable; this document is the rationale.**
 
-> **Round 2 additions** (this section first; round-1 content unchanged below in Sections 1–6):
+> **Round 3 additions:**
+> - **Direction E — Castaway Atoll (NEW)**: animated cartoon water + raised grass-on-sand island with cube cliff-rocks. Sailor-cap character treatment, sundial countdown, sail-banner faction announcements, driftwood notifications, wave-ripple claim FX, water-splash kill FX, wash-ashore respawn FX, victory flag rises on a wooden pole at game end. Section 16 below.
+> - All round-2 deliverables for A/B/C/D unchanged.
+
+> **Round 2 additions** (round-1 content unchanged below in Sections 1–6):
 > - Per-direction claim FX (4 distinct, not 1)
 > - Per-direction kill FX (4 distinct, not 2)
 > - Per-direction respawn FX (new)
@@ -525,4 +529,132 @@ The round 2 work is mostly DOM + small in-world particles. The big costs are: fa
 
 _Companion live mockup → `tools/companion/visual-direction.html` (now 8 trigger buttons per direction)._
 _Status: 🟡 Director input needed on direction pick + round-2 open questions above._
+
+---
+
+# Round 3 — Direction E: Castaway Atoll
+
+_Director feedback (2026-04-30): "at least one suggestion should be of the background as water or sea and the arena as an island."_
+
+The previous four directions all assume a flat ground plane stretching to a clean horizon. Direction E breaks that — the playable circular battlefield sits on a small island, with animated water surrounding it and distant atolls in the haze. This is the only direction where the game has a literal *place* you can name.
+
+Why add it (vs. swap one of A–D out): A/B/C/D each have distinct aesthetic identities the Director may still want to compare. E adds a fifth option without losing the comparison — the Director can now pick the most compelling *world*, not just the most compelling *FX vocabulary*.
+
+---
+
+## Section 16 — Direction E: Castaway Atoll (round 3)
+
+**Pitch:** A small grass-and-sand island floating in animated cartoon sea. Stylized stylized waves, foam ring, sun-glitter, distant atolls, sailor-cap characters, a sundial timer, and a victory flag that rises on a wooden pole when a faction wins. Crossy Road meets Wind Waker meets paper.io.
+
+### Visual rules
+
+| Layer | Spec |
+|---|---|
+| **Sky** | Vertical gradient — dawn peach `#FFD9B8` (top) → pale teal `#8FC8DA` (horizon). Reads as golden-hour over open water. |
+| **Fog** | `0xBCD8DE`, near 28, far 90. Hides edge of the water plane and softens distant atolls. |
+| **Sea** | Custom `ShaderMaterial` on a 6×ARENA_RADIUS square plane subdivided 80×80. Vertex stage: two summed sin waves at different frequencies/directions create chop. Fragment stage: deep teal `#1E6F7E` base, foam ring near island (1.2u wide), animated foam strands (sin-noise), sun-glitter stripes scrolling along a diagonal direction vector. **Cost: ~0.4ms/frame** at 1920×1080 — vertex math is cheap (5 ops/vert, 6,400 verts), fragment is mostly mix() calls. |
+| **Island base** | Cylinder geometry (sand). Top radius `ARENA_RADIUS × 1.08`, bottom radius `ARENA_RADIUS × 1.18`, height 0.45u. Color sand `#E2C58A`. The wider bottom + narrower top reads as a beach taper. |
+| **Island top** | `CircleGeometry(ARENA_RADIUS)` painted grass `#9CC15A`, raised to Y=0.18 (sits on sand). All territory + characters + trails are translated up to this Y. |
+| **Cliff-rocks rim** | 14 small `BoxGeometry` chunks (0.5–1.0u, two stone colors) scattered in a ring at radius 1.05× near sea level. Reads as rocky shoreline; helps separate "playable green" from "sea blue" visually. |
+| **Distant atolls** | 3 box shapes at radius 2.6× ARENA_RADIUS, 1.6–2.8u wide, low height. Mostly hidden by fog — they hint at a wider archipelago. |
+| **Faction palette** | Red `#E74A3F`, Blue `#3D6CD0` (cooler/desaturated to clearly differ from sea), Green `#52B856`, Yellow `#FFCF2A` (boosted to pop against teal water reflections), Purple `#A94BBE`. Sea hue `#1E6F7E` and sand `#E2C58A` are non-faction. |
+| **Lighting** | Ambient `0xfff0d8` @ 0.78 (warm dawn), directional `0xfff2c8` @ 0.7 (golden hour), bounce `0x88B8D0` @ 0.18 (cool sea reflection). Reads soft and sun-kissed. |
+
+### Character treatment — sailor cap
+
+Each character's BoxGeometry stack is unchanged (Director's box-only constraint preserved). Add one stacked top-block above the head:
+- Faction-color band (`0.78 × 0.08 × 0.78`, faction color, roughness 0.5) at Y=1.72.
+- White cube top (`0.6 × 0.18 × 0.6`, `#fafafa`) at Y=1.85.
+- Optional darker rim "feet" block (echoes Direction D — keeps the figure planted on the diorama).
+
+Total cost: 3 extra meshes per character × 30 chars = 90 extra meshes. Trivial.
+
+### Trail style
+
+Smooth ribbon (same as Direction A) with darker outline pass. Reads as a *damp footprint trail* on grass — ribbons on sand-grass surface evoke shoreline tracks.
+
+### Per-feature spec
+
+| Layer | Direction-specific FX | Effort | Perf budget |
+|---|---|---|---|
+| **Claim FX** (`wave-ripple`) | 3 staggered concentric water-rings expand from claim entry point + 8 light-blue droplet cubes splatter upward + slow watercolor bloom on the new territory (0.55s). | M | ~0.05ms/frame during flash, 0 at rest |
+| **Kill FX** (`splash`) | 14 water-droplet cubes (light blue + faction + white mix) shoot up & out with proper gravity and bounce, + 2 white foam-ring shockwaves expand on the ground. (1.1s) | M | Pool, ~0.1ms |
+| **Respawn FX** (`wash-ashore`) | Character starts at Y = baseY − 1.2 and rises linearly over 0.6s + 2 staggered foam-ring shockwaves sweep outward + 5 water-droplet puffs at ground level. | S | <0.05ms |
+| **Notification toast** (`driftwood`) | Sun-bleached driftwood plank: linear-gradient `#f0e2c0 → #d8c590`, brown text `#3a2e1c`, asymmetric border-radius `2px 12px 2px 12px` (suggests a chipped wood card), faction-colored *double-stripe* left edge (5px), Fredoka 600. Reads as a wooden tag washed onto the beach. | S | Pure CSS |
+| **Faction banner** (`sail-banner`) | Canvas/sail panel: gradient `#f8efd6 → #e8d9b0`, brown side+bottom borders, **faction-colored 6px top stripe**, asymmetric border-radius (sharp top, rounded bottom — suggests a hung sail), letter-spacing 1px, Fredoka 700. Reads as a flag-of-state hoisted over the arena. | S | Pure CSS |
+| **Countdown** (`sundial`) | Round (50% border-radius) sandy radial-gradient disc with brass-tone border `#a08560`. Normal: slate-blue text `#3F5F6F`, 17px Fredoka. Critical: coral text `#a04030`, 22px, scale-pulse 0.6s. Inset shadow gives the disc dimension. | S | Pure CSS + 50% border-radius |
+| **Game win FX** (`tide-rise`) | **WebGL:** territory-wide bloom in winner color (sin curve, 1.5s) + 3 staggered white foam-ring shockwaves expand from arena center across the island (rings live 1.6s each, scaleTo=32) + a faction-colored flag rises on a wooden pole at center (pole 0.12×4×0.12, flag 1.4×0.9×0.06, easing-cubic over 2.2s with breeze-wobble rotation). The flag stays in the scene as a permanent victory marker. **DOM:** 3 seagull silhouettes (chunky pixel V's via CSS gradient) drift across the canvas top + a horizontal foam-wash gradient at the bottom 60%. | M | <0.3ms while active; flag is 2 meshes after. |
+| **Character treatment** | Sailor cap (white cube + faction-color band) + dark rim feet block. | S | 3 extra meshes per char |
+| **Trail style** | Smooth ribbon + darker outline (same tech as A). | S | Free |
+| **Minimap (planned)** | Nautical chart — parchment with a compass-rose corner ornament, lat/lon grid lines, ink-blot dots for players, brass border. | M | Pure canvas |
+
+### Live mockup
+
+All 10 trigger buttons are wired in the companion at `tools/companion/visual-direction.html` (panel E, full-width row). Verified renders cleanly via Playwright; visual screenshots saved at `docs/visual-direction-mockups/r3/`:
+- `r3-fullpage.png` — full companion page with all 5 directions
+- `r3-e-baseline-viewport.png` — Direction E in resting state (water animating, characters with sailor caps, cliff-rocks rim, distant atoll on horizon)
+- `r3-e-kill-fx.png` — kill FX mid-flight
+- `r3-e-win-flag-up.png` — win FX with the faction flag fully raised on the central pole
+- `r3-e-static-overlays.png` — sundial countdown + 3 driftwood notifications + sail banner ("YELLOW ENDANGERED · NO RESPAWNS") all visible together for clear UI styling reference
+
+### Performance budget rollup
+
+| Component | Cost (1920×1080, integrated GPU) |
+|---|---|
+| Water shader (vertex + fragment) | ~0.40ms/frame |
+| Sand cylinder + grass top | ~0.02ms (2 extra draw calls) |
+| 14 cliff-rock cubes | ~0.04ms (14 draw calls, all cast shadows) |
+| 3 distant atolls | ~0.01ms (no shadows, behind fog) |
+| Per-character cap (3 cubes × 30 = 90) | ~0.10ms |
+| Active claim/kill/respawn particles | matches D budget (~0.15ms peak) |
+| **Total over Direction D baseline** | **+0.7ms/frame** |
+
+Within the 16ms budget. The big cost is the water shader's fillrate — at lower resolution (mobile devicePixelRatio=1) the cost drops to ~0.2ms.
+
+### Faction-readability check
+
+The biggest risk in this direction is sea blue muddying with Blue faction. Mitigations baked in:
+
+1. Sea hue is **deep teal** `#1E6F7E` — sufficiently dark + green-shifted from Blue faction `#3D6CD0`.
+2. Blue faction is **desaturated and cooler-shifted** away from earlier rounds' more saturated blue.
+3. **Cliff-rocks rim** is the strong visual divider between green-island and teal-water at the boundary.
+4. Yellow `#FFCF2A` boosted to read against teal water reflections at distance.
+5. Sand `#E2C58A` is non-faction — no risk of the beach reading as a faction territory.
+
+At 64px game-scale (faction-readability test from ART_ETHOS principle 10): with the cliff-rocks rim and the saturation gap between sea-teal and faction-blue, the test passes. The remaining risk is at heavily zoomed-out spectator views, where the bottom of the arena could read more "blue-ish" overall. If the Director picks E, I'd recommend a playtest at the actual game's camera distance to confirm.
+
+### Effort estimate
+
+| Phase | Est. |
+|---|---|
+| Round 1 Tier 0 (universal) | 1 day |
+| Direction E base — water shader, island, cliff-rocks rim, distant atolls, palette retune | 2 days |
+| Direction E FX — wave-ripple claim, splash kill, wash-ashore respawn, sail banner, sundial countdown, tide-rise win + flag rise | 1.5 days |
+| **Total** | **~4.5 days** |
+
+Within the same range as the other directions. The water shader is the long pole (1 day to tune the foam strands + sun-glitter so they don't read as noise), and the flag-rise win sequence (0.5 day to time the seagulls + DOM wash + flag ease).
+
+### Lore note
+
+Direction E *answers* round 1 open question #4 ("Background world content? D proposes a wooden tabletop. Does the game's lore/setting suggest a different 'what is this arena sitting on' answer?"). E's answer: **the arena is a contested island in an unmarked sea**. Cube characters are castaways fighting over territory. The win condition becomes: plant your flag.
+
+If the Director picks E, this lore can extend: title screen could be a "captain's map" with the island marked, faction names could become ship names, end-of-match could note "Captain [Name] of the [Faction] now holds the atoll." Out of scope for this pass — flagged for a future title-screen workstream.
+
+---
+
+## Section 17 — Round 3 Open Questions for Director
+
+(Round 1 + Round 2 questions still apply.)
+
+1. **Pick: replace one of A–D, or keep all 5?** I added E rather than swapping. If the Director wants to cull, my recommendation is to keep at minimum D (lowest risk) and E (most distinct world) and have C (most artistically distinctive) as third for variety. A and B are incrementally distinct from D and could be dropped if the comparison is feeling cluttered.
+2. **Sea/island lore commit?** Direction E proposes the lore answer "contested island in open sea." If the Director wants to use this world even with a different aesthetic direction, I can port the island geometry into A/B/C/D as a layout option (water/island under, e.g., the sunset-sky of A). This would be a hybrid pass.
+3. **Mobile water cost.** The water shader is the main perf risk if shipping on mobile. If mobile is in scope, I'll add a quality toggle that swaps the animated shader for a static gradient texture (saves ~0.4ms; loses the wave animation; foam ring becomes a baked ring texture).
+4. **Faction-blue palette commit.** Direction E uses a desaturated cooler Blue (`#3D6CD0`) to keep distance from the sea hue. If E is picked, I'd lock that as the canonical Blue across the game. If E is not picked, the existing brighter Blue stays.
+5. **Flag remains permanent?** Currently the round-3 win FX leaves the flag + pole in the scene as a permanent victory marker (until reset). Director may prefer the flag to fade out with the rest of the end-screen. Trivial to change either way.
+6. **Sailor cap as a per-faction variant or universal?** I built it as universal (every faction wears the same cap silhouette, just with their faction band color). An alternative is per-faction headwear: Red gets a bandana, Yellow gets a sun hat, etc. Costs more to maintain but adds character identity. **My default: universal cap.** Per ART_ETHOS principle 9, faction identity is already in the body color — adding cap variants risks dilution.
+
+---
+
+_Companion live mockup → `tools/companion/visual-direction.html` (now 5 directions × 10 trigger buttons each)._
+_Status: 🟡 Director input needed on direction pick + round-3 open questions above._
 

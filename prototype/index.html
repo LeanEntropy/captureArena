@@ -16,17 +16,21 @@
       min-width: 200px; display: flex; flex-direction: column;
       background: rgba(255,255,255,0.85); border-radius: 8px;
       pointer-events: auto;
+      /* Cap total panel height so .lb-list max-height actually clips */
+      max-height: calc(100vh - 160px);
     }
     #player-leaderboard .lb-title {
-      padding: 8px 12px 4px; font-weight: bold; font-size: 13px;
+      padding: 8px 12px 4px; font-weight: bold; font-size: 13px; flex-shrink: 0;
     }
     #player-leaderboard .lb-list {
       max-height: 264px; overflow-y: scroll; padding: 0 12px; pointer-events: auto;
+      /* flex-shrink allows it to compress when parent max-height is hit */
+      flex-shrink: 1; min-height: 0;
     }
     #player-leaderboard .lb-list::-webkit-scrollbar { width: 4px; }
     #player-leaderboard .lb-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 2px; }
     #player-leaderboard .lb-pinned {
-      padding: 4px 12px 8px; border-top: 1px solid rgba(0,0,0,0.15);
+      padding: 4px 12px 8px; border-top: 1px solid rgba(0,0,0,0.15); flex-shrink: 0;
     }
     #hud-bottom { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: #333; font-size: 14px; background: rgba(255,255,255,0.8); border-radius: 8px; padding: 6px 16px; white-space: nowrap; }
     #minimap-container { position: absolute; bottom: 16px; left: 16px; border: 2px solid rgba(255,255,255,0.6); border-radius: 50%; overflow: hidden; background: transparent; }

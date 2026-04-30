@@ -190,6 +190,42 @@ const DIRECTIONS = {
     countdownAccent: "#3B2412",
     winStyle: "voxel-rain",        // cubes rain down from sky in winning color
   },
+  E: {
+    // CASTAWAY ATOLL — island floating in animated water
+    name: "Castaway Atoll",
+    bg: 0xCDE5EE,
+    bgGradientTop: 0xFFD9B8,       // dawn peach above the horizon
+    bgGradientBottom: 0x8FC8DA,    // pale teal at horizon (meets the sea)
+    backgroundType: "gradient",
+    fog: { color: 0xBCD8DE, near: 28, far: 90 },
+    groundColor: 0x9CC15A,         // warm grass top — slightly more saturated than D
+    outerGround: { water: true, color: 0x1E6F7E, foam: 0xFFFFFF, sun: 0xFFE8B0 },
+    // Faction palette: Blue desaturated AWAY from the water hue so it doesn't blur with the sea.
+    // Yellow boosted to read against deep teal water reflections at distance.
+    factionColors: [0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE],
+    ambient: { color: 0xfff0d8, intensity: 0.78 },
+    directional: { color: 0xfff2c8, intensity: 0.7 }, // golden hour
+    bounceLight: { color: 0x88B8D0, intensity: 0.18 },// soft cool sea bounce
+    charRoughness: 0.5,
+    charEmissive: 0,
+    charStyle: "castaway",         // sailor-cap add-on (one tiny cube on the head)
+    trailWidth: 0.22,
+    trailDarkenOutline: true,
+    trailStyle: "ribbon",          // sandy footprint trail with darker outline
+    territoryDither: false,
+    minimapStyle: "nautical-chart",
+    // FX: aquatic, splashy, "shore" feel.
+    claimFlashColor: 0xC8F0FF,
+    claimFlashStyle: "wave-ripple",// concentric water ripples + droplet splatter
+    killBurstStyle: "splash",      // upward water-droplet cubes + foam ring
+    respawnStyle: "wash-ashore",   // rises from below + foam wave passes through
+    notificationFont: "Fredoka, system-ui",
+    notificationStyle: "driftwood",// driftwood plank with rope edge
+    bannerStyle: "sail-banner",    // canvas sail with rope border
+    countdownStyle: "sundial",     // sandy dial + brass numbers
+    countdownAccent: "#3F5F6F",
+    winStyle: "tide-rise",         // foam rings sweep + DOM seagulls + flag rise
+  },
 };
 
 // ============================================================================
@@ -311,6 +347,17 @@ class SceneOverlay {
       cd.style.fontSize = intense ? "22px" : "18px";
       cd.style.boxShadow = "inset 0 -3px 0 rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.5)";
       cd.style.fontFamily = "'Lilita One', sans-serif";
+    } else if (c.countdownStyle === "sundial") {
+      // E — sandy circle with brass numerals; warning shifts to coral; critical pulses
+      cd.style.background = "radial-gradient(circle at 30% 30%, #f5e6c3 0%, #d8c590 100%)";
+      cd.style.color = intense ? "#a04030" : accent;
+      cd.style.border = `2px solid ${intense ? "#a04030" : "#a08560"}`;
+      cd.style.borderRadius = "50%";
+      cd.style.padding = intense ? "10px 16px" : "8px 14px";
+      cd.style.fontSize = intense ? "22px" : "17px";
+      cd.style.fontFamily = "Fredoka, sans-serif";
+      cd.style.fontWeight = "700";
+      cd.style.boxShadow = "inset 0 -3px 6px rgba(120,80,40,0.3), 0 2px 5px rgba(60,40,20,0.4)";
     } else {
       // REF
       cd.style.background = "rgba(255,255,255,0.85)";
@@ -377,6 +424,16 @@ class SceneOverlay {
       el.style.borderLeft = `5px solid ${factionHex || "#FFE140"}`;
       el.style.fontWeight = "700";
       el.style.boxShadow = "inset 0 -2px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)";
+    } else if (c.notificationStyle === "driftwood") {
+      // E — sun-bleached driftwood plank with rope edge + faction-colored flag
+      el.style.background = "linear-gradient(180deg, #f0e2c0 0%, #d8c590 100%)";
+      el.style.color = "#3a2e1c";
+      el.style.border = "1px solid #a08560";
+      el.style.borderLeft = `5px double ${factionHex || "#3F5F6F"}`;
+      el.style.borderRadius = "2px 12px 2px 12px";
+      el.style.fontWeight = "600";
+      el.style.boxShadow = "inset 0 -1px 0 rgba(120,80,40,0.25), 0 2px 5px rgba(60,40,20,0.4)";
+      el.style.fontFamily = c.notificationFont;
     } else {
       // REF
       el.style.background = "rgba(255,255,255,0.85)";
@@ -459,6 +516,18 @@ class SceneOverlay {
       el.style.boxShadow = "inset 0 -4px 0 rgba(0,0,0,0.25), 0 4px 0 rgba(0,0,0,0.4)";
       el.style.fontFamily = "'Lilita One', sans-serif";
       el.style.letterSpacing = "1px";
+    } else if (c.bannerStyle === "sail-banner") {
+      // Castaway Atoll — canvas sail with rope border + faction-colored top stripe
+      el.style.background = "linear-gradient(180deg, #f8efd6 0%, #e8d9b0 100%)";
+      el.style.color = "#2a3a48";
+      el.style.border = `2px solid #b89868`;
+      el.style.borderTop = `6px solid ${factionHex || "#E74A3F"}`;
+      el.style.borderRadius = "2px 2px 14px 14px";
+      el.style.boxShadow = "0 4px 14px rgba(60,40,20,0.4), inset 0 -3px 0 rgba(120,90,50,0.3)";
+      el.style.fontFamily = "Fredoka, sans-serif";
+      el.style.letterSpacing = "1px";
+      el.style.fontWeight = "700";
+      el.style.padding = "12px 28px";
     } else {
       el.style.background = "rgba(0,0,0,0.7)";
       el.style.color = "#fff";
@@ -501,6 +570,57 @@ class SceneOverlay {
       this._spawnWatercolorWash(factionHex);
     } else if (c.winStyle === "voxel-rain") {
       // Voxel: 3D handled in DirectionScene; DOM layer just shows banner
+    } else if (c.winStyle === "tide-rise") {
+      // Castaway: 3 seagull silhouettes drift across + DOM foam wash
+      this._spawnSeagullsAndWash(factionHex);
+    }
+  }
+
+  _spawnSeagullsAndWash(factionHex) {
+    // Soft horizontal foam wash, mid-canvas
+    const wash = document.createElement("div");
+    Object.assign(wash.style, {
+      position: "absolute",
+      left: "0",
+      right: "0",
+      bottom: "0",
+      height: "60%",
+      background: `linear-gradient(0deg, ${factionHex}55 0%, transparent 100%)`,
+      mixBlendMode: "screen",
+      opacity: "0",
+      transition: "opacity 0.6s ease",
+    });
+    this.winFXLayer.appendChild(wash);
+    requestAnimationFrame(() => { wash.style.opacity = "1"; });
+    setTimeout(() => { wash.style.opacity = "0"; }, 1800);
+    setTimeout(() => { if (wash.parentNode) wash.parentNode.removeChild(wash); }, 2600);
+
+    // Three seagull silhouettes (chunky pixel V's). Pure CSS shape, no images.
+    for (let i = 0; i < 3; i++) {
+      const gull = document.createElement("div");
+      const startTop = 25 + Math.random() * 20;
+      const drift = (Math.random() - 0.5) * 10;
+      Object.assign(gull.style, {
+        position: "absolute",
+        left: "-30px",
+        top: `${startTop}%`,
+        width: "20px",
+        height: "8px",
+        // V-shape via two angled rectangles (pseudo-gradient)
+        background: "linear-gradient(135deg, transparent 45%, #2a3a48 45%, #2a3a48 55%, transparent 55%), linear-gradient(45deg, transparent 45%, #2a3a48 45%, #2a3a48 55%, transparent 55%)",
+        backgroundSize: "10px 8px, 10px 8px",
+        backgroundPosition: "0 0, 10px 0",
+        backgroundRepeat: "no-repeat",
+        opacity: "0.85",
+        transition: `left 2.4s linear, top 2.4s ease-in-out, opacity 0.4s ease 2.0s`,
+      });
+      this.winFXLayer.appendChild(gull);
+      setTimeout(() => {
+        gull.style.left = "calc(100% + 30px)";
+        gull.style.top = `${startTop + drift}%`;
+        gull.style.opacity = "0";
+      }, 50 + i * 250);
+      setTimeout(() => { if (gull.parentNode) gull.parentNode.removeChild(gull); }, 2700 + i * 250);
     }
   }
 
@@ -731,7 +851,10 @@ class DirectionScene {
   _buildGround() {
     const c = this.config;
     if (c.outerGround) {
-      if (c.outerGround.plate) {
+      if (c.outerGround.water) {
+        // Direction E — Castaway Atoll. Animated sea + raised sand+grass island.
+        this._buildWaterAndIsland();
+      } else if (c.outerGround.plate) {
         const plate = new THREE.Mesh(
           new THREE.BoxGeometry(ARENA_RADIUS * 3.2, 0.6, ARENA_RADIUS * 3.2),
           new THREE.MeshStandardMaterial({ color: c.outerGround.color, roughness: 0.85 })
@@ -757,6 +880,9 @@ class DirectionScene {
       }
     }
 
+    // Direction E builds its own island (raised sand+grass) inside _buildWaterAndIsland.
+    if (c.outerGround && c.outerGround.water) return;
+
     const ground = new THREE.Mesh(
       new THREE.CircleGeometry(ARENA_RADIUS, 64),
       new THREE.MeshLambertMaterial({ color: c.groundColor })
@@ -765,6 +891,149 @@ class DirectionScene {
     ground.position.y = 0;
     ground.receiveShadow = true;
     this.scene.add(ground);
+  }
+
+  // -- Water + Island (Direction E) ---------------------------------------
+  // Cheap procedural water using a custom ShaderMaterial:
+  //   * Vertex stage adds two summed sin waves (cost: ~5 ops/vert; geometry is 80x80).
+  //   * Fragment stage mixes deep teal + foam ring near island + sun-stripe highlight.
+  // No reflection probe, no Water-class FFT — this is a stylized cartoon sea
+  // that fits the box-y arcade direction. Total cost: <0.4ms/frame on 1920x1080.
+  _buildWaterAndIsland() {
+    const c = this.config;
+
+    // 1) Animated water plane (radius ARENA_RADIUS * 4, square)
+    const waterGeom = new THREE.PlaneGeometry(ARENA_RADIUS * 6, ARENA_RADIUS * 6, 80, 80);
+    const seaCol = new THREE.Color(c.outerGround.color);
+    const foamCol = new THREE.Color(c.outerGround.foam);
+    const sunCol = new THREE.Color(c.outerGround.sun);
+    this._waterMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uIslandRadius: { value: ARENA_RADIUS * 1.02 },
+        uFoamWidth: { value: 1.2 },
+        uSeaColor: { value: seaCol },
+        uFoamColor: { value: foamCol },
+        uSunColor: { value: sunCol },
+        uSunDir: { value: new THREE.Vector2(0.6, 0.4).normalize() },
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        void main() {
+          vec3 p = position;
+          // Two summed sin waves at different freq/dir for stylized chop
+          float w1 = sin(p.x * 0.35 + uTime * 1.2) * 0.18;
+          float w2 = sin(p.y * 0.28 - uTime * 0.9 + p.x * 0.1) * 0.13;
+          float wave = w1 + w2;
+          p.z += wave;
+          vWaveY = wave;
+          // PlaneGeometry is rotated to lie flat by the host; here we work in local XY.
+          vWorldXZ = p.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uIslandRadius;
+        uniform float uFoamWidth;
+        uniform vec3 uSeaColor;
+        uniform vec3 uFoamColor;
+        uniform vec3 uSunColor;
+        uniform vec2 uSunDir;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        void main() {
+          float dist = length(vWorldXZ);
+          // Discard pixels INSIDE the island radius — saves fillrate.
+          if (dist < uIslandRadius - 0.05) discard;
+
+          // Base color depth-shaded by wave height (lighter at crests)
+          vec3 col = uSeaColor + vec3(0.18) * smoothstep(-0.1, 0.18, vWaveY);
+
+          // Foam ring near the island — fade out across uFoamWidth units
+          float foamMask = 1.0 - smoothstep(uIslandRadius, uIslandRadius + uFoamWidth, dist);
+          // Animated foam strands
+          float foamNoise = sin(vWorldXZ.x * 1.6 + uTime * 2.4) * 0.5
+                          + sin(vWorldXZ.y * 1.3 - uTime * 1.7) * 0.5;
+          float foamStrand = smoothstep(0.3, 0.9, foamNoise);
+          float foam = foamMask * (0.7 + 0.3 * foamStrand);
+          col = mix(col, uFoamColor, foam);
+
+          // Sparse sun-glitter stripes — scrolling along uSunDir
+          float glitProj = dot(vWorldXZ, uSunDir);
+          float glit = sin(glitProj * 1.2 + uTime * 1.6);
+          float glitMask = smoothstep(0.85, 1.0, glit) * smoothstep(0.05, 0.25, vWaveY);
+          col = mix(col, uSunColor, glitMask * 0.55);
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    const water = new THREE.Mesh(waterGeom, this._waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = -0.25; // slightly below island top, hides edge
+    this.scene.add(water);
+    this._waterMesh = water;
+
+    // 2) Island stack — sand base + grass top — both raised slightly above water
+    // Sand cylinder (wider, darker, peeks under the grass like a beach)
+    const sandMat = new THREE.MeshStandardMaterial({
+      color: 0xE2C58A, roughness: 0.95,
+    });
+    const sand = new THREE.Mesh(
+      new THREE.CylinderGeometry(ARENA_RADIUS * 1.08, ARENA_RADIUS * 1.18, 0.45, 48),
+      sandMat,
+    );
+    sand.position.y = -0.05;
+    sand.receiveShadow = true;
+    this.scene.add(sand);
+
+    // Grass top — circle on top of the sand cylinder. Slightly inset.
+    const grass = new THREE.Mesh(
+      new THREE.CircleGeometry(ARENA_RADIUS, 64),
+      new THREE.MeshLambertMaterial({ color: c.groundColor }),
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.y = 0.18;  // sits on top of sand cylinder
+    grass.receiveShadow = true;
+    this.scene.add(grass);
+    // Override the territory mesh Y in _buildTerritory by setting island top reference.
+    this._islandTopY = 0.19;
+
+    // 3) Cube cliff-rocks around the rim — 14 small chunky stones, varied color & size
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.95 });
+    const rockMatDark = new THREE.MeshStandardMaterial({ color: 0x6d6045, roughness: 0.95 });
+    const rockCount = 14;
+    for (let i = 0; i < rockCount; i++) {
+      const ang = (i / rockCount) * Math.PI * 2 + (Math.random() * 0.12);
+      const r = ARENA_RADIUS * 1.05 + Math.random() * 0.5;
+      const sz = 0.5 + Math.random() * 0.5;
+      const rock = new THREE.Mesh(
+        new THREE.BoxGeometry(sz, sz * 0.7, sz),
+        i % 3 === 0 ? rockMatDark : rockMat,
+      );
+      rock.position.set(Math.cos(ang) * r, 0.05 + sz * 0.35, Math.sin(ang) * r);
+      rock.rotation.y = Math.random() * Math.PI;
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      this.scene.add(rock);
+    }
+
+    // 4) Faraway distant atolls (background scenery, no shadows, behind fog)
+    for (let i = 0; i < 3; i++) {
+      const ang = -Math.PI / 2 + (i - 1) * 0.6 + (Math.random() - 0.5) * 0.2;
+      const r = ARENA_RADIUS * 2.6 + Math.random() * ARENA_RADIUS * 0.4;
+      const dwidth = 1.6 + Math.random() * 1.2;
+      const dheight = 0.5 + Math.random() * 0.4;
+      const distantAtoll = new THREE.Mesh(
+        new THREE.BoxGeometry(dwidth, dheight, dwidth),
+        new THREE.MeshStandardMaterial({ color: 0x7a8b62, roughness: 1.0 }),
+      );
+      distantAtoll.position.set(Math.cos(ang) * r, dheight / 2 - 0.2, Math.sin(ang) * r);
+      this.scene.add(distantAtoll);
+    }
   }
 
   _makeGridTexture(gridColor) {
@@ -808,7 +1077,8 @@ class DirectionScene {
     const geom = new THREE.PlaneGeometry(ARENA_RADIUS * 2, ARENA_RADIUS * 2);
     this.territoryMesh = new THREE.Mesh(geom, mat);
     this.territoryMesh.rotation.x = -Math.PI / 2;
-    this.territoryMesh.position.y = 0.01;
+    // Direction E lifts the playfield onto the island top.
+    this.territoryMesh.position.y = (this._islandTopY || 0) + 0.01;
     this.scene.add(this.territoryMesh);
   }
 
@@ -881,10 +1151,12 @@ class DirectionScene {
       { factionIdx: 2, angle: Math.PI * 0.6, radius: 6 },
       { factionIdx: 4, angle: Math.PI * 1.3, radius: 8 },
     ];
+    const baseY = this._islandTopY || 0;
     for (const spec of charSpecs) {
       const color = c.factionColors[spec.factionIdx];
       const ch = this._makeCharacter(color);
       ch.group.position.x = Math.cos(spec.angle) * spec.radius;
+      ch.group.position.y = baseY;
       ch.group.position.z = Math.sin(spec.angle) * spec.radius;
       ch.group.rotation.y = -spec.angle + Math.PI / 2;
       ch.factionIdx = spec.factionIdx;
@@ -894,6 +1166,7 @@ class DirectionScene {
       ch.bobOffset = Math.random() * Math.PI * 2;
       ch.spawnAngle = spec.angle;
       ch.spawnRadius = spec.radius;
+      ch.baseY = baseY;
       this.scene.add(ch.group);
       this.characters.push(ch);
 
@@ -975,6 +1248,27 @@ class DirectionScene {
       // Direction A — small bottom bevel + slight warm rim emissive on body
       bodyMat.emissive = new THREE.Color(0xfff0c0);
       bodyMat.emissiveIntensity = 0.06;
+    } else if (c.charStyle === "castaway") {
+      // Direction E — sailor cap on the head: stacked white cube + faction-colored stripe
+      const capWhiteMat = new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.7 });
+      const capRingMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+      const capBase = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.78), capRingMat);
+      capBase.position.y = 1.72;
+      capBase.castShadow = true;
+      g.add(capBase);
+      const capTop = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.6), capWhiteMat);
+      capTop.position.y = 1.85;
+      capTop.castShadow = true;
+      g.add(capTop);
+      // Tiny darker rim feet block (echoes Direction D, fits the chunky sea theme)
+      const rimColor = new THREE.Color(color).multiplyScalar(0.65);
+      const feet = new THREE.Mesh(
+        new THREE.BoxGeometry(1.04, 0.08, 1.04),
+        new THREE.MeshStandardMaterial({ color: rimColor, roughness: 0.7 }),
+      );
+      feet.position.y = 0.04;
+      feet.castShadow = true;
+      g.add(feet);
     }
 
     return { group: g, body, head, bodyMat };
@@ -987,10 +1281,11 @@ class DirectionScene {
     const dir = new THREE.Vector3(
       -Math.sin(char.group.rotation.y), 0, -Math.cos(char.group.rotation.y),
     );
+    const trailY = (this._islandTopY || 0) + 0.05;
     const pts = [];
     for (let i = 0; i < trailLen; i++) {
       pts.push(new THREE.Vector3(
-        start.x + dir.x * i * 0.8, 0.05, start.z + dir.z * i * 0.8,
+        start.x + dir.x * i * 0.8, trailY, start.z + dir.z * i * 0.8,
       ));
     }
     const w = c.trailWidth;
@@ -1209,6 +1504,45 @@ class DirectionScene {
           mesh: splat, kind: "splat", life: 0, maxLife: 0.9,
         });
       }
+    } else if (c.claimFlashStyle === "wave-ripple") {
+      // E — Castaway: 3 concentric ring ripples + droplet splatter at entry
+      this.flashes.push({
+        factionId, t: 0, duration: 0.55, style: "bloom",
+        flashRGB: [fr, fg, fb],
+      });
+      const ringY = (this._islandTopY || 0) + 0.06;
+      [0, 0.12, 0.24].forEach((delay, idx) => {
+        setTimeout(() => {
+          if (this.disposed) return;
+          const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.3, 0.42, 32),
+            new THREE.MeshBasicMaterial({
+              color: 0xC8F0FF, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+            }),
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.set(entry.x, ringY + idx * 0.005, entry.z);
+          this.scene.add(ring);
+          this.shockwaves.push({ mesh: ring, life: 0, maxLife: 0.7, color: 0xC8F0FF, scaleTo: 5 });
+        }, delay * 1000);
+      });
+      // Droplet splash — small light-blue cubes shot upward + outward
+      for (let i = 0; i < 8; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const speed = 1.2 + Math.random() * 1.4;
+        const droplet = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 0.08, 0.08),
+          new THREE.MeshBasicMaterial({ color: 0xCFEEFF, transparent: true, opacity: 0.95 }),
+        );
+        droplet.position.set(entry.x, ringY, entry.z);
+        this.scene.add(droplet);
+        this.particles.push({
+          mesh: droplet, kind: "puff", life: 0, maxLife: 0.7,
+          vel: new THREE.Vector3(Math.cos(ang) * speed, 1.4 + Math.random() * 1.2, Math.sin(ang) * speed),
+          gravity: -5,
+          rotVel: new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6),
+        });
+      }
     } else if (c.claimFlashStyle === "stamp-wave") {
       // D — Voxel: stamp-wave from entry; cube-based dust puff at entry
       this.flashes.push({
@@ -1331,6 +1665,47 @@ class DirectionScene {
           wobblePhase: Math.random() * Math.PI * 2, gravity: -0.6,
         });
       }
+    } else if (style === "splash") {
+      // E — Castaway: 14 light-blue droplets + 2 white foam-ring shockwaves
+      for (let i = 0; i < 14; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const speed = 1.6 + Math.random() * 2;
+        const upspeed = 3.2 + Math.random() * 1.5;
+        const sz = 0.1 + Math.random() * 0.08;
+        const dropColors = [0xCFEEFF, 0xB7E3F4, 0xFFFFFF, baseColor];
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(sz, sz, sz),
+          new THREE.MeshBasicMaterial({
+            color: dropColors[Math.floor(Math.random() * dropColors.length)],
+            transparent: true, opacity: 1,
+          }),
+        );
+        m.position.copy(pos);
+        this.scene.add(m);
+        this.particles.push({
+          mesh: m, kind: "voxel", life: 0, maxLife: 1.1,
+          vel: new THREE.Vector3(Math.cos(ang) * speed, upspeed, Math.sin(ang) * speed),
+          rotVel: new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10),
+          gravity: -10, bounceY: 0.25, hasBounced: 0,
+        });
+      }
+      // Two white foam-ring shockwaves on the island
+      const ringY = (this._islandTopY || 0) + 0.06;
+      [0, 0.18].forEach((delay) => {
+        setTimeout(() => {
+          if (this.disposed) return;
+          const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.05, 0.5, 24),
+            new THREE.MeshBasicMaterial({
+              color: 0xFFFFFF, side: THREE.DoubleSide, transparent: true, opacity: 0.95,
+            }),
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.set(pos.x, ringY, pos.z);
+          this.scene.add(ring);
+          this.shockwaves.push({ mesh: ring, life: 0, maxLife: 0.6, color: 0xFFFFFF, scaleTo: 6 });
+        }, delay * 1000);
+      });
     } else if (style === "voxel-debris") {
       // D — Voxel: bouncy 3D cube fragments with proper gravity and rotation
       for (let i = 0; i < 12; i++) {
@@ -1475,6 +1850,49 @@ class DirectionScene {
       this.particles.push({
         mesh: null, kind: "respawn-scale-soft", respawnTarget: victim, life: 0, maxLife: 0.6,
       });
+    } else if (style === "wash-ashore") {
+      // E — Castaway: foam ring sweeps across the spawn point + character rises from below
+      const baseY = victim.baseY || 0;
+      victim.group.scale.set(1, 1, 1);
+      victim.group.position.y = baseY - 1.2;
+      this.particles.push({
+        mesh: null, kind: "respawn-build", respawnTarget: victim, life: 0, maxLife: 0.6,
+        startY: baseY - 1.2, endY: baseY,
+      });
+      // Two foam rings expanding outward at island top
+      const ringY = (this._islandTopY || 0) + 0.06;
+      [0, 0.15].forEach((delay) => {
+        setTimeout(() => {
+          if (this.disposed) return;
+          const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.1, 0.45, 24),
+            new THREE.MeshBasicMaterial({
+              color: 0xFFFFFF, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+            }),
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.set(pos.x, ringY, pos.z);
+          this.scene.add(ring);
+          this.shockwaves.push({ mesh: ring, life: 0, maxLife: 0.65, color: 0xFFFFFF, scaleTo: 4 });
+        }, delay * 1000);
+      });
+      // 3 small water-droplet puffs
+      for (let i = 0; i < 5; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const speed = 0.9 + Math.random() * 1.0;
+        const droplet = new THREE.Mesh(
+          new THREE.BoxGeometry(0.09, 0.09, 0.09),
+          new THREE.MeshBasicMaterial({ color: 0xCFEEFF, transparent: true, opacity: 0.95 }),
+        );
+        droplet.position.set(pos.x, ringY + 0.05, pos.z);
+        this.scene.add(droplet);
+        this.particles.push({
+          mesh: droplet, kind: "puff", life: 0, maxLife: 0.55,
+          vel: new THREE.Vector3(Math.cos(ang) * speed, 0.7, Math.sin(ang) * speed),
+          gravity: -3.5,
+          rotVel: new THREE.Vector3((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5),
+        });
+      }
     } else if (style === "build-up") {
       // D — Voxel: cubes assemble bottom-up, head appears last
       victim.group.scale.set(1, 1, 1);
@@ -1611,6 +2029,50 @@ class DirectionScene {
         factionId: -1, t: 0, duration: 1.5, style: "all-bloom",
         flashRGB: [(winningColor >> 16) & 0xff, (winningColor >> 8) & 0xff, winningColor & 0xff],
       });
+    } else if (c.winStyle === "tide-rise") {
+      // E — Castaway: territory bloom + 3 staggered foam rings sweep across the island
+      // + a faction-colored flag rises from arena center.
+      this.flashes.push({
+        factionId: -1, t: 0, duration: 1.5, style: "all-bloom",
+        flashRGB: [(winningColor >> 16) & 0xff, (winningColor >> 8) & 0xff, winningColor & 0xff],
+      });
+      const ringY = (this._islandTopY || 0) + 0.06;
+      [0, 0.35, 0.7].forEach((delay) => {
+        setTimeout(() => {
+          if (this.disposed) return;
+          const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.2, 0.5, 48),
+            new THREE.MeshBasicMaterial({
+              color: 0xFFFFFF, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+            }),
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.set(0, ringY, 0);
+          this.scene.add(ring);
+          this.shockwaves.push({ mesh: ring, life: 0, maxLife: 1.6, color: 0xFFFFFF, scaleTo: 32 });
+        }, delay * 1000);
+      });
+      // Flag pole + flag rise (pure cubes, fits the box constraint)
+      const baseY = this._islandTopY || 0;
+      const pole = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 4, 0.12),
+        new THREE.MeshStandardMaterial({ color: 0x6b4d2a, roughness: 0.8 }),
+      );
+      pole.position.set(0, baseY + 2, 0);
+      pole.castShadow = true;
+      this.scene.add(pole);
+      const flag = new THREE.Mesh(
+        new THREE.BoxGeometry(1.4, 0.9, 0.06),
+        new THREE.MeshStandardMaterial({ color: winningColor, roughness: 0.5 }),
+      );
+      // Start the flag low on the pole, rises over time.
+      flag.position.set(0.7, baseY + 0.1, 0);
+      flag.castShadow = true;
+      this.scene.add(flag);
+      this.particles.push({
+        mesh: flag, kind: "flag-rise", life: 0, maxLife: 2.2,
+        startY: baseY + 0.1, endY: baseY + 3.5, removeWith: pole,
+      });
     } else if (c.winStyle === "voxel-rain") {
       // D — Voxel: cubes rain down in winning color + final stamp
       const r = (winningColor >> 16) & 0xff, g = (winningColor >> 8) & 0xff, b = winningColor & 0xff;
@@ -1696,11 +2158,19 @@ class DirectionScene {
       }
     }
     this.stampWaves = [];
+    if (this._winMarkers) {
+      for (const m of this._winMarkers) {
+        this.scene.remove(m);
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) m.material.dispose();
+      }
+      this._winMarkers = [];
+    }
     for (const ch of this.characters) {
       ch.group.visible = true;
       ch.group.scale.set(1, 1, 1);
       ch.group.position.x = Math.cos(ch.spawnAngle) * ch.spawnRadius;
-      ch.group.position.y = 0;
+      ch.group.position.y = ch.baseY || 0;
       ch.group.position.z = Math.sin(ch.spawnAngle) * ch.spawnRadius;
       if (ch.respawnTimeout) clearTimeout(ch.respawnTimeout);
     }
@@ -1731,6 +2201,11 @@ class DirectionScene {
     this.camera.position.z = Math.cos(orbit) * camDist;
     this.camera.position.y = camHeight;
     this.camera.lookAt(0, 1, 0);
+
+    // Animate water shader (Direction E)
+    if (this._waterMat) {
+      this._waterMat.uniforms.uTime.value = t;
+    }
 
     // Animate motes
     if (this.motes) {
@@ -1912,6 +2387,24 @@ class DirectionScene {
         continue;
       }
 
+      if (p.kind === "flag-rise") {
+        // E — flag climbs the pole with ease-out + a small breeze-wobble
+        const ease = 1 - Math.pow(1 - Math.min(1, k * 1.1), 3); // ease-out cubic
+        p.mesh.position.y = p.startY + (p.endY - p.startY) * ease;
+        p.mesh.rotation.z = Math.sin(p.life * 6) * 0.04;
+        if (p.life >= p.maxLife) {
+          // Leave the flag + pole in the scene as a permanent victory marker
+          // (a Reset clears them via stampWaves... actually they're in particles, will be removed).
+          // Convert them to "permanent" by removing from particles array but keeping in scene.
+          this.particles.splice(i, 1);
+          // Mark them so reset() can find and dispose them.
+          if (!this._winMarkers) this._winMarkers = [];
+          this._winMarkers.push(p.mesh);
+          if (p.removeWith) this._winMarkers.push(p.removeWith);
+        }
+        continue;
+      }
+
       // Default physics-based particle (confetti, voxel, scatter, firework, win-rain)
       p.vel.y += p.gravity * dt;
       p.mesh.position.x += p.vel.x * dt;
@@ -2079,7 +2572,7 @@ function boot() {
   const refCanvas = document.getElementById("ref-current");
   if (refCanvas) new DirectionScene(refCanvas, DIRECTIONS.REF);
 
-  for (const dir of ["A", "B", "C", "D"]) {
+  for (const dir of ["A", "B", "C", "D", "E"]) {
     const canvas = document.getElementById("scene-" + dir);
     if (canvas) new DirectionScene(canvas, DIRECTIONS[dir]);
   }
