@@ -572,6 +572,7 @@ class Game {
     this.camTarget = new THREE.Vector3();
     this.camCurrent = new THREE.Vector3();
     this.started = false;
+    this.mode = "solo";
     this.playerName = "";
     this.killedBy = "";
     // Authoritative simulation. Created here so event hooks can be attached
@@ -681,6 +682,17 @@ class Game {
         });
       }
     };
+  }
+
+  startSolo(name) {
+    this.mode = "solo";
+    this.start(name);  // existing local sim flow
+  }
+
+  startOnline(name) {
+    this.mode = "online";
+    this.playerName = name;
+    console.log("[online] connecting... (Task 14 will implement)");
   }
 
   start(name) {
@@ -987,11 +999,18 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 // Name entry
-document.getElementById("play-btn").addEventListener("click", () => {
+document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
-  game.start(name);
+  game.startSolo(name);
 });
+
+document.getElementById("online-btn").addEventListener("click", () => {
+  const name = document.getElementById("name-input").value.trim() || "Player";
+  document.getElementById("name-entry").classList.add("hidden");
+  game.startOnline(name);
+});
+
 document.getElementById("name-input").addEventListener("keydown", e => {
-  if (e.key === "Enter") document.getElementById("play-btn").click();
+  if (e.key === "Enter") document.getElementById("solo-btn").click();
 });
