@@ -328,6 +328,7 @@ export class Simulation {
   _healUnclaimedCells() {
     const grid = this.grid;
     const size = GRID_SIZE;
+    const changedCells = [];   // flat: [idx0, faction0, idx1, faction1, ...]
 
     let changed = true;
     while (changed) {
@@ -354,10 +355,15 @@ export class Simulation {
           }
           if (best > 0) {
             grid[idx] = best;
+            changedCells.push(idx, best);
             changed = true;
           }
         }
       }
+    }
+
+    if (changedCells.length > 0) {
+      this.onHeal?.(changedCells);
     }
   }
 
@@ -425,7 +431,7 @@ export class Simulation {
   // Respawn a dead character whose timer has expired. If the faction is still
   // alive and has respawns enabled, the char respawns in place; otherwise it
   // is reassigned to a surviving faction. Mirrors main.js Game.tick lines 985-1020.
-  _respawnChar(c) {
+  respawnChar(c) {
     const faction = this.factionManager.factions.get(c.factionId);
     if (faction && faction.respawnsEnabled) {
       const sp = this.factionManager.getSpawnPoint(
@@ -479,6 +485,11 @@ export class Simulation {
       c.respawnTimer = 0;
       c.wasOutside = false;
       this.factionManager.addCharacter(c, c.factionId);
+      // Reposition at spawn point (mirrors start())
+      const sp = this.factionManager.getSpawnPoint(
+        c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+      );
+      if (sp) c.setPos(sp.x, sp.z);
     }
     this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
     this.matchManager.startMatch();
@@ -493,7 +504,7 @@ export class Simulation {
       if (!c.alive) {
         c.respawnTimer -= dt;
         if (c.respawnTimer <= 0) {
-          this._respawnChar(c);
+          this.respawnChar(c);
         }
         continue;
       }

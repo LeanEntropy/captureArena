@@ -93,8 +93,8 @@ describe("Simulation", () => {
     const after = countCellsOwnedBy(sim.grid, 1);
     expect(ok).toBe(true);
     expect(c.trailVerts.length).toBe(0);
-    // Claim either gained cells (if cells were 0 or other faction) or stayed equal (if all already owned).
-    expect(after).toBeGreaterThanOrEqual(before);
+    // Claim must have gained cells — the trail covers neutral/enemy area.
+    expect(after).toBeGreaterThan(before);
   });
 
   it("claim with too-short trail returns false (no-op)", () => {
@@ -127,6 +127,44 @@ describe("Simulation", () => {
     c.targetDir = { x: 1, z: 0 };
     sim.setTargetDir(0, 0, 0);
     expect(c.targetDir).toEqual({ x: 1, z: 0 }); // unchanged
+  });
+
+  it("onHeal hook fires with changed cells when heal pass mutates the grid", () => {
+    // After start() the arena is fully claimed — no 0-cells remain.
+    // Zero out an interior cell that has faction neighbors so the heal pass
+    // will re-assign it. We call _healUnclaimedCells() directly rather than
+    // routing through claim(), which could stamp over the cell before the heal.
+    let healCalled = false;
+    let healChanges = null;
+    sim.onHeal = (changed) => { healCalled = true; healChanges = changed; };
+
+    // Find an interior faction-1 cell (not on grid edge) with at least 2
+    // faction-valued neighbors so the heal pass can re-assign it.
+    let targetIdx = -1;
+    for (let i = 0; i < sim.grid.length; i++) {
+      if (sim.grid[i] !== 1) continue;
+      const gx = i % GRID_SIZE;
+      const gy = Math.floor(i / GRID_SIZE);
+      if (gx <= 1 || gx >= GRID_SIZE - 2 || gy <= 1 || gy >= GRID_SIZE - 2) continue;
+      const n = sim.grid[i - 1];
+      const s = sim.grid[i + 1];
+      const w = sim.grid[i - GRID_SIZE];
+      const e = sim.grid[i + GRID_SIZE];
+      const factionNeighbors = [n, s, w, e].filter(v => v > 0 && v !== GRID_SENTINEL);
+      if (factionNeighbors.length >= 2) { targetIdx = i; break; }
+    }
+    expect(targetIdx).toBeGreaterThan(0); // sanity check
+
+    sim.grid[targetIdx] = 0;
+
+    // Directly invoke the heal pass — no claim needed
+    sim._healUnclaimedCells();
+
+    expect(healCalled).toBe(true);
+    expect(healChanges.length).toBeGreaterThan(0);
+    // The zeroed cell must have been re-assigned
+    expect(sim.grid[targetIdx]).toBeGreaterThan(0);
+    expect(sim.grid[targetIdx]).not.toBe(GRID_SENTINEL);
   });
 
   it("restart resets characters and grid", () => {
