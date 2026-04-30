@@ -606,11 +606,16 @@ class Character {
 
     if (this.predicted) {
       // Path 1: local player with client-side prediction.
+      // Lerp the visual mesh toward the predicted pos at ~30% per frame
+      // (~3 frames lag at 60fps) to absorb the per-ack reconciliation
+      // jumps without introducing noticeable input lag. _snapNextFrame
+      // overrides this for explicit teleport events (respawn/restart).
       tgtX = this.predicted.posX;
       tgtZ = this.predicted.posZ;
       tgtDirX = this.predicted.dirX;
       tgtDirZ = this.predicted.dirZ;
-      snap = true;
+      snap = this._snapNextFrame === true;
+      this._snapNextFrame = false;
     } else if (this.simChar && this.simChar._schemaChar) {
       // Path 3: remote character in online mode — snapshot interpolation.
       const schemaX = this.simChar.pos.x;
@@ -709,6 +714,19 @@ class Character {
       this.group.position.x = tgtX;
       this.group.position.z = tgtZ;
       this.group.rotation.y = Math.atan2(tgtDirX, tgtDirZ);
+    } else if (this.predicted) {
+      // Local player: lerp visual toward predicted pos. ~3 frame visual lag
+      // at 60fps in exchange for smoothing out per-ack reconciliation jumps.
+      const t = 0.30;
+      this.group.position.x += (tgtX - this.group.position.x) * t;
+      this.group.position.z += (tgtZ - this.group.position.z) * t;
+      // Rotation: lerp via shortest-path angle to avoid 2π wraparound jumps.
+      const targetAng = Math.atan2(tgtDirX, tgtDirZ);
+      let curAng = this.group.rotation.y;
+      let d = targetAng - curAng;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      this.group.rotation.y = curAng + d * t;
     }
 
     this.group.visible = (this.isPlayer && this.invulnTimer > 0)
@@ -832,9 +850,9 @@ class Game {
     this.mode = "solo";
     this.playerName = "";
     this.killedBy = "";
-    // Input throttling: send to server at 20 Hz (matches server tick rate).
+    // Input throttling: send to server at 30 Hz (matches server tick rate).
     this._inputSendAccum = 0;
-    this._inputSendInterval = 1 / 20;
+    this._inputSendInterval = 1 / 30;
     // Authoritative simulation. Created here so event hooks can be attached
     // even before start() is called.
     this.sim = new Simulation();
@@ -1183,17 +1201,28 @@ class Game {
     r.group.rotation.y = Math.atan2(dirX, dirZ);
     r.pos.set(posX, 0, posZ);
     r.dir.set(dirX, 0, dirZ);
-    // Local player: reset prediction state so the soft tether doesn't pull
-    // toward the OLD pos. (Without this, _stepPrediction sees a huge
-    // ddx/ddz between predicted and server pos for one frame and the
-    // hard-snap path catches it — which works, but explicit teleport
-    // handling is cleaner and avoids race conditions if the schema sync
-    // arrives one frame late.)
+    // Override the local-player visual lerp once so this frame snaps cleanly
+    // to the new pos rather than sliding 30% of the way each frame from the
+    // OLD position.
+    r._snapNextFrame = true;
+    // Local player: reset prediction state so the input-replay reconciliation
+    // doesn't try to evolve the OLD predicted pos forward; instead we resync
+    // to the teleport pos and start replay fresh from the next ack.
     if (charId === this.myCharId && this.predicted) {
       this.predicted.posX = posX;
       this.predicted.posZ = posZ;
       this.predicted.dirX = dirX || this.predicted.dirX;
       this.predicted.dirZ = dirZ || this.predicted.dirZ;
+      // Drop pending inputs — they were aimed at the pre-teleport position
+      // and replaying them onto the new pos would slide the player off-spawn.
+      if (this.mp) {
+        this.mp.inputBuffer = [];
+        // The next ack we receive will be for an input sent BEFORE the
+        // teleport — but the server pos at that seq corresponds to wherever
+        // the server placed us post-teleport. Bumping _lastAckedSeq to the
+        // current seq prevents a stale-replay from clobbering predicted.
+        this._lastAckedSeq = this.mp.inputSeq;
+      }
     }
   }
 
@@ -1304,74 +1333,100 @@ class Game {
       dirZ: sc.dir.z || 1,
     };
     rChar.predicted = this.predicted;
+    // Last server-acked input seq we processed. We only run reconciliation
+    // when this advances (otherwise the server hasn't seen any new input
+    // and our prediction is still consistent with what they'll compute).
+    this._lastAckedSeq = 0;
+    // One-shot flag: when true, the visual lerp on the local player is
+    // skipped for this frame and the mesh snaps directly to the predicted
+    // pos (used for teleport events: respawn, restart, faction reassign).
+    rChar._snapNextFrame = true;
     console.log(`[online] bound player to char ${this.myCharId}`);
   }
 
-  // Client-side prediction step for the local online player. Mirrors the
-  // server's Simulation._stepCharacter math (TURN_SPEED rad/s steer,
-  // PLAYER_SPEED * dt advance, arena-radius clamp). Reconciles to the
-  // authoritative server position via a soft tether instead of a hard snap:
-  // small drifts (< RECON_HARD_SNAP) are pulled toward server pos at
-  // RECON_PULL_RATE per second so movement looks smooth; large drifts (e.g.
-  // respawn / teleport) hard-snap so the player doesn't slide across the
-  // map. Without input prediction the round-trip lag (~150-200ms) makes the
-  // local character feel rubbery; with the old 2-unit snap, every direction
-  // change naturally drifted past threshold and visibly teleported. The
-  // soft pull keeps the predicted pos within ~1 unit of the server while
-  // never visibly jumping.
+  // Integrate a single input through one prediction step using the same math
+  // as Simulation._stepCharacter (TURN_SPEED steer, PLAYER_SPEED advance,
+  // arena clamp). `state` is mutated in place. `dt` is the duration this
+  // input was active for. Used during input-replay reconciliation.
+  _integrateInput(state, dirX, dirZ, dt) {
+    const tlen = Math.hypot(dirX, dirZ);
+    if (tlen > 1e-6) {
+      const ca = Math.atan2(state.dirX, state.dirZ);
+      const ta = Math.atan2(dirX / tlen, dirZ / tlen);
+      let diff = ta - ca;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.max(-TURN_SPEED * dt, Math.min(TURN_SPEED * dt, diff));
+      const na = ca + turn;
+      state.dirX = Math.sin(na);
+      state.dirZ = Math.cos(na);
+    }
+    state.posX += state.dirX * PLAYER_SPEED * dt;
+    state.posZ += state.dirZ * PLAYER_SPEED * dt;
+    const r = Math.hypot(state.posX, state.posZ);
+    if (r > ARENA_RADIUS) {
+      const inv = ARENA_RADIUS / r;
+      state.posX *= inv;
+      state.posZ *= inv;
+    }
+  }
+
+  // Client-side prediction + server-confirmed reconciliation for the local
+  // online player.
+  //
+  // Quake-style scheme:
+  //   1. Each input is tagged with a monotonically increasing seq (mp.sendInput).
+  //   2. Server applies inputs at 30Hz and echoes the latest applied seq via
+  //      schemaChar.lastAppliedInputSeq.
+  //   3. When that seq advances, we KNOW the server's posX/posZ reflects the
+  //      world AFTER input N was applied. Reset predicted = server pos at N,
+  //      then replay every unacked input N+1..now through _integrateInput to
+  //      derive the correct present-time predicted pos. This eliminates the
+  //      drift between client prediction and server truth that the old
+  //      soft-tether produced when latency varied.
+  //   4. Even when no new ack arrives this frame, advance predicted by dt with
+  //      the current targetDir so motion stays smooth between server updates.
   _stepPrediction(dt) {
     if (this.mode !== "online") return;
     if (!this.player || !this.predicted) return;
     if (!this.player.alive) return;
 
     const sc = this.player.simChar;
-    const RECON_HARD_SNAP = 8;       // units — only respawn/teleport scale
-    const RECON_PULL_RATE = 5;       // units/sec of drift correction
-    const ddx = sc.pos.x - this.predicted.posX;
-    const ddz = sc.pos.z - this.predicted.posZ;
-    const distSq = ddx * ddx + ddz * ddz;
-    if (distSq > RECON_HARD_SNAP * RECON_HARD_SNAP) {
-      // Catastrophic drift (respawn, teleport, extended disconnect) — snap.
+    const ackedSeq = sc._schemaChar?.lastAppliedInputSeq ?? 0;
+
+    if (ackedSeq > this._lastAckedSeq) {
+      // Server has confirmed up to ackedSeq. Reset to server's authoritative
+      // pos AT that seq, then replay any inputs after it.
       this.predicted.posX = sc.pos.x;
       this.predicted.posZ = sc.pos.z;
       this.predicted.dirX = sc.dir.x || this.predicted.dirX;
       this.predicted.dirZ = sc.dir.z || this.predicted.dirZ;
-    } else if (distSq > 1e-6) {
-      // Soft tether: pull predicted toward server at RECON_PULL_RATE u/s.
-      // Clamped so a single frame can't pull more than the actual drift.
-      const dist = Math.sqrt(distSq);
-      const pull = Math.min(1, (RECON_PULL_RATE * dt) / dist);
-      this.predicted.posX += ddx * pull;
-      this.predicted.posZ += ddz * pull;
+
+      // Drop confirmed inputs from the buffer so what remains is purely the
+      // pending tail (seq > ackedSeq).
+      if (this.mp) this.mp.ackInputs(ackedSeq);
+
+      // Replay each pending input. Each represents one server-tick worth of
+      // simulation, so use the server tick interval as dt for the integration.
+      // (Slight imprecision OK — the next ack will correct it.)
+      const tickDt = this._inputSendInterval; // 1/30
+      const buf = this.mp ? this.mp.inputBuffer : [];
+      for (let i = 0; i < buf.length; i++) {
+        const inp = buf[i];
+        this._integrateInput(this.predicted, inp.dirX, inp.dirZ, tickDt);
+      }
+
+      this._lastAckedSeq = ackedSeq;
     }
 
-    // Steer predicted dir toward this.player.targetDir at TURN_SPEED rad/s.
-    const tdx = this.player.targetDir.x;
-    const tdz = this.player.targetDir.z;
-    const tlen = Math.hypot(tdx, tdz);
-    if (tlen > 1e-6) {
-      const ca = Math.atan2(this.predicted.dirX, this.predicted.dirZ);
-      const ta = Math.atan2(tdx / tlen, tdz / tlen);
-      let diff = ta - ca;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.max(-TURN_SPEED * dt, Math.min(TURN_SPEED * dt, diff));
-      const na = ca + turn;
-      this.predicted.dirX = Math.sin(na);
-      this.predicted.dirZ = Math.cos(na);
-    }
-
-    // Advance predicted pos.
-    this.predicted.posX += this.predicted.dirX * PLAYER_SPEED * dt;
-    this.predicted.posZ += this.predicted.dirZ * PLAYER_SPEED * dt;
-
-    // Arena clamp.
-    const r = Math.hypot(this.predicted.posX, this.predicted.posZ);
-    if (r > ARENA_RADIUS) {
-      const inv = ARENA_RADIUS / r;
-      this.predicted.posX *= inv;
-      this.predicted.posZ *= inv;
-    }
+    // Forward-extrapolate predicted by dt with the latest targetDir so the
+    // player sees instant response between acks (and between input sends).
+    this._integrateInput(
+      this.predicted,
+      this.player.targetDir.x,
+      this.player.targetDir.z,
+      dt,
+    );
   }
 
   start(name) {

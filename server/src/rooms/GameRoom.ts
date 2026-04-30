@@ -4,13 +4,14 @@ import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameS
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
 
-const TICK_HZ = 20;
+const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
 const INTERMISSION_SECONDS = 30;
 
 interface ClientMeta {
   charId: number | null;
   playerToken: string | null;
+  lastInputSeq: number;
 }
 
 export function pickWeakestFaction(
@@ -140,10 +141,15 @@ export class GameRoom extends Room<GameStateSchema> {
       this.handleHello(client, msg.name ?? "Player", msg.playerToken ?? null);
     });
 
-    this.onMessage("input", (client, msg: { dirX: number; dirZ: number }) => {
+    this.onMessage("input", (client, msg: { dirX: number; dirZ: number; seq?: number }) => {
       const meta = this.clientMeta.get(client.sessionId);
       if (!meta || meta.charId === null) return;
       this.sim.setTargetDir(meta.charId, msg.dirX, msg.dirZ);
+      // Track the highest seq we've applied for this client so the per-tick
+      // schema sync can echo it back. Monotonic-only — drop out-of-order/dup.
+      if (typeof msg.seq === "number" && msg.seq > meta.lastInputSeq) {
+        meta.lastInputSeq = msg.seq;
+      }
     });
   }
 
@@ -274,6 +280,15 @@ export class GameRoom extends Room<GameStateSchema> {
       fs.endangered = f.endangered ?? false;
     }
 
+    // Build a charId -> lastInputSeq map so each schema char can echo back the
+    // most recent input seq applied for the client bound to it. The bound
+    // client reads this field to drop confirmed inputs and replay unacked ones
+    // against its predicted state. Unbound chars (bots) get 0.
+    const seqByCharId = new Map<number, number>();
+    for (const meta of this.clientMeta.values()) {
+      if (meta.charId !== null) seqByCharId.set(meta.charId, meta.lastInputSeq);
+    }
+
     for (let i = 0; i < this.sim.characters.length; i++) {
       const c = this.sim.characters[i];
       const cs = this.state.characters[i];
@@ -288,6 +303,7 @@ export class GameRoom extends Room<GameStateSchema> {
       cs.alive = c.alive;
       cs.invulnTimer = c.invulnTimer ?? 0;
       cs.killCount = c.killCount ?? 0;
+      cs.lastAppliedInputSeq = seqByCharId.get(c.id) ?? 0;
       // score will come from scoreTracker in Task 19; for now leave at 0
     }
   }
@@ -306,7 +322,7 @@ export class GameRoom extends Room<GameStateSchema> {
   }
 
   onJoin(client: Client) {
-    this.clientMeta.set(client.sessionId, { charId: null, playerToken: null });
+    this.clientMeta.set(client.sessionId, { charId: null, playerToken: null, lastInputSeq: 0 });
     // Send the current territory grid as a gzipped snapshot so the new client
     // can populate its local grid copy. Subsequent claim/heal events keep the
     // copy in sync.

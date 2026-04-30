@@ -20,6 +20,12 @@ export class CharacterSchema extends Schema {
   @type("number") invulnTimer: number = 0;
   @type("uint16") killCount: number = 0;
   @type("number") score: number = 0;
+  // Last input seq number applied by the server for the client bound to this
+  // character. The bound client uses this to drop confirmed inputs from its
+  // pending buffer and replay only the unacked inputs against its predicted
+  // state, eliminating drift between client prediction and server truth.
+  // 0 for unbound characters / bots.
+  @type("uint32") lastAppliedInputSeq: number = 0;
 }
 
 export class GameStateSchema extends Schema {

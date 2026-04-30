@@ -8,6 +8,15 @@ export class MultiplayerClient {
     this.room = null;
     this.playerToken = null;
 
+    // Input sequence tracking for server-confirmed reconciliation.
+    // Each input message is tagged with a monotonically increasing seq;
+    // server echoes back the latest applied seq via CharacterSchema
+    // .lastAppliedInputSeq. The client uses ackInputs() to drop confirmed
+    // entries from the buffer; unacked inputs are replayed onto the
+    // server-confirmed pos to derive the new predicted state.
+    this.inputSeq = 0;
+    this.inputBuffer = []; // [{ seq, dirX, dirZ, t }]
+
     // Event hooks (set by host renderer)
     this.onState = null;           // (state) => void
     this.onClaim = null;           // (charId, factionId, trailPoints?, replayTrail) => void
@@ -75,7 +84,24 @@ export class MultiplayerClient {
 
   sendInput(dirX, dirZ) {
     if (!this.room) return;
-    this.room.send("input", { dirX, dirZ });
+    this.inputSeq++;
+    this.inputBuffer.push({
+      seq: this.inputSeq,
+      dirX,
+      dirZ,
+      t: performance.now(),
+    });
+    // Bound the buffer — at 30Hz this caps memory at ~3.3s of pending inputs.
+    while (this.inputBuffer.length > 100) this.inputBuffer.shift();
+    this.room.send("input", { dirX, dirZ, seq: this.inputSeq });
+  }
+
+  // Drop inputs the server has already applied. Called by the client after
+  // reading the local player's CharacterSchema.lastAppliedInputSeq.
+  ackInputs(upToSeq) {
+    while (this.inputBuffer.length > 0 && this.inputBuffer[0].seq <= upToSeq) {
+      this.inputBuffer.shift();
+    }
   }
 
   disconnect() {
