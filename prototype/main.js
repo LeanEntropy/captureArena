@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import earcut from "earcut";
+
 import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./faction.js";
 import { ScoreTracker } from "./scoring.js";
 import { MatchManager } from "./match.js";
@@ -681,12 +681,8 @@ class Character {
       }
     }
 
-    // Mark factions dirty for mesh rebuild
     if (window._game) {
-      window._game.factionsDirty.add(this.factionId);
-      for (const victimFactionId of overwritten) {
-        window._game.factionsDirty.add(victimFactionId);
-      }
+      window._game.territoryDirty = true;
     }
 
     const areaAfter = territoryGrid.countCells(this.factionId);
@@ -782,8 +778,13 @@ class Game {
     this.matchManager = null;
     this.scoreTracker = null;
     this.uiManager = null;
-    this.factionMeshes = new Map();
-    this.factionsDirty = new Set();
+    this.territoryDirty = false;
+    this.territoryTexture = null;
+    this.territoryMesh = null;
+    this._territoryCanvas = null;
+    this._territoryCtx = null;
+    this._territoryImageData = null;
+    this._debugNearestFilter = false;
 
     // Input
     this.mouseNDC = new THREE.Vector2();
@@ -819,6 +820,7 @@ class Game {
     window.addEventListener("keydown", e => {
       this.keysDown.add(e.key.toLowerCase());
       if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
+      if (e.key.toLowerCase() === "v") this._toggleFactionMeshes();
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
     window.addEventListener("resize", () => {
@@ -830,11 +832,7 @@ class Game {
     // Labels
     this.labels = new Map();
 
-    // Grid overlay debug
-    this.gridOverlayVisible = false;
-    this.gridOverlayMesh = null;
-    this.gridOverlayTexture = null;
-    this.gridOverlayTimer = 0;
+    // Debug toggles
 
     // HUD
     this.hudTL = document.getElementById("hud-tl");
@@ -904,9 +902,8 @@ class Game {
     );
     this.uiManager.setPlayer(this.player);
 
-    for (let fid = 1; fid <= FACTION_COUNT; fid++) {
-      this._rebuildFactionMesh(fid);
-    }
+    this._createTerritoryTexture();
+    this._updateTerritoryTexture();
 
     this.camera.position.set(playerSpawn.x, CAMERA_HEIGHT, playerSpawn.z + CAMERA_Z_OFFSET);
     this.camera.lookAt(playerSpawn.x, 0, playerSpawn.z);
@@ -974,9 +971,10 @@ class Game {
       if (this.matchManager.phase === "ended") {
         this._updateLabels();
         if (this.uiManager) this.uiManager.update(dt);
-        // Rebuild any pending faction meshes
-        for (const fid of this.factionsDirty) this._rebuildFactionMesh(fid);
-        this.factionsDirty.clear();
+        if (this.territoryDirty) {
+          this._updateTerritoryTexture();
+          this.territoryDirty = false;
+        }
         return;
       }
     }
@@ -1047,11 +1045,10 @@ class Game {
       }
     }
 
-    // Rebuild dirty faction meshes
-    for (const fid of this.factionsDirty) {
-      this._rebuildFactionMesh(fid);
+    if (this.territoryDirty) {
+      this._updateTerritoryTexture();
+      this.territoryDirty = false;
     }
-    this.factionsDirty.clear();
 
     // Camera
     if (this.player && this.player.alive) {
@@ -1068,14 +1065,6 @@ class Game {
     // UI
     if (this.uiManager) this.uiManager.update(dt);
 
-    // Grid overlay periodic update
-    if (this.gridOverlayVisible) {
-      this.gridOverlayTimer += dt;
-      if (this.gridOverlayTimer >= 0.5) {
-        this.gridOverlayTimer = 0;
-        this._updateGridOverlay();
-      }
-    }
   }
 
   _killCharacter(victim, killer) {
@@ -1213,167 +1202,104 @@ class Game {
     }
   }
 
-  _rebuildFactionMesh(factionId) {
-    const oldMesh = this.factionMeshes.get(factionId);
-    if (oldMesh) {
-      this.scene.remove(oldMesh);
-      oldMesh.geometry.dispose();
-      this.factionMeshes.delete(factionId);
-    }
+  _createTerritoryTexture() {
+    const texSize = GRID_SIZE;
+    this._territoryCanvas = document.createElement("canvas");
+    this._territoryCanvas.width = texSize;
+    this._territoryCanvas.height = texSize;
+    this._territoryCtx = this._territoryCanvas.getContext("2d");
+    this._territoryImageData = this._territoryCtx.createImageData(texSize, texSize);
 
-    const contourLoops = territoryGrid.extractContours(factionId);
-    if (contourLoops.length === 0) return;
-
-    const MIN_LOOP_AREA = 0.5;
-    const outers = [];
-    const holes = [];
-
-    for (const loop of contourLoops) {
-      let signedArea = 0;
-      for (let j = 0; j < loop.length; j++) {
-        const k = (j + 1) % loop.length;
-        signedArea += loop[j].x * loop[k].y - loop[k].x * loop[j].y;
-      }
-      const area = Math.abs(signedArea / 2);
-      if (area < MIN_LOOP_AREA) continue;
-
-      if (signedArea < 0) {
-        outers.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
-      } else {
-        holes.push({ loop: loop.slice().reverse(), area, signedArea: -signedArea });
-      }
-    }
-
-    if (outers.length === 0) return;
-
-    outers.sort((a, b) => a.area - b.area);
-    const holesByOuter = new Map();
-    for (const outer of outers) holesByOuter.set(outer, []);
-
-    for (const hole of holes) {
-      const testPt = hole.loop[0];
-      for (const outer of outers) {
-        if (pointInPoly(testPt.x, testPt.y, outer.loop)) {
-          holesByOuter.get(outer).push(hole.loop);
-          break;
-        }
-      }
-    }
-
-    const allCoords = [];
-    const allIndices = [];
-    let vertexOffset = 0;
-
-    for (const outer of outers) {
-      const coords = [];
-      for (const p of outer.loop) coords.push(p.x, p.y);
-      const holeIndices = [];
-      for (const holeLoop of holesByOuter.get(outer)) {
-        holeIndices.push(coords.length / 2);
-        for (const p of holeLoop) coords.push(p.x, p.y);
-      }
-      const indices = earcut(coords, holeIndices.length > 0 ? holeIndices : null, 2);
-      for (const idx of indices) allIndices.push(idx + vertexOffset);
-      const totalPts = coords.length / 2;
-      for (let i = 0; i < totalPts; i++) {
-        allCoords.push(coords[i * 2], 0.02, coords[i * 2 + 1]);
-      }
-      vertexOffset += totalPts;
-    }
-
-    if (allIndices.length < 3) return;
-
-    const pos = new Float32Array(allCoords);
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.setIndex(allIndices);
-    geom.computeVertexNormals();
-
-    const color = FACTION_COLORS[factionId - 1] || 0x999999;
-    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
-      color, transparent: false, opacity: 1.0, side: THREE.DoubleSide, depthWrite: false
-    }));
-    this.scene.add(mesh);
-    this.factionMeshes.set(factionId, mesh);
-  }
-
-  _toggleGridOverlay() {
-    this.gridOverlayVisible = !this.gridOverlayVisible;
-    if (this.gridOverlayVisible) {
-      this._createGridOverlay();
-      this._updateGridOverlay();
-    } else if (this.gridOverlayMesh) {
-      this.scene.remove(this.gridOverlayMesh);
-      this.gridOverlayMesh.geometry.dispose();
-      this.gridOverlayMesh.material.dispose();
-      this.gridOverlayTexture.dispose();
-      this.gridOverlayMesh = null;
-      this.gridOverlayTexture = null;
-    }
-  }
-
-  _createGridOverlay() {
-    if (this.gridOverlayMesh) return;
-
-    const texSize = 256;
-    const data = new Uint8Array(texSize * texSize * 4);
-    this.gridOverlayTexture = new THREE.DataTexture(data, texSize, texSize, THREE.RGBAFormat);
-    this.gridOverlayTexture.minFilter = THREE.NearestFilter;
-    this.gridOverlayTexture.magFilter = THREE.NearestFilter;
+    this.territoryTexture = new THREE.CanvasTexture(this._territoryCanvas);
+    this.territoryTexture.minFilter = THREE.LinearFilter;
+    this.territoryTexture.magFilter = THREE.LinearFilter;
+    this.territoryTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.territoryTexture.wrapT = THREE.ClampToEdgeWrapping;
 
     const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
     const mat = new THREE.MeshBasicMaterial({
-      map: this.gridOverlayTexture,
+      map: this.territoryTexture,
       transparent: true,
-      opacity: 0.6,
-      depthWrite: false,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
+      depthWrite: false
     });
 
-    this.gridOverlayMesh = new THREE.Mesh(geom, mat);
-    this.gridOverlayMesh.rotation.x = -Math.PI / 2;
-    this.gridOverlayMesh.position.y = 0.04;
-    this.scene.add(this.gridOverlayMesh);
+    this.territoryMesh = new THREE.Mesh(geom, mat);
+    this.territoryMesh.rotation.x = -Math.PI / 2;
+    this.territoryMesh.position.y = 0.02;
+    this.scene.add(this.territoryMesh);
   }
 
-  _updateGridOverlay() {
-    if (!this.gridOverlayTexture) return;
+  _updateTerritoryTexture() {
+    if (!this._territoryCtx) return;
 
-    const texSize = 256;
-    const step = GRID_SIZE / texSize;
-    const data = this.gridOverlayTexture.image.data;
+    const data = this._territoryImageData.data;
+    const grid = territoryGrid.grid;
+    const size = GRID_SIZE;
 
-    for (let ty = 0; ty < texSize; ty++) {
-      for (let tx = 0; tx < texSize; tx++) {
-        const gx = Math.floor(tx * step);
-        const gy = Math.floor(ty * step);
-        const val = territoryGrid.grid[gy * GRID_SIZE + gx];
+    const factionR = new Uint8Array(6);
+    const factionG = new Uint8Array(6);
+    const factionB = new Uint8Array(6);
+    for (let i = 0; i < FACTION_COUNT; i++) {
+      const c = FACTION_COLORS[i];
+      factionR[i + 1] = (c >> 16) & 0xFF;
+      factionG[i + 1] = (c >> 8) & 0xFF;
+      factionB[i + 1] = c & 0xFF;
+    }
 
-        const pixIdx = (ty * texSize + tx) * 4;
+    for (let gy = 0; gy < size; gy++) {
+      for (let gx = 0; gx < size; gx++) {
+        const gridIdx = gy * size + gx;
+        const val = grid[gridIdx];
+        const pixIdx = gridIdx * 4;
 
-        if (val === GRID_SENTINEL) {
-          data[pixIdx] = 0; data[pixIdx + 1] = 0; data[pixIdx + 2] = 0; data[pixIdx + 3] = 0;
-        } else if (val === 0) {
-          data[pixIdx] = 255; data[pixIdx + 1] = 255; data[pixIdx + 2] = 255; data[pixIdx + 3] = 30;
+        if (val === 0 || val === GRID_SENTINEL) {
+          data[pixIdx] = 0;
+          data[pixIdx + 1] = 0;
+          data[pixIdx + 2] = 0;
+          data[pixIdx + 3] = 0;
         } else {
-          const color = FACTION_COLORS[val - 1] || 0x999999;
-          data[pixIdx]     = (color >> 16) & 0xFF;
-          data[pixIdx + 1] = (color >> 8) & 0xFF;
-          data[pixIdx + 2] = color & 0xFF;
-          data[pixIdx + 3] = 180;
-        }
+          let r = factionR[val], g = factionG[val], b = factionB[val];
 
-        // Grid lines every 32 texels
-        if (tx % 32 === 0 || ty % 32 === 0) {
-          data[pixIdx] = Math.max(0, data[pixIdx] - 40);
-          data[pixIdx + 1] = Math.max(0, data[pixIdx + 1] - 40);
-          data[pixIdx + 2] = Math.max(0, data[pixIdx + 2] - 40);
-          if (data[pixIdx + 3] < 60) data[pixIdx + 3] = 60;
+          if (
+            (gx > 0 && grid[gridIdx - 1] !== val) ||
+            (gx < size - 1 && grid[gridIdx + 1] !== val) ||
+            (gy > 0 && grid[gridIdx - size] !== val) ||
+            (gy < size - 1 && grid[gridIdx + size] !== val)
+          ) {
+            r = (r * 0.72) | 0;
+            g = (g * 0.72) | 0;
+            b = (b * 0.72) | 0;
+          }
+
+          data[pixIdx] = r;
+          data[pixIdx + 1] = g;
+          data[pixIdx + 2] = b;
+          data[pixIdx + 3] = 255;
         }
       }
     }
 
-    this.gridOverlayTexture.needsUpdate = true;
+    this._territoryCtx.putImageData(this._territoryImageData, 0, 0);
+    this.territoryTexture.needsUpdate = true;
+  }
+
+  _toggleFactionMeshes() {
+    if (!this.territoryMesh) return;
+    this.territoryMesh.visible = !this.territoryMesh.visible;
+  }
+
+  _toggleGridOverlay() {
+    if (!this.territoryTexture) return;
+    this._debugNearestFilter = !this._debugNearestFilter;
+    if (this._debugNearestFilter) {
+      this.territoryTexture.minFilter = THREE.NearestFilter;
+      this.territoryTexture.magFilter = THREE.NearestFilter;
+    } else {
+      this.territoryTexture.minFilter = THREE.LinearFilter;
+      this.territoryTexture.magFilter = THREE.LinearFilter;
+    }
+    this.territoryTexture.needsUpdate = true;
   }
 
   render() {
