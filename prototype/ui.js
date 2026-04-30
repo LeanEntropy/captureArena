@@ -29,13 +29,13 @@ export class UIManager {
     this.minimapCtx = this.minimapCanvas
       ? this.minimapCanvas.getContext("2d")
       : null;
-    this.leaderboardEl = document.getElementById("leaderboard-overlay");
+    this.leaderboardEl = document.getElementById("player-leaderboard");
     this.endScreenEl = document.getElementById("match-end-screen");
 
     // Minimap setup
-    this.minimapSize = 180; // display CSS size
-    this.minimapScale = Math.ceil(gridSize / 180); // sample every Nth cell
-    this.minimapPixelSize = Math.ceil(gridSize / this.minimapScale); // canvas pixel dimensions
+    this.minimapSize = 180;
+    this.minimapScale = Math.ceil(gridSize / 180);
+    this.minimapPixelSize = Math.ceil(gridSize / this.minimapScale);
     if (this.minimapCanvas) {
       this.minimapCanvas.width = this.minimapPixelSize;
       this.minimapCanvas.height = this.minimapPixelSize;
@@ -43,27 +43,11 @@ export class UIManager {
     this.minimapTimer = 0;
     this.minimapInterval = 0.5;
 
-    // Pre-compute faction RGB arrays from FACTION_COLORS
-    this.factionRGB = [null]; // index 0 unused
+    this.factionRGB = [null];
     for (let i = 0; i < FACTION_COUNT; i++) {
       const c = FACTION_COLORS[i];
       this.factionRGB.push([(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF]);
     }
-
-    // Tab leaderboard toggle
-    this.showLeaderboard = false;
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        this.showLeaderboard = true;
-      }
-    });
-    window.addEventListener("keyup", (e) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        this.showLeaderboard = false;
-      }
-    });
 
     // Player reference
     this.player = null;
@@ -198,11 +182,10 @@ export class UIManager {
         const dataIdx = (py * pixelSize + px) * 4;
 
         if (cell === this.sentinel) {
-          // Out-of-arena
-          data[dataIdx] = 20;
-          data[dataIdx + 1] = 20;
-          data[dataIdx + 2] = 20;
-          data[dataIdx + 3] = 255;
+          data[dataIdx] = 0;
+          data[dataIdx + 1] = 0;
+          data[dataIdx + 2] = 0;
+          data[dataIdx + 3] = 0;
         } else if (cell === 0) {
           // Unclaimed arena cell
           data[dataIdx] = 60;
@@ -254,39 +237,94 @@ export class UIManager {
   _updateLeaderboardOverlay() {
     if (!this.leaderboardEl) return;
 
-    if (!this.showLeaderboard) {
-      this.leaderboardEl.style.display = "none";
+    const allEntries = this.scoreTracker.getLeaderboard();
+
+    let playerRank = -1;
+    for (let i = 0; i < allEntries.length; i++) {
+      if (allEntries[i].char === this.player) {
+        playerRank = i;
+        break;
+      }
+    }
+
+    // Position below faction rankings
+    if (this.rankingEl) {
+      const rect = this.rankingEl.getBoundingClientRect();
+      this.leaderboardEl.style.top = (rect.bottom + 8) + "px";
+    }
+
+    // Build scrollable list of ALL players
+    let listHtml = "";
+    allEntries.forEach((entry, i) => {
+      listHtml += this._renderLeaderboardRow(entry, i, entry.char === this.player);
+    });
+
+    // Build pinned player footer
+    let pinnedHtml = "";
+    if (playerRank >= 0) {
+      const playerEntry = allEntries[playerRank];
+      pinnedHtml = this._renderLeaderboardRow(playerEntry, playerRank, true, true);
+    }
+
+    this.leaderboardEl.innerHTML =
+      `<div class="lb-title">Leaderboard</div>` +
+      `<div class="lb-list">${listHtml}</div>` +
+      `<div class="lb-pinned" id="lb-pinned-player">${pinnedHtml}</div>`;
+
+    // Check visibility: hide pinned row if player is in top 10 or visible in scroll
+    this._updatePinnedVisibility(playerRank);
+  }
+
+  _updatePinnedVisibility(playerRank) {
+    const pinnedEl = document.getElementById("lb-pinned-player");
+    if (!pinnedEl) return;
+
+    // Always hide if player is in top 10
+    if (playerRank >= 0 && playerRank < 10) {
+      pinnedEl.style.display = "none";
       return;
     }
 
-    this.leaderboardEl.style.display = "flex";
+    // Check if the player's row is visible in the scroll container
+    const listEl = this.leaderboardEl.querySelector(".lb-list");
+    if (!listEl) return;
 
-    const entries = this.scoreTracker.getLeaderboard().slice(0, 10);
-    let html = "<div style='font-weight:bold;font-size:15px;margin-bottom:10px;'>Top Players</div>";
-
-    entries.forEach((entry, i) => {
-      const { char, total } = entry;
-      const faction = this.factionManager.getAllFactions().find(
-        (f) => f.id === char.factionId
-      );
-      const hex = faction ? "#" + faction.color.toString(16).padStart(6, "0") : "#888";
-      const isPlayer = char === this.player;
-
-      html +=
-        `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:14px;${isPlayer ? "font-weight:bold;" : ""}">` +
-        `<span style="width:20px;text-align:right;color:#aaa;">${i + 1}.</span>` +
-        `<span style="display:inline-block;width:12px;height:12px;background:${hex};border-radius:2px;flex-shrink:0;"></span>` +
-        `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${char.name || "?"}</span>` +
-        `<span style="color:#FFD700;font-weight:bold;">${Math.floor(total)}</span>` +
-        `</div>`;
-    });
-
-    const lbContent = this.leaderboardEl.querySelector(".lb-content");
-    if (lbContent) {
-      lbContent.innerHTML = html;
-    } else {
-      this.leaderboardEl.innerHTML = html;
+    const playerRowEl = listEl.querySelector("[data-player-row]");
+    if (!playerRowEl) {
+      pinnedEl.style.display = playerRank >= 0 ? "" : "none";
+      return;
     }
+
+    const listRect = listEl.getBoundingClientRect();
+    const rowRect = playerRowEl.getBoundingClientRect();
+    const isVisible = rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom;
+
+    pinnedEl.style.display = isVisible ? "none" : "";
+  }
+
+  _renderLeaderboardRow(entry, rank, isPlayer, pinned) {
+    const { char, total } = entry;
+    const faction = this.factionManager.getAllFactions().find(
+      (f) => f.id === char.factionId
+    );
+    const hex = faction ? "#" + faction.color.toString(16).padStart(6, "0") : "#888";
+
+    const attrs = isPlayer && !pinned ? ' data-player-row="1"' : "";
+    const style = [
+      "display:flex", "align-items:center", "gap:6px",
+      "margin:2px 0", "padding:2px 4px", "border-radius:4px", "font-size:12px",
+      isPlayer ? "font-weight:bold;background:rgba(0,0,0,0.08);" : "",
+      pinned ? "border:2px solid #333;padding:3px 4px;" : ""
+    ].filter(Boolean).join(";");
+
+    return (
+      `<div style="${style}"${attrs}>` +
+      `<span style="width:18px;text-align:right;color:#999;flex-shrink:0;">${rank + 1}.</span>` +
+      `<span style="display:inline-block;width:10px;height:10px;background:${hex};border-radius:2px;flex-shrink:0;"></span>` +
+      `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${char.name || "?"}</span>` +
+      `<span style="color:#555;font-weight:bold;flex-shrink:0;">${Math.floor(total)}</span>` +
+      `</div>`
+    );
   }
 
   // ── End screen ────────────────────────────────────────────────────────────
