@@ -4,25 +4,13 @@ import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTI
 import { ScoreTracker } from "./sim/scoring.js";
 import { MatchManager } from "./sim/match.js";
 import { UIManager } from "./ui.js";
-
-// ===================== CONSTANTS =====================
-const ARENA_RADIUS = 66.89;
-const MIN_POINT_DIST = 0.3;
-const PLAYER_SPEED = 8;
-const BOT_SPEED = 6;
-const TURN_SPEED = 5;
-const TRAIL_WIDTH = 0.8;
-const TRAIL_KILL_DIST = 0.6;
-const SELF_TRAIL_SKIP = 5;
-const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
-const RESPAWN_DELAY = 3;
-const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 34;
-const CAMERA_Z_OFFSET = 26;
-
-const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
-
-const BOT_NAMES = ["K-9","Lime","Toe","Leaf Assassin","Helmet Destroyer","Star Jammer","Sky Bully","Daisy Stick","Claw","Blitz","Nova","Shade","Rook","Pixel","Echo","Drift","Fang","Jinx","Bolt"];
+import {
+  ARENA_RADIUS, MIN_POINT_DIST, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
+  TRAIL_WIDTH, TRAIL_KILL_DIST, SELF_TRAIL_SKIP, BOT_COUNT,
+  RESPAWN_DELAY, INVULN_TIME, CAMERA_HEIGHT, CAMERA_Z_OFFSET,
+  CONTINUOUS_LAND, BOT_NAMES,
+  GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
+} from "./sim/constants.js";
 
 // ===================== DEBUG LOG =====================
 const DEBUG_LOG = [];
@@ -37,12 +25,6 @@ function dlog(category, msg, data) {
 }
 
 // ===================== TERRITORY GRID =====================
-const GRID_SIZE = 1024;
-const WORLD_MIN = -ARENA_RADIUS;  // -24.5
-const WORLD_SIZE = ARENA_RADIUS * 2;  // 49
-const CELL_SIZE = WORLD_SIZE / GRID_SIZE;  // ~0.0479
-const GRID_SENTINEL = 255;  // out-of-bounds marker
-
 const territoryGrid = {
   grid: new Uint8Array(GRID_SIZE * GRID_SIZE),
   totalArenaCells: 0,
