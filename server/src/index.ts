@@ -10,7 +10,7 @@ const gameServer = new Server({
   transport: new WebSocketTransport({ server }),
 });
 
-gameServer.define("game_room", GameRoom);
+gameServer.define("game", GameRoom);
 
 server.listen(port, () => {
   console.log(`Game server listening on port ${port}`);

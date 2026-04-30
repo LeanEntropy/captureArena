@@ -19,6 +19,8 @@
     "colyseus": "^0.16.5"
   },
   "devDependencies": {
+    "@colyseus/testing": "^0.16.3",
+    "@colyseus/tools": "^0.16.20",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
