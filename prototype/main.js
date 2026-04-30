@@ -816,7 +816,10 @@ class Game {
         this.hasMouseInput = true;
       }
     }, { passive: false });
-    window.addEventListener("keydown", e => this.keysDown.add(e.key.toLowerCase()));
+    window.addEventListener("keydown", e => {
+      this.keysDown.add(e.key.toLowerCase());
+      if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
+    });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
     window.addEventListener("resize", () => {
       this.camera.aspect = innerWidth / innerHeight;
@@ -826,6 +829,12 @@ class Game {
 
     // Labels
     this.labels = new Map();
+
+    // Grid overlay debug
+    this.gridOverlayVisible = false;
+    this.gridOverlayMesh = null;
+    this.gridOverlayTexture = null;
+    this.gridOverlayTimer = 0;
 
     // HUD
     this.hudTL = document.getElementById("hud-tl");
@@ -1058,6 +1067,15 @@ class Game {
 
     // UI
     if (this.uiManager) this.uiManager.update(dt);
+
+    // Grid overlay periodic update
+    if (this.gridOverlayVisible) {
+      this.gridOverlayTimer += dt;
+      if (this.gridOverlayTimer >= 0.5) {
+        this.gridOverlayTimer = 0;
+        this._updateGridOverlay();
+      }
+    }
   }
 
   _killCharacter(victim, killer) {
@@ -1277,6 +1295,85 @@ class Game {
     }));
     this.scene.add(mesh);
     this.factionMeshes.set(factionId, mesh);
+  }
+
+  _toggleGridOverlay() {
+    this.gridOverlayVisible = !this.gridOverlayVisible;
+    if (this.gridOverlayVisible) {
+      this._createGridOverlay();
+      this._updateGridOverlay();
+    } else if (this.gridOverlayMesh) {
+      this.scene.remove(this.gridOverlayMesh);
+      this.gridOverlayMesh.geometry.dispose();
+      this.gridOverlayMesh.material.dispose();
+      this.gridOverlayTexture.dispose();
+      this.gridOverlayMesh = null;
+      this.gridOverlayTexture = null;
+    }
+  }
+
+  _createGridOverlay() {
+    if (this.gridOverlayMesh) return;
+
+    const texSize = 256;
+    const data = new Uint8Array(texSize * texSize * 4);
+    this.gridOverlayTexture = new THREE.DataTexture(data, texSize, texSize, THREE.RGBAFormat);
+    this.gridOverlayTexture.minFilter = THREE.NearestFilter;
+    this.gridOverlayTexture.magFilter = THREE.NearestFilter;
+
+    const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
+    const mat = new THREE.MeshBasicMaterial({
+      map: this.gridOverlayTexture,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+
+    this.gridOverlayMesh = new THREE.Mesh(geom, mat);
+    this.gridOverlayMesh.rotation.x = -Math.PI / 2;
+    this.gridOverlayMesh.position.y = 0.04;
+    this.scene.add(this.gridOverlayMesh);
+  }
+
+  _updateGridOverlay() {
+    if (!this.gridOverlayTexture) return;
+
+    const texSize = 256;
+    const step = GRID_SIZE / texSize;
+    const data = this.gridOverlayTexture.image.data;
+
+    for (let ty = 0; ty < texSize; ty++) {
+      for (let tx = 0; tx < texSize; tx++) {
+        const gx = Math.floor(tx * step);
+        const gy = Math.floor(ty * step);
+        const val = territoryGrid.grid[gy * GRID_SIZE + gx];
+
+        const pixIdx = (ty * texSize + tx) * 4;
+
+        if (val === GRID_SENTINEL) {
+          data[pixIdx] = 0; data[pixIdx + 1] = 0; data[pixIdx + 2] = 0; data[pixIdx + 3] = 0;
+        } else if (val === 0) {
+          data[pixIdx] = 255; data[pixIdx + 1] = 255; data[pixIdx + 2] = 255; data[pixIdx + 3] = 30;
+        } else {
+          const color = FACTION_COLORS[val - 1] || 0x999999;
+          data[pixIdx]     = (color >> 16) & 0xFF;
+          data[pixIdx + 1] = (color >> 8) & 0xFF;
+          data[pixIdx + 2] = color & 0xFF;
+          data[pixIdx + 3] = 180;
+        }
+
+        // Grid lines every 32 texels
+        if (tx % 32 === 0 || ty % 32 === 0) {
+          data[pixIdx] = Math.max(0, data[pixIdx] - 40);
+          data[pixIdx + 1] = Math.max(0, data[pixIdx + 1] - 40);
+          data[pixIdx + 2] = Math.max(0, data[pixIdx + 2] - 40);
+          if (data[pixIdx + 3] < 60) data[pixIdx + 3] = 60;
+        }
+      }
+    }
+
+    this.gridOverlayTexture.needsUpdate = true;
   }
 
   render() {
