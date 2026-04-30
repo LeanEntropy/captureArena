@@ -21,6 +21,7 @@ Visual direction plan: four art-direction options + prioritized add-list pending
     - `r3-e-static-overlays.png` — sundial + 3 driftwood notifications + sail banner all visible together
   - Performance: +0.7ms over Direction D baseline. Within 16ms budget. Mobile fallback path noted (swap shader for static gradient texture, drops to ~0.2ms).
   - 🟡 Director input still needed: direction pick (now A/B/C/D/E or hybrid) + round-2 questions (audio, mobile, lore) + 6 new round-3 questions (cull or keep all 5, sea/island as a layout overlay for non-E directions, mobile water cost, faction-blue palette commit, flag persistence, cap variant strategy).
+  - **Note:** my round-3 staged changes were bundled into commit `eb6a092` ("fix: leaderboard scroll wheel + max-height interaction") by a parallel session — they're in HEAD but the commit history is muddled. Future round-3 reverts would need cherry-picking those file paths only. Commits before the bundling: `2af41f7` (leaderboard wiring) and `125f5fc` (round 1+2 art).
 
 - **Visual Direction Plan — Round 2 (2026-04-30)** — Director feedback on round 1: directions felt too similar (same trigger claim across all 4, only 2 distinct kill FX). Round 2 fixes via end-to-end visual differentiation. Deliverables shipped:
   - `docs/visual-direction-plan.md` — appended Round 2 sections 7–15: per-direction claim FX, kill FX, respawn FX, notification system spec, faction-state banner spec, countdown spec, game-win FX, distinct character/trail/minimap treatment, round-2 open questions, updated effort estimates.
