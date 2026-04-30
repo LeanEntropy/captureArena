@@ -6,7 +6,7 @@ import { MatchManager } from "./match.js";
 import { UIManager } from "./ui.js";
 
 // ===================== CONSTANTS =====================
-const ARENA_RADIUS = 73.5;
+const ARENA_RADIUS = 95.55;
 const MIN_POINT_DIST = 0.3;
 const PLAYER_SPEED = 8;
 const BOT_SPEED = 6;
@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 60;
-const CAMERA_Z_OFFSET = 28;
+const CAMERA_HEIGHT = 78;
+const CAMERA_Z_OFFSET = 36.4;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
@@ -1214,6 +1214,7 @@ class Game {
     this._territoryImageData = this._territoryCtx.createImageData(texSize, texSize);
 
     this.territoryTexture = new THREE.CanvasTexture(this._territoryCanvas);
+    this.territoryTexture.colorSpace = THREE.SRGBColorSpace;
     this.territoryTexture.minFilter = THREE.LinearFilter;
     this.territoryTexture.magFilter = THREE.LinearFilter;
     this.territoryTexture.wrapS = THREE.ClampToEdgeWrapping;
@@ -1222,7 +1223,10 @@ class Game {
     const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
     const mat = new THREE.MeshBasicMaterial({
       map: this.territoryTexture,
-      side: THREE.DoubleSide
+      transparent: true,
+      alphaTest: 0.5,
+      side: THREE.DoubleSide,
+      depthWrite: false
     });
 
     this.territoryMesh = new THREE.Mesh(geom, mat);
@@ -1255,32 +1259,19 @@ class Game {
         const pixIdx = gridIdx * 4;
 
         if (val === GRID_SENTINEL) {
-          data[pixIdx] = 240;
-          data[pixIdx + 1] = 240;
-          data[pixIdx + 2] = 240;
-          data[pixIdx + 3] = 255;
+          data[pixIdx] = 0;
+          data[pixIdx + 1] = 0;
+          data[pixIdx + 2] = 0;
+          data[pixIdx + 3] = 0;
         } else if (val === 0) {
           data[pixIdx] = 255;
           data[pixIdx + 1] = 255;
           data[pixIdx + 2] = 255;
           data[pixIdx + 3] = 255;
         } else {
-          let r = factionR[val], g = factionG[val], b = factionB[val];
-
-          if (
-            (gx > 0 && grid[gridIdx - 1] !== val) ||
-            (gx < size - 1 && grid[gridIdx + 1] !== val) ||
-            (gy > 0 && grid[gridIdx - size] !== val) ||
-            (gy < size - 1 && grid[gridIdx + size] !== val)
-          ) {
-            r = (r * 0.72) | 0;
-            g = (g * 0.72) | 0;
-            b = (b * 0.72) | 0;
-          }
-
-          data[pixIdx] = r;
-          data[pixIdx + 1] = g;
-          data[pixIdx + 2] = b;
+          data[pixIdx] = factionR[val];
+          data[pixIdx + 1] = factionG[val];
+          data[pixIdx + 2] = factionB[val];
           data[pixIdx + 3] = 255;
         }
       }
