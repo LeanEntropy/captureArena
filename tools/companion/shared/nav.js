@@ -3,6 +3,7 @@
 const pages = [
   { href: "character-design.html", label: "Character Design v1" },
   { href: "character-design-v2.html", label: "Character Design v2 (Box)" },
+  { href: "visual-direction.html", label: "Visual Direction Plan" },
 ];
 
 document.addEventListener("DOMContentLoaded", () => {

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visual Direction Plan — captureArena</title>
+  <link rel="stylesheet" href="shared/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Lilita+One&family=Caveat+Brush&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    .container { max-width: 1400px; }
+
+    .intro {
+      background: #16213e;
+      border-left: 4px solid #e94560;
+      padding: 20px 24px;
+      border-radius: 6px;
+      margin-bottom: 32px;
+      line-height: 1.55;
+    }
+    .intro p { margin-bottom: 10px; color: #c8c8e0; }
+    .intro a { color: #e94560; }
+
+    .round-tag {
+      display: inline-block;
+      background: #ffd700;
+      color: #1a1a2e;
+      padding: 2px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    h2 {
+      font-size: 22px;
+      color: #fff;
+      margin: 40px 0 16px;
+      border-bottom: 1px solid #0f3460;
+      padding-bottom: 8px;
+    }
+
+    .direction-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-bottom: 40px;
+    }
+    @media (max-width: 1100px) {
+      .direction-grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #0f3460;
+    }
+    .panel-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .panel-subtitle {
+      font-size: 13px;
+      color: #8888aa;
+    }
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #0f3460;
+      color: #c8c8e0;
+      font-weight: 500;
+    }
+    .badge.recommended { background: #e94560; color: #fff; }
+    .badge.perf-good { background: #2a8a4a; color: #fff; }
+
+    .scene-canvas-wrap {
+      position: relative;
+      width: 100%;
+      height: 400px;
+    }
+
+    .scene-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+    }
+
+    /* Trigger button group */
+    .panel-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 14px;
+      border-top: 1px solid #0f3460;
+      background: #0f1a32;
+    }
+    .ctrl-btn {
+      font-size: 11px;
+      padding: 5px 10px;
+      background: #0f3460;
+      color: #e0e0e0;
+      border: 1px solid #1a4480;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .ctrl-btn:hover { background: #1a4480; }
+    .ctrl-btn.primary { background: #e94560; border-color: #e94560; color: #fff; }
+    .ctrl-btn.primary:hover { background: #d13554; }
+    .ctrl-btn.warn { background: #c44; border-color: #d55; color: #fff; }
+    .ctrl-btn.warn:hover { background: #d55; }
+    .ctrl-btn.success { background: #2a8a4a; border-color: #3aaa5a; color: #fff; }
+    .ctrl-btn.success:hover { background: #3aaa5a; }
+
+    .ctrl-group-label {
+      font-size: 10px;
+      color: #8888aa;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      width: 100%;
+      margin-top: 6px;
+      font-weight: 600;
+    }
+    .ctrl-group-label:first-child { margin-top: 0; }
+
+    .panel-body {
+      padding: 14px 18px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #c8c8e0;
+    }
+    .panel-body strong { color: #fff; }
+    .panel-body table { width: 100%; font-size: 11px; }
+    .panel-body td { padding: 3px 6px; vertical-align: top; }
+    .panel-body td:first-child {
+      color: #8888aa; font-weight: 500; width: 90px; white-space: nowrap;
+    }
+
+    .palette-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* Reference */
+    .reference {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 32px;
+    }
+    .reference h2 { margin-top: 0; }
+    .reference-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .reference-grid { grid-template-columns: 1fr; }
+    }
+    .ref-img-wrap {
+      background: #0a0f1f;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16/9;
+      position: relative;
+    }
+    .ref-img-wrap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .priority-list {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 32px;
+    }
+    .priority-list h2 { margin-top: 0; }
+    .tier {
+      margin-bottom: 24px;
+    }
+    .tier h3 {
+      font-size: 16px;
+      color: #e94560;
+      margin-bottom: 12px;
+    }
+    .tier table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .tier th {
+      text-align: left;
+      padding: 8px 10px;
+      background: #0f1a32;
+      color: #8888aa;
+      font-weight: 500;
+    }
+    .tier td {
+      padding: 10px;
+      border-top: 1px solid #0f3460;
+      vertical-align: top;
+      color: #d0d0e0;
+    }
+    .tier td.effort { color: #ffaa44; font-weight: 600; }
+    .tier td.perf { color: #88ddaa; font-family: 'Space Mono', monospace; }
+    .tier .num { color: #e94560; font-weight: 700; width: 30px; }
+
+    .recommendation {
+      background: linear-gradient(135deg, #1a3a5e 0%, #2a1a4a 100%);
+      border-left: 4px solid #ffd700;
+      padding: 24px;
+      border-radius: 8px;
+      margin-bottom: 32px;
+    }
+    .recommendation h2 { margin-top: 0; color: #ffd700; border: none; padding: 0; }
+    .recommendation p { color: #e0e0e0; line-height: 1.6; }
+    .recommendation strong { color: #fff; }
+
+    /* FX matrix */
+    .fx-matrix {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 32px;
+      overflow-x: auto;
+    }
+    .fx-matrix h2 { margin-top: 0; }
+    .fx-matrix table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 720px;
+    }
+    .fx-matrix th, .fx-matrix td {
+      padding: 8px 10px;
+      border: 1px solid #0f3460;
+      text-align: left;
+      vertical-align: top;
+      color: #d0d0e0;
+    }
+    .fx-matrix th {
+      background: #0f1a32;
+      color: #fff;
+      font-weight: 600;
+    }
+    .fx-matrix td:first-child {
+      color: #ffd700;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .fx-matrix .col-A { background: rgba(255,140,90,0.07); }
+    .fx-matrix .col-B { background: rgba(90,180,255,0.07); }
+    .fx-matrix .col-C { background: rgba(180,150,200,0.07); }
+    .fx-matrix .col-D { background: rgba(120,180,90,0.07); }
+
+    /* Countdown pulse animation — used by the JS overlay */
+    @keyframes cd-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+  </style>
+</head>
+<body>
+  <nav id="topnav">
+    <a href="index.html" class="nav-brand">my-game</a>
+    <div class="nav-links"></div>
+  </nav>
+
+  <main class="container">
+    <h1>Visual Direction Plan <span class="round-tag">Round 2</span></h1>
+    <p class="subtitle">Four art directions with per-direction FX, notifications, banners, countdown, and game-win moments. Each direction now has its OWN claim FX, kill FX, respawn FX, and HUD treatment.</p>
+
+    <div class="intro">
+      <p><strong>What's new in round 2.</strong> Director feedback: the four directions felt too similar — same trigger claim, only 2 distinct kill FX. Round 2 fixes that:</p>
+      <p style="margin-left:18px;">
+        <strong>Per-direction claim FX:</strong> A sunburst rays · B shockwave + strobe · C ink-bleed splotches · D stamp wave + dust puff.<br>
+        <strong>Per-direction kill FX:</strong> A warm confetti shards · B implode + white shockwave · C white petals float up · D bouncy voxel debris.<br>
+        <strong>Per-direction respawn FX:</strong> A sunrise halo + light beam · B glitch-in scanline · C ink-drop bloom · D rises from below + dust.<br>
+        <strong>Side notifications:</strong> 4 distinct visual styles. Stack of 4, 3-second auto-dismiss, faction-tinted left border.<br>
+        <strong>Faction-state banners:</strong> ENDANGERED / ELIMINATED / RECOVERED — center-screen, 4 distinct treatments (warm, neon-stripe, scroll, stamp).<br>
+        <strong>Countdown:</strong> top-left widget per direction, with intensified styling for the last minute.<br>
+        <strong>Game win FX:</strong> A 3D fireworks · B laser-grid sweep + ring pulse · C arena-wide watercolor wash · D voxel rain.<br>
+        <strong>Distinct character + trail + minimap treatment per direction</strong> — see the FX matrix table below.
+      </p>
+      <p>Full rationale + per-feature design tables live in <a href="../../docs/visual-direction-plan.md"><code>docs/visual-direction-plan.md</code></a>.</p>
+    </div>
+
+    <!-- Reference -->
+    <div class="reference">
+      <h2>Reference — Current State</h2>
+      <div class="reference-grid">
+        <div>
+          <div class="ref-img-wrap">
+            <canvas id="ref-current" class="scene-canvas"></canvas>
+          </div>
+          <p style="margin-top:8px;color:#8888aa;font-size:13px;">Current art direction: white background, flat lighting, no VFX, current faction palette.</p>
+        </div>
+        <div>
+          <h3 style="color:#e94560;font-size:15px;margin-bottom:8px;">What's wrong today</h3>
+          <ul style="color:#d0d0e0;line-height:1.7;padding-left:20px;font-size:13px;">
+            <li><strong>Kill / death = mesh disappears.</strong> No FX, no shake. Reads as a bug.</li>
+            <li><strong>Claim = silent.</strong> Texture updates with no flash, no animation.</li>
+            <li><strong>White everywhere.</strong> No atmosphere.</li>
+            <li><strong>Trail vs same-faction territory disappears.</strong></li>
+            <li><strong>No notifications.</strong> Player can't tell when they killed, captured, or died.</li>
+            <li><strong>No faction-state announcements.</strong> Endangered / eliminated transitions are silent.</li>
+            <li><strong>No game-win moment.</strong> Static end-screen modal.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- FX Differentiation Matrix -->
+    <div class="fx-matrix">
+      <h2>Per-Direction FX Matrix</h2>
+      <p style="color:#8888aa;font-size:13px;margin-bottom:12px;">
+        Read across each row to compare how the same gameplay moment looks in each direction. Click the trigger buttons under each scene below to play any of these live.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Moment</th>
+            <th class="col-A">A — Sunset Arcade</th>
+            <th class="col-B">B — Neon Pulse</th>
+            <th class="col-C">C — Painted Plains</th>
+            <th class="col-D">D — Voxel Plate</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claim FX</td>
+            <td class="col-A">Sunburst — 8 light rays radiate from entry, soft cream flash on territory, 0.4s.</td>
+            <td class="col-B">Shockwave — expanding cyan ring + 60Hz strobe on territory, sharp 0.28s.</td>
+            <td class="col-C">Ink-bleed — slow watercolor bloom + 5 ink splotches near entry, 0.7s.</td>
+            <td class="col-D">Stamp wave — wave radiates from entry across faction territory + dust puff, 0.45s.</td>
+          </tr>
+          <tr>
+            <td>Kill FX</td>
+            <td class="col-A">Confetti — 14 mixed-color shards (faction + warm accents), gravity, 1.4s.</td>
+            <td class="col-B">Implode — particles converge to corpse + white shockwave ring, 0.65s.</td>
+            <td class="col-C">Petals — 14 white squares float up with wobble, 1.6s.</td>
+            <td class="col-D">Voxel debris — 12 cubes bounce on ground, gravity + rotation, 1.2s.</td>
+          </tr>
+          <tr>
+            <td>Respawn FX</td>
+            <td class="col-A">Sunrise — golden halo expands + warm light beam + scale 0→1.</td>
+            <td class="col-B">Glitch-in — character flickers visible 3 times + cyan scanline sweeps up.</td>
+            <td class="col-C">Page-turn — ink drop spreads, character "blooms" with soft overshoot.</td>
+            <td class="col-D">Build-up — character rises from below ground + white dust puffs.</td>
+          </tr>
+          <tr>
+            <td>Notification toast</td>
+            <td class="col-A">Cream card, brown text, faction-color left border, Fredoka font.</td>
+            <td class="col-B">Terminal-green-on-navy, "&gt; " prefix, Space Mono, neon glow.</td>
+            <td class="col-C">Parchment card, dashed faction-color border, Caveat Brush hand-letter.</td>
+            <td class="col-D">Wooden tag — dark wood BG, cream text, faction stripe, Lilita One.</td>
+          </tr>
+          <tr>
+            <td>Faction banner</td>
+            <td class="col-A">Warm rounded card with faction border + drop shadow.</td>
+            <td class="col-B">Sharp horizontal cyber-stripe, no border-radius, mono font, glow.</td>
+            <td class="col-C">Rolled-scroll asymmetric border-radius, italic.</td>
+            <td class="col-D">Wooden stamp — solid faction BG, dark border, Lilita One block lettering.</td>
+          </tr>
+          <tr>
+            <td>Countdown</td>
+            <td class="col-A">Cream card, brown text, intensifies orange (last minute).</td>
+            <td class="col-B">Dark monospace, cyan glow, lettered spacing, pulse animation when intense.</td>
+            <td class="col-C">Parchment, dashed border, hand-lettered, scale-up when intense.</td>
+            <td class="col-D">Dark wood block, yellow text, Lilita One, chunky shadow.</td>
+          </tr>
+          <tr>
+            <td>Game win FX</td>
+            <td class="col-A">3D fireworks (3 staggered bursts) + DOM confetti from corners.</td>
+            <td class="col-B">3 expanding rings from center + DOM grid sweep + tint flash.</td>
+            <td class="col-C">Arena-wide watercolor wash in winning color + DOM radial bloom.</td>
+            <td class="col-D">30 voxel cubes rain down in winning color, bouncing.</td>
+          </tr>
+          <tr>
+            <td>Character treatment</td>
+            <td class="col-A">Warm rim glow (soft 6% emissive cream).</td>
+            <td class="col-B">Neon edge — emissive + bright LED-trim cubes top/bottom.</td>
+            <td class="col-C">Ink outline (inverted-hull pass, 0x222 backside).</td>
+            <td class="col-D">Voxel-cubed — darker rim feet block as faked AO.</td>
+          </tr>
+          <tr>
+            <td>Trail style</td>
+            <td class="col-A">Smooth ribbon, darker outline pass.</td>
+            <td class="col-B">Fluorescent — wide low-opacity glow plane + bright inner stroke.</td>
+            <td class="col-C">Brush-stroke — wider, semi-transparent, darker edge.</td>
+            <td class="col-D">Pixelated chevron segments — looks stamped on the grass.</td>
+          </tr>
+          <tr>
+            <td>Minimap (planned)</td>
+            <td class="col-A">Soft-glow rounded card, warm border.</td>
+            <td class="col-B">HUD scope-lines, monospace coordinates, cyan crosshair.</td>
+            <td class="col-C">Parchment circle, hand-drawn dashed border.</td>
+            <td class="col-D">Tabletop chip — wood-frame with rounded corners.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Priority list (Tier 0-4) — kept from round 1 -->
+    <div class="priority-list">
+      <h2>Tier 0–4 Priority List (universal, do regardless of direction)</h2>
+
+      <div class="tier">
+        <h3>Tier 0 — Critical feedback loops</h3>
+        <table>
+          <thead>
+            <tr><th>#</th><th>Item</th><th>Effort</th><th>Perf cost</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">1</td><td><strong>Claim flash + scale-pop</strong> — flash white→faction-color over 250ms when territory is claimed.</td><td class="effort">S</td><td class="perf">~0ms</td></tr>
+            <tr><td class="num">2</td><td><strong>Kill burst</strong> — 8–12 cube fragments scatter; screen-shake on local-player kill.</td><td class="effort">M</td><td class="perf">&lt;0.1ms</td></tr>
+            <tr><td class="num">3</td><td><strong>Death screen polish</strong> — red flash + camera zoom + death card.</td><td class="effort">S</td><td class="perf">~0ms</td></tr>
+            <tr><td class="num">4</td><td><strong>Trail outline</strong> — darker 1px inset on the trail mesh.</td><td class="effort">S</td><td class="perf">~0ms</td></tr>
+            <tr><td class="num">5</td><td><strong>HUD score / kill counter pop</strong> — 1.0→1.3→1.0 scale + flash.</td><td class="effort">S</td><td class="perf">~0ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tier">
+        <h3>Tier 1 — Atmosphere, Tier 2 — Character life, Tier 3 — HUD, Tier 4 — Moments</h3>
+        <p style="color:#a0a0c0;font-size:13px;">See the full plan doc for tiers 1–4 detail. They remain unchanged from round 1.</p>
+      </div>
+    </div>
+
+    <h2>Four Art Directions — Live</h2>
+    <p style="color:#8888aa;margin-bottom:24px;font-size:14px;">
+      Each direction now has 8 trigger buttons. Click <strong>Claim / Kill / Respawn</strong> for in-world FX.
+      <strong>Notify</strong> shows 3 example side notifications. <strong>Endangered / Eliminated / Recovered</strong> show faction-state banners.
+      <strong>Win</strong> plays the game-win celebration. <strong>Countdown</strong> toggles last-minute intensified styling.
+    </p>
+
+    <div class="direction-grid">
+
+      <!-- Direction A: Sunset Arcade -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">A — Sunset Arcade</div>
+          <div class="panel-subtitle">Warm sky, friendly arcade. Soft glow + confetti vibes.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~2 days</span>
+            <span class="badge perf-good">+0.5ms</span>
+            <span class="badge">Safe pick</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap"><canvas id="scene-A" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn" data-scene="A" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="A" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="A" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="A" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="A" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="A" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="A" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="A" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="A" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="A" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Claim FX:</td><td>8 light rays from entry + cream flash on territory</td></tr>
+            <tr><td>Kill FX:</td><td>Warm confetti shards (faction + cream + coral)</td></tr>
+            <tr><td>Respawn:</td><td>Golden halo expands + warm light beam + scale-up</td></tr>
+            <tr><td>Win FX:</td><td>3 staggered 3D fireworks + corner DOM confetti</td></tr>
+            <tr><td>HUD font:</td><td>Fredoka, cream cards, brown text</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#D4332E;" title="Red"></div>
+            <div class="swatch" style="background:#1B7DCC;" title="Blue"></div>
+            <div class="swatch" style="background:#3D8E3F;" title="Green"></div>
+            <div class="swatch" style="background:#E5C42E;" title="Yellow"></div>
+            <div class="swatch" style="background:#7E1E97;" title="Purple"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Direction B: Neon Pulse -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">B — Neon Pulse</div>
+          <div class="panel-subtitle">TRON in a paper.io. Sharp, electric, streamer-bait.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~3 days</span>
+            <span class="badge">+0.8ms</span>
+            <span class="badge">Streamer appeal: high</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap"><canvas id="scene-B" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn" data-scene="B" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="B" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="B" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="B" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="B" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="B" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="B" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="B" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="B" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="B" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Claim FX:</td><td>Cyan shockwave ring + 60Hz strobe on territory</td></tr>
+            <tr><td>Kill FX:</td><td>Particles implode + white shockwave + faction-color vanish</td></tr>
+            <tr><td>Respawn:</td><td>3-flicker scanline reconstruction</td></tr>
+            <tr><td>Win FX:</td><td>3 expanding rings + DOM grid sweep + faction tint</td></tr>
+            <tr><td>HUD font:</td><td>Space Mono, dark glass, neon glow</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#FF3B6B;" title="Red"></div>
+            <div class="swatch" style="background:#3B9BFF;" title="Blue"></div>
+            <div class="swatch" style="background:#5BFF6B;" title="Green"></div>
+            <div class="swatch" style="background:#FFE03B;" title="Yellow"></div>
+            <div class="swatch" style="background:#C24BFF;" title="Purple"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Direction C: Painted Plains -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">C — Painted Plains</div>
+          <div class="panel-subtitle">Storybook map. Watercolor, ink lines, cozy.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~3 days</span>
+            <span class="badge perf-good">+0.5ms</span>
+            <span class="badge">Most distinctive</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap"><canvas id="scene-C" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn" data-scene="C" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="C" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="C" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="C" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="C" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="C" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="C" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="C" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="C" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="C" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Claim FX:</td><td>Slow watercolor bloom + 5 ink splotches near entry</td></tr>
+            <tr><td>Kill FX:</td><td>14 white plane "petals" float up with wobble</td></tr>
+            <tr><td>Respawn:</td><td>Ink drop spreads, character "blooms" with overshoot</td></tr>
+            <tr><td>Win FX:</td><td>Arena-wide watercolor wash in winning color</td></tr>
+            <tr><td>HUD font:</td><td>Caveat Brush, parchment cards</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#D45A4F;" title="Red"></div>
+            <div class="swatch" style="background:#5078A8;" title="Blue"></div>
+            <div class="swatch" style="background:#7BAB5C;" title="Green"></div>
+            <div class="swatch" style="background:#E0C75A;" title="Yellow"></div>
+            <div class="swatch" style="background:#9168A8;" title="Purple"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Direction D: Voxel Plate -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">D — Voxel Plate <span class="badge recommended" style="margin-left:8px;">Jen's pick</span></div>
+          <div class="panel-subtitle">Crossy Road / Townscaper. Tabletop diorama. Cubes all the way.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~2.5 days</span>
+            <span class="badge perf-good">+0.3ms (cheapest)</span>
+            <span class="badge">Lowest risk</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap"><canvas id="scene-D" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn primary" data-scene="D" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="D" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="D" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="D" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="D" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="D" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="D" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="D" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="D" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="D" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Claim FX:</td><td>Wave radiates from entry across territory + dust puff</td></tr>
+            <tr><td>Kill FX:</td><td>12 bouncy cube fragments with gravity + rotation</td></tr>
+            <tr><td>Respawn:</td><td>Character rises from below ground + dust puffs</td></tr>
+            <tr><td>Win FX:</td><td>30 cubes rain down in winning color, bouncing</td></tr>
+            <tr><td>HUD font:</td><td>Lilita One, dark wood blocks</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#F04B41;" title="Red"></div>
+            <div class="swatch" style="background:#2496EE;" title="Blue"></div>
+            <div class="swatch" style="background:#52B856;" title="Green"></div>
+            <div class="swatch" style="background:#FFE140;" title="Yellow"></div>
+            <div class="swatch" style="background:#9F31B9;" title="Purple"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="recommendation">
+      <h2>Jen's recommendation (unchanged from round 1)</h2>
+      <p><strong>Ship Tier 0 (#1–#5) immediately, regardless of direction.</strong> They are universally needed and direction-neutral.</p>
+      <p><strong>Primary direction: D (Voxel Plate).</strong> Maximum expression of the box constraint. Lowest perf (+0.3ms), lowest risk. The voxel-debris kill FX, the build-up respawn, and the voxel-rain win all reinforce the tabletop identity. The wooden-tag notification is the standout — it makes every event feel like a label clipped onto the diorama.</p>
+      <p><strong>If energy needed: B (Neon Pulse).</strong> Sharpest, most "alive" FX of the four. The implode-kill and laser-grid win are the most dramatic. Trade-off is yellow/green palette overlap.</p>
+      <p><strong>Most artistically distinctive: C (Painted Plains).</strong> The petals-kill, ink-bleed claim, and watercolor-wash win are the most recognizable from a screenshot. Highest tuning cost.</p>
+      <p><strong>Safe arcade default: A (Sunset Arcade).</strong> If D feels too "twee" or B too aggressive, A is the friendly arcade middle ground.</p>
+      <p><strong>Open questions for Director:</strong> primary direction pick, audio in scope, mobile target, lore/setting. Full list in the plan doc.</p>
+    </div>
+
+  </main>
+
+  <footer>
+    <p style="text-align:center;padding:24px;color:#5a5a7a;font-size:13px;">my-game Art Direction Companion — Jen (Art Director) + Director</p>
+  </footer>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script src="shared/nav.js"></script>
+  <script type="module" src="visual-direction.js"></script>
+</body>
+</html>
