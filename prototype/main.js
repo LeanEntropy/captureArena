@@ -1053,6 +1053,8 @@ class Game {
       this.territoryDirty = false;
     }
 
+    this._checkCutoff();
+
     // Camera
     if (this.player && this.player.alive) {
       this.camTarget.set(this.player.pos.x, 0, this.player.pos.z);
@@ -1068,6 +1070,18 @@ class Game {
     // UI
     if (this.uiManager) this.uiManager.update(dt);
 
+  }
+
+  _checkCutoff() {
+    for (const c of this.characters) {
+      if (!c.alive || c.invulnTimer > 0) continue;
+      // Only kill if not currently trailing — wasOutside means they intentionally left territory
+      if (c.wasOutside) continue;
+      const owner = territoryGrid.getOwner(c.pos.x, c.pos.z);
+      if (owner !== c.factionId && owner !== 0) {
+        this._killCharacter(c);
+      }
+    }
   }
 
   _killCharacter(victim, killer) {
