@@ -18,6 +18,11 @@ export class Character {
     this.respawnTimer = 0;
     this.killCount = 0;
     this.wasOutside = false;
+
+    // Bot AI state (consumed by sim/BotAI.js; ignored when isHuman=true).
+    this.botWaypoints = [];
+    this.botLoopCount = 0;
+    this.botAggroChance = 0.25;
   }
 
   setPos(x, z) {
@@ -34,6 +39,7 @@ export class Character {
     this.trailVerts = [];
     this.invulnTimer = 0;
     this.wasOutside = false;
+    this.botWaypoints = [];
   }
 
   respawn(x, z) {
@@ -43,5 +49,6 @@ export class Character {
     this.invulnTimer = INVULN_TIME;
     this.trailVerts = [];
     this.wasOutside = false;
+    this.botWaypoints = [];
   }
 }

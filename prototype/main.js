@@ -428,11 +428,6 @@ class Character {
     this.trailMesh = null;
     this.group = this._buildChar(color);
     scene.add(this.group);
-    // Bot AI state (kept here until Task 7 moves it into sim)
-    this.botPhase = "idle";
-    this.botWaypoints = [];
-    this.botLoopCount = 0;
-    this.botAggroChance = 0.25;
   }
 
   // Convenience accessors that forward to simChar (renderer code reads these
@@ -541,16 +536,12 @@ class Character {
   onDieVisual() {
     this._clearTrail();
     this.group.visible = false;
-    this.botWaypoints = [];
-    this.botPhase = "idle";
   }
 
   // Visual respawn hook (sim already mutated simChar via Character.respawn()).
   onRespawnVisual() {
     this.targetDir.set(this.simChar.dir.x, 0, this.simChar.dir.z);
     this.group.visible = true;
-    this.botWaypoints = [];
-    this.botPhase = "idle";
   }
 
 }
@@ -808,33 +799,7 @@ class Game {
       this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
     }
 
-    // ---- Bot AI: plan waypoints, set targetDir on renderer, forward to sim ----
-    // (Task 7 will move this fully into sim/BotAI.js.)
-    for (const c of this.characters) {
-      if (c.isPlayer || !c.alive) continue;
-
-      if (c.botWaypoints.length === 0) {
-        try {
-          this._planBotLoop(c);
-        } catch (e) {
-          dlog("BOT_AI", `${c.name} _planBotLoop error: ${e.message}`);
-          const angle = Math.random() * Math.PI * 2;
-          c.botWaypoints = [{ x: c.pos.x + Math.sin(angle) * 5, z: c.pos.z + Math.cos(angle) * 5 }];
-        }
-      }
-
-      if (c.botWaypoints.length > 0) {
-        const wp = c.botWaypoints[0];
-        const dx = wp.x - c.pos.x, dz = wp.z - c.pos.z;
-        const d = Math.sqrt(dx * dx + dz * dz);
-        if (d < 1.2) {
-          c.botWaypoints.shift();
-        } else {
-          c.targetDir.set(dx / d, 0, dz / d);
-        }
-      }
-      this.sim.setTargetDir(c.simChar.id, c.targetDir.x, c.targetDir.z);
-    }
+    // Bot AI lives entirely inside sim.tick() now (sim/BotAI.js).
 
     // Track per-char alive state from previous frame so we can fire visual
     // hooks when sim respawns or kills a character.
@@ -909,104 +874,6 @@ class Game {
     // ---- Labels & UI ----
     this._updateLabels();
     if (this.uiManager) this.uiManager.update(dt);
-  }
-
-  _planBotLoop(bot) {
-    // If territory was fully consumed, bot has no home -- just wander toward center
-    const cellCount = territoryGrid.countCells(bot.factionId);
-    if (cellCount === 0) {
-      dlog("BOT_AI", `${bot.name} has no territory, wandering toward center`);
-      bot.botWaypoints = [
-        { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 },
-        { x: (Math.random() - 0.5) * ARENA_RADIUS * 0.5, z: (Math.random() - 0.5) * ARENA_RADIUS * 0.5 }
-      ];
-      return;
-    }
-
-    // Compute territory center from contour loops
-    const contours = territoryGrid.extractContours(bot.factionId);
-    if (contours.length === 0) {
-      bot.botWaypoints = [
-        { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 }
-      ];
-      return;
-    }
-    contours.sort((a, b) => polyArea(b) - polyArea(a));
-    const boundary = contours[0];
-
-    let cx = 0, cz = 0;
-    for (const v of boundary) { cx += v.x; cz += v.y; }
-    cx /= boundary.length;
-    cz /= boundary.length;
-
-    // Convert boundary to Vector3-like for closestIdx
-    const boundaryV3 = boundary.map(p => ({ x: p.x, z: p.y }));
-
-    // Decide: aggro (head toward another faction's territory) or normal patrol
-    const doAggro = Math.random() < bot.botAggroChance;
-    let outAngle;
-
-    if (doAggro) {
-      const others = this.characters.filter(o => o !== bot && o.alive && o.factionId !== bot.factionId && territoryGrid.countCells(o.factionId) > 0);
-      if (others.length > 0) {
-        const target = others[Math.floor(Math.random() * others.length)];
-        outAngle = Math.atan2(target.pos.x - cx, target.pos.z - cz);
-      } else {
-        outAngle = Math.random() * Math.PI * 2;
-      }
-    } else {
-      outAngle = Math.random() * Math.PI * 2;
-    }
-
-    // Build a claiming loop: exit boundary -> arc outward -> re-enter boundary
-    const loopRadius = 5 + Math.random() * 6;
-    const arcSteps = 4 + Math.floor(Math.random() * 3);
-
-    const exitDir = { x: cx + Math.sin(outAngle) * 50, z: cz + Math.cos(outAngle) * 50 };
-    const exitIdx = closestIdx(boundaryV3, exitDir);
-    const exitPt = boundaryV3[exitIdx];
-
-    const arcSpread = (Math.PI * 0.4) + Math.random() * (Math.PI * 0.4);
-    const startArcAngle = outAngle - arcSpread / 2;
-    const endArcAngle = outAngle + arcSpread / 2;
-
-    const waypoints = [];
-
-    // First: walk to exit point on our boundary
-    waypoints.push({ x: exitPt.x, z: exitPt.z });
-
-    // Then: arc outward
-    for (let i = 0; i <= arcSteps; i++) {
-      const t = i / arcSteps;
-      const angle = startArcAngle + (endArcAngle - startArcAngle) * t;
-      const pushOut = 2 + loopRadius * Math.sin(t * Math.PI);
-      const r = pushOut;
-      let wx = cx + Math.sin(angle) * r;
-      let wz = cz + Math.cos(angle) * r;
-      const distFromOrigin = Math.sqrt(wx * wx + wz * wz);
-      if (distFromOrigin > ARENA_RADIUS - 1) {
-        wx *= (ARENA_RADIUS - 1) / distFromOrigin;
-        wz *= (ARENA_RADIUS - 1) / distFromOrigin;
-      }
-      waypoints.push({ x: wx, z: wz });
-    }
-
-    // Finally: return to a point on our boundary
-    const reEntryDir = { x: cx + Math.sin(endArcAngle) * 50, z: cz + Math.cos(endArcAngle) * 50 };
-    const reEntryIdx = closestIdx(boundaryV3, reEntryDir);
-    const reEntryPt = boundaryV3[reEntryIdx];
-    waypoints.push({ x: reEntryPt.x, z: reEntryPt.z });
-
-    // Push toward territory center to ensure we're solidly inside for the claim
-    waypoints.push({ x: cx, z: cz });
-
-    bot.botWaypoints = waypoints;
-    bot.botLoopCount++;
-    dlog("BOT_AI", `${bot.name} planned loop #${bot.botLoopCount}`, {
-      waypoints: waypoints.length,
-      phase: doAggro ? "aggro" : "patrol",
-      cx: cx.toFixed(1), cz: cz.toFixed(1)
-    });
   }
 
   _updateLabels() {

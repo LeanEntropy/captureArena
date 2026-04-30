@@ -48,6 +48,8 @@ describe("Simulation", () => {
 
   it("tick advances a character along its dir vector", () => {
     const c = sim.characters[0];
+    // Mark human so BotAI doesn't overwrite targetDir during tick.
+    c.isHuman = true;
     c.setPos(0, 0);
     c.dir = { x: 1, z: 0 };
     c.targetDir = { x: 1, z: 0 };

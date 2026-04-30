@@ -9,6 +9,7 @@ import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 import { MatchManager } from "./match.js";
 import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
+import { BotAI } from "./BotAI.js";
 
 export class Simulation {
   constructor({ seed = 1 } = {}) {
@@ -484,6 +485,8 @@ export class Simulation {
       c.invulnTimer = 0;
       c.respawnTimer = 0;
       c.wasOutside = false;
+      c.botWaypoints = [];
+      c.botLoopCount = 0;
       this.factionManager.addCharacter(c, c.factionId);
       // Reposition at spawn point (mirrors start())
       const sp = this.factionManager.getSpawnPoint(
@@ -507,6 +510,11 @@ export class Simulation {
           this.respawnChar(c);
         }
         continue;
+      }
+      // Bots plan their own targetDir each tick; humans rely on setTargetDir().
+      if (!c.isHuman) {
+        const dir = BotAI.planTargetDir(c, this);
+        c.targetDir = dir;
       }
       this._stepCharacter(c, dt);
       this._stepCharacterTrail(c);
