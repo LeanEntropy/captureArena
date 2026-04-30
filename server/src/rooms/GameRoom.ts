@@ -12,6 +12,24 @@ interface ClientMeta {
   playerToken: string | null;
 }
 
+export function pickWeakestFaction(
+  factions: Array<{ id: number; territoryPct: number; alive: boolean }>,
+  humanCounts: Map<number, number>,
+): number | null {
+  const alive = factions.filter(f => f.alive);
+  if (alive.length === 0) return null;
+  let best = alive[0];
+  let bestHumans = humanCounts.get(best.id) ?? 0;
+  for (const f of alive) {
+    const h = humanCounts.get(f.id) ?? 0;
+    if (h < bestHumans || (h === bestHumans && f.territoryPct < best.territoryPct)) {
+      best = f;
+      bestHumans = h;
+    }
+  }
+  return best.id;
+}
+
 export class GameRoom extends Room<GameStateSchema> {
   // typed loosely — sim is JS
   private sim!: any;
