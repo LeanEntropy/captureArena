@@ -521,6 +521,40 @@ class Character {
 
 }
 
+// ===================== ONLINE CHAR PROXY =====================
+// Wraps a Colyseus CharacterSchema in a sim-Character-shaped object so the
+// renderer Character class (which reads simChar.pos, simChar.dir, etc.) works
+// unchanged in online mode. Schema fields auto-update as state syncs from
+// the server; getters forward each frame's reads to the latest schema values.
+function makeOnlineCharProxy(schemaChar) {
+  return {
+    get id() { return schemaChar.id; },
+    get factionId() { return schemaChar.factionId; },
+    get name() { return schemaChar.name; },
+    get isHuman() { return schemaChar.isHuman; },
+    get alive() { return schemaChar.alive; },
+    set alive(_v) { /* read-only mirror of server state */ },
+    get invulnTimer() { return schemaChar.invulnTimer; },
+    set invulnTimer(_v) {},
+    get killCount() { return schemaChar.killCount; },
+    set killCount(_v) {},
+    get respawnTimer() { return 0; },
+    set respawnTimer(_v) {},
+    pos: {
+      get x() { return schemaChar.posX; },
+      get z() { return schemaChar.posZ; },
+    },
+    dir: {
+      get x() { return schemaChar.dirX; },
+      get z() { return schemaChar.dirZ; },
+    },
+    targetDir: { x: 0, z: 1 },
+    trailVerts: [],          // Trail comes from server "trailVertex" events (Task 16+)
+    wasOutside: false,
+    _schemaChar: schemaChar, // expose underlying schema for direct lookup if needed
+  };
+}
+
 // ===================== GAME =====================
 class Game {
   constructor() {
@@ -693,13 +727,67 @@ class Game {
   async startOnline(name) {
     this.mode = "online";
     this.playerName = name;
+    this.onlineInitialized = false;
     this.mp = new MultiplayerClient();
+
+    // First state arrival → build renderer characters from schema. After init,
+    // schema entries auto-mutate as Colyseus syncs; syncVisuals() reads them.
+    this.mp.onState = (state) => {
+      if (!this.onlineInitialized) {
+        this._initRendererFromOnlineState(state);
+        this.onlineInitialized = true;
+      }
+    };
+
     try {
       await this.mp.connect(name, null);
       console.log("[online] connected, sessionId =", this.mp.room.sessionId);
     } catch (err) {
       console.error("[online] connection failed:", err);
     }
+  }
+
+  _initRendererFromOnlineState(state) {
+    // Online mode does not run the local sim. Initialize a blank territory
+    // grid so the texture rasterizer doesn't crash; Task 16 will sync claims.
+    territoryGrid.init();
+    this.factionManager = null;
+    this.matchManager = { phase: "playing", timeRemaining: 0, getTimeString: () => "" };
+    this.scoreTracker = null;
+
+    // Build renderer Characters wrapping each Colyseus CharacterSchema via
+    // a sim-shaped proxy.
+    for (const schemaChar of state.characters) {
+      const proxy = makeOnlineCharProxy(schemaChar);
+      const color = FACTION_COLORS[schemaChar.factionId - 1] ?? 0x808080;
+      // No human player yet (Task 17); mark all as non-player so input ignores them.
+      const r = new Character(this.scene, proxy, color, false);
+      this.characters.push(r);
+      this._charBySim.set(proxy, r);
+    }
+
+    // Placeholder: use first character as a non-input "player" so existing
+    // camera/HUD code that reads this.player.pos doesn't crash. The actual
+    // human takeover lands in Task 17.
+    if (this.characters.length > 0) {
+      this.player = this.characters[0];
+      this.player.isPlayer = false;
+    }
+
+    this._createTerritoryTexture();
+    this._updateTerritoryTexture();
+
+    // Camera: orbit the arena center until we have a real player char.
+    const spawn = this.player
+      ? { x: this.player.simChar.pos.x, z: this.player.simChar.pos.z }
+      : { x: 0, z: 0 };
+    this.camera.position.set(spawn.x, CAMERA_HEIGHT, spawn.z + CAMERA_Z_OFFSET);
+    this.camera.lookAt(spawn.x, 0, spawn.z);
+    this.camCurrent.set(spawn.x, 0, spawn.z);
+    this.camTarget.copy(this.camCurrent);
+
+    this.started = true;
+    console.log(`[online] renderer initialized with ${this.characters.length} characters`);
   }
 
   start(name) {
@@ -768,8 +856,8 @@ class Game {
   tick(dt) {
     if (!this.started) return;
 
-    // ---- Player input: write to player.targetDir; forwarded to sim below ----
-    if (this.player && this.player.alive) {
+    // ---- Player input: only meaningful in solo mode (Task 18 wires online). ----
+    if (this.mode === "solo" && this.player && this.player.alive && this.player.isPlayer) {
       let kx = 0, kz = 0;
       if (this.keysDown.has("w") || this.keysDown.has("arrowup")) kz -= 1;
       if (this.keysDown.has("s") || this.keysDown.has("arrowdown")) kz += 1;
@@ -799,13 +887,15 @@ class Game {
     const wasAlive = new Map();
     for (const c of this.characters) wasAlive.set(c, c.alive);
 
-    // ---- Run authoritative sim tick: movement, trail, claim, heal, kills,
-    // cutoff, respawn, faction reassign all happen inside. Event hooks
-    // (onClaim, onTrailVertex, onKill, onHeal) fire during this call. ----
-    this.sim.tick(dt);
+    // ---- Run authoritative sim tick (solo mode only; online state arrives
+    // via Colyseus). Event hooks (onClaim, onTrailVertex, onKill, onHeal)
+    // fire during this call. ----
+    if (this.mode === "solo") {
+      this.sim.tick(dt);
+    }
 
     // Match ended: still update visuals/HUD then bail out.
-    if (this.matchManager.phase === "ended") {
+    if (this.matchManager && this.matchManager.phase === "ended") {
       for (const c of this.characters) c.syncVisuals();
       this._updateLabels();
       if (this.uiManager) this.uiManager.update(dt);
@@ -816,7 +906,7 @@ class Game {
       return;
     }
 
-    // ---- Sync renderer-side state from sim ----
+    // ---- Sync renderer-side state from sim/schema ----
     for (const c of this.characters) {
       const wasAliveBefore = wasAlive.get(c);
       const isAliveNow = c.alive;
@@ -836,7 +926,7 @@ class Game {
           dlog("REASSIGN", `${c.name} reassigned to faction ${newFactionId}`);
         }
         c.onRespawnVisual();
-        if (c === this.player) this.deathScreen.classList.remove("visible");
+        if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
         dlog("RESPAWN", `${c.name} respawned`, { x: c.simChar.pos.x.toFixed(1), z: c.simChar.pos.z.toFixed(1) });
       }
 
@@ -850,7 +940,7 @@ class Game {
     }
 
     // ---- Camera ----
-    if (this.player && this.player.alive) {
+    if (this.player && this.player.alive && this.player.isPlayer) {
       this.camTarget.set(this.player.pos.x, 0, this.player.pos.z);
     }
     const smooth = 1 - Math.pow(0.03, dt);
