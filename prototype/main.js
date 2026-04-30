@@ -577,7 +577,7 @@ class Character {
     // Visual
     this.group.position.set(this.pos.x, 0, this.pos.z);
     this.group.rotation.y = Math.atan2(this.dir.x, this.dir.z);
-    this.group.visible = this.invulnTimer > 0 ? Math.sin(performance.now() * 0.01) > 0 : true;
+    this.group.visible = (this.isPlayer && this.invulnTimer > 0) ? Math.sin(performance.now() * 0.01) > 0 : true;
     return null;
   }
 
@@ -888,6 +888,7 @@ class Game {
 
     for (const c of this.characters) {
       c.allCharacters = this.characters;
+      c.invulnTimer = 0;
     }
 
     this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
