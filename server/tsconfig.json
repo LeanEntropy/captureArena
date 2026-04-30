@@ -5,6 +5,7 @@
     "outDir": "dist",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
     "allowJs": true,
     "checkJs": false
   },
