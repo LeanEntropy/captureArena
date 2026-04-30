@@ -307,16 +307,13 @@ const territoryGrid = {
     return loops;
   },
 
-  floodFillConnected(ownerId, startWX, startWZ) {
-    // Find all connected components of ownerId and keep only the largest.
-    // Returns count of disconnected cells cleared.
+  floodFillConnected(ownerId, reassignTo) {
     const visited = new Uint8Array(GRID_SIZE * GRID_SIZE);
-    const components = []; // array of cell index arrays
+    const components = [];
 
     for (let i = 0; i < this.grid.length; i++) {
       if (this.grid[i] !== ownerId || visited[i]) continue;
 
-      // BFS from this cell to discover its connected component
       const component = [];
       const gy0 = Math.floor(i / GRID_SIZE);
       const gx0 = i % GRID_SIZE;
@@ -342,24 +339,23 @@ const territoryGrid = {
       components.push(component);
     }
 
-    if (components.length <= 1) return 0; // already connected (or empty)
+    if (components.length <= 1) return 0;
 
-    // Keep the largest component, clear the rest
     let largestIdx = 0;
     for (let i = 1; i < components.length; i++) {
       if (components[i].length > components[largestIdx].length) largestIdx = i;
     }
 
-    let cleared = 0;
+    let reassigned = 0;
     for (let i = 0; i < components.length; i++) {
       if (i === largestIdx) continue;
       for (const cellIdx of components[i]) {
-        this.grid[cellIdx] = 0;
-        cleared++;
+        this.grid[cellIdx] = reassignTo;
+        reassigned++;
       }
     }
 
-    return cleared;
+    return reassigned;
   }
 };
 
@@ -674,9 +670,9 @@ class Character {
     // Handle CONTINUOUS_LAND for victims (per-faction flood fill)
     if (CONTINUOUS_LAND && overwritten.size > 0) {
       for (const victimFactionId of overwritten) {
-        const cleared = territoryGrid.floodFillConnected(victimFactionId, 0, 0);
-        if (cleared > 0) {
-          dlog("CONTINUOUS_LAND", `faction ${victimFactionId}: cleared ${cleared} disconnected cells`);
+        const reassigned = territoryGrid.floodFillConnected(victimFactionId, this.factionId);
+        if (reassigned > 0) {
+          dlog("CONTINUOUS_LAND", `faction ${victimFactionId}: reassigned ${reassigned} disconnected cells to faction ${this.factionId}`);
         }
       }
     }
@@ -785,6 +781,7 @@ class Game {
     this._territoryCtx = null;
     this._territoryImageData = null;
     this._debugNearestFilter = false;
+    this._healTimer = 0;
 
     // Input
     this.mouseNDC = new THREE.Vector2();
@@ -1045,6 +1042,12 @@ class Game {
       }
     }
 
+    this._healTimer += dt;
+    if (this._healTimer >= 1.0) {
+      this._healTimer = 0;
+      this._healUnclaimedCells();
+    }
+
     if (this.territoryDirty) {
       this._updateTerritoryTexture();
       this.territoryDirty = false;
@@ -1219,9 +1222,7 @@ class Game {
     const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
     const mat = new THREE.MeshBasicMaterial({
       map: this.territoryTexture,
-      transparent: true,
-      side: THREE.DoubleSide,
-      depthWrite: false
+      side: THREE.DoubleSide
     });
 
     this.territoryMesh = new THREE.Mesh(geom, mat);
@@ -1253,11 +1254,16 @@ class Game {
         const val = grid[gridIdx];
         const pixIdx = gridIdx * 4;
 
-        if (val === 0 || val === GRID_SENTINEL) {
-          data[pixIdx] = 0;
-          data[pixIdx + 1] = 0;
-          data[pixIdx + 2] = 0;
-          data[pixIdx + 3] = 0;
+        if (val === GRID_SENTINEL) {
+          data[pixIdx] = 240;
+          data[pixIdx + 1] = 240;
+          data[pixIdx + 2] = 240;
+          data[pixIdx + 3] = 255;
+        } else if (val === 0) {
+          data[pixIdx] = 255;
+          data[pixIdx + 1] = 255;
+          data[pixIdx + 2] = 255;
+          data[pixIdx + 3] = 255;
         } else {
           let r = factionR[val], g = factionG[val], b = factionB[val];
 
@@ -1282,6 +1288,47 @@ class Game {
 
     this._territoryCtx.putImageData(this._territoryImageData, 0, 0);
     this.territoryTexture.needsUpdate = true;
+  }
+
+  _healUnclaimedCells() {
+    const grid = territoryGrid.grid;
+    const size = GRID_SIZE;
+    let totalHealed = 0;
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let gy = 1; gy < size - 1; gy++) {
+        for (let gx = 1; gx < size - 1; gx++) {
+          const idx = gy * size + gx;
+          if (grid[idx] !== 0) continue;
+
+          const counts = new Uint8Array(FACTION_COUNT + 1);
+          const n = grid[idx - 1];
+          const s = grid[idx + 1];
+          const w = grid[idx - size];
+          const e = grid[idx + size];
+          if (n > 0 && n !== GRID_SENTINEL) counts[n]++;
+          if (s > 0 && s !== GRID_SENTINEL) counts[s]++;
+          if (w > 0 && w !== GRID_SENTINEL) counts[w]++;
+          if (e > 0 && e !== GRID_SENTINEL) counts[e]++;
+
+          let best = 0, bestCount = 0;
+          for (let f = 1; f <= FACTION_COUNT; f++) {
+            if (counts[f] > bestCount) { bestCount = counts[f]; best = f; }
+          }
+          if (best > 0) {
+            grid[idx] = best;
+            totalHealed++;
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (totalHealed > 0) {
+      this.territoryDirty = true;
+    }
   }
 
   _toggleFactionMeshes() {
