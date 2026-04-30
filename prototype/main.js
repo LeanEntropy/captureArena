@@ -1362,23 +1362,55 @@ class Game {
   }
 
   _updateLabels() {
+    // Performance: hot path running once per frame for every character.
+    // Optimizations:
+    //  - reuse a single Vector3 instead of allocating per character per frame
+    //    (was 30 alloc/frame = ~1800 alloc/sec of GC pressure)
+    //  - cache the rendered name + alive flag on the label element so we only
+    //    touch label.textContent / label.style.display when they change
+    //  - skip off-screen labels (NDC outside [-1, 1]); also clamp by side so
+    //    we don't write bogus huge .left/.top values that trigger needless
+    //    layout work
+    const tmp = this._labelTmpVec3 || (this._labelTmpVec3 = new THREE.Vector3());
+    const cam = this.camera;
+    const W = innerWidth, H = innerHeight;
     for (const c of this.characters) {
       let label = this.labels.get(c);
       if (!label) {
         label = document.createElement("div");
         label.style.cssText = "position:fixed;pointer-events:none;font-size:12px;font-weight:bold;color:#333;text-shadow:0 0 3px white;white-space:nowrap;transform:translate(-50%,-100%);z-index:5;";
         document.getElementById("ui").appendChild(label);
+        label._displayed = "";
+        label._cachedName = "";
         this.labels.set(c, label);
       }
-      if (!c.alive) { label.style.display = "none"; continue; }
-      label.style.display = "";
-      label.textContent = c.name;
-      // Use the visual mesh position (lerped) so label tracks mesh, not the
-      // raw target — keeps label glued to the body during interpolation.
-      const pos = new THREE.Vector3(c.group.position.x, 2.5, c.group.position.z);
-      pos.project(this.camera);
-      label.style.left = `${(pos.x*0.5+0.5)*innerWidth}px`;
-      label.style.top = `${(-pos.y*0.5+0.5)*innerHeight}px`;
+      if (!c.alive) {
+        if (label._displayed !== "none") {
+          label.style.display = "none";
+          label._displayed = "none";
+        }
+        continue;
+      }
+      tmp.set(c.group.position.x, 2.5, c.group.position.z);
+      tmp.project(cam);
+      // Off-screen / behind camera (z > 1) → hide.
+      if (tmp.x < -1.1 || tmp.x > 1.1 || tmp.y < -1.1 || tmp.y > 1.1 || tmp.z > 1) {
+        if (label._displayed !== "none") {
+          label.style.display = "none";
+          label._displayed = "none";
+        }
+        continue;
+      }
+      if (label._displayed !== "") {
+        label.style.display = "";
+        label._displayed = "";
+      }
+      if (label._cachedName !== c.name) {
+        label.textContent = c.name;
+        label._cachedName = c.name;
+      }
+      label.style.left = `${(tmp.x * 0.5 + 0.5) * W}px`;
+      label.style.top = `${(-tmp.y * 0.5 + 0.5) * H}px`;
     }
   }
 
