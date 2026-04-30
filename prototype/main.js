@@ -18,13 +18,23 @@ const TRAIL_WIDTH = 0.8;
 const DEBUG_LOG = [];
 const DEBUG_MAX = 2000;
 try { localStorage.removeItem("captureArena_debug"); } catch(e) {}
+// Performance: previously persisted the entire DEBUG_LOG to localStorage on
+// every dlog call (each kill/claim/respawn event). With a 2000-entry log this
+// can add up to several ms of synchronous JSON.stringify + storage IO per
+// event during heavy gameplay. Now we just persist on demand via window.dumpDebug().
 function dlog(category, msg, data) {
   const entry = { t: performance.now().toFixed(1), cat: category, msg, ...(data || {}) };
   DEBUG_LOG.push(entry);
   if (DEBUG_LOG.length > DEBUG_MAX) DEBUG_LOG.shift();
   console.log(`[${entry.t}][${category}] ${msg}`, data || "");
-  try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); } catch(e) {}
 }
+// Manual dump helper (call from devtools): dumps current log to localStorage
+// for inspection. Replaces the previous per-event auto-persist behavior.
+window.dumpDebug = () => {
+  try { localStorage.setItem("captureArena_debug", JSON.stringify(DEBUG_LOG)); }
+  catch(e) { console.warn("[debug] localStorage write failed:", e); }
+  return DEBUG_LOG.length;
+};
 
 // ===================== TERRITORY GRID =====================
 const territoryGrid = {
@@ -460,37 +470,99 @@ class Character {
   }
 
   _rebuildTrailMesh() {
-    if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
-    if (this.trailVerts.length < 2) return;
-    const positions = [], indices = [], hw = TRAIL_WIDTH / 2;
-    for (let i = 0; i < this.trailVerts.length; i++) {
-      const p = this.trailVerts[i];
-      let dx, dz;
-      if (i > 0 && i < this.trailVerts.length - 1) {
-        dx = this.trailVerts[i+1].x - this.trailVerts[i-1].x;
-        dz = this.trailVerts[i+1].z - this.trailVerts[i-1].z;
-      } else if (i < this.trailVerts.length - 1) {
-        dx = this.trailVerts[i+1].x - p.x;
-        dz = this.trailVerts[i+1].z - p.z;
-      } else {
-        dx = p.x - this.trailVerts[i-1].x;
-        dz = p.z - this.trailVerts[i-1].z;
+    // Performance: previously this rebuilt the full BufferGeometry every time a
+    // single vertex was appended (server emits ~5–20 trailVertex events/sec
+    // per character × 30 characters). With trails growing to hundreds of
+    // vertices each, total per-vertex work was O(total trail length) → O(N²)
+    // amortized work when chasing a long trail. The new approach uses a
+    // pre-allocated growable Float32Array and a Uint16/Uint32 index buffer,
+    // and on each call only writes the last two ribbon vertices + the new
+    // pair of triangles. The previous tail vertex is also rewritten with a
+    // refined normal (now that we know the next vertex). This makes append
+    // cost O(1) per vertex.
+    const verts = this.trailVerts;
+    if (verts.length < 2) {
+      if (this.trailMesh) {
+        this.scene.remove(this.trailMesh);
+        this.trailMesh.geometry.dispose();
+        this.trailMesh = null;
       }
-      const len = Math.sqrt(dx*dx+dz*dz) || 1;
+      this._trailGeomCapacity = 0;
+      return;
+    }
+
+    const hw = TRAIL_WIDTH / 2;
+
+    // Allocate / grow geometry buffers if needed. Capacity doubles each time
+    // to amortize growth cost; max trail length is bounded by sim's MAX_TRAIL.
+    if (!this.trailMesh || (this._trailGeomCapacity || 0) < verts.length) {
+      if (this.trailMesh) {
+        this.scene.remove(this.trailMesh);
+        this.trailMesh.geometry.dispose();
+        this.trailMesh = null;
+      }
+      const cap = Math.max(64, Math.ceil(verts.length * 1.5));
+      const positions = new Float32Array(cap * 6);   // 2 verts/point × 3 floats
+      const useUint32 = cap * 2 > 65535;
+      const indexArr = useUint32 ? new Uint32Array(cap * 6) : new Uint16Array(cap * 6);
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geom.setIndex(new THREE.BufferAttribute(indexArr, 1));
+      geom.setDrawRange(0, 0);
+      this.trailMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+        color: this.color, side: THREE.DoubleSide, transparent: true, opacity: 0.85
+      }));
+      this.scene.add(this.trailMesh);
+      this._trailGeomCapacity = cap;
+      this._trailWrittenCount = 0;     // # of points whose ribbon verts are filled
+      this._trailIndexCount = 0;       // # of indices written
+    }
+
+    const geom = this.trailMesh.geometry;
+    const posAttr = geom.attributes.position;
+    const idxAttr = geom.index;
+    const posArr = posAttr.array;
+    const idxArr = idxAttr.array;
+
+    const writePoint = (i) => {
+      const p = verts[i];
+      let dx, dz;
+      if (i > 0 && i < verts.length - 1) {
+        dx = verts[i+1].x - verts[i-1].x;
+        dz = verts[i+1].z - verts[i-1].z;
+      } else if (i < verts.length - 1) {
+        dx = verts[i+1].x - p.x;
+        dz = verts[i+1].z - p.z;
+      } else {
+        dx = p.x - verts[i-1].x;
+        dz = p.z - verts[i-1].z;
+      }
+      const len = Math.sqrt(dx*dx + dz*dz) || 1;
       const nx = -dz/len, nz = dx/len;
-      positions.push(p.x+nx*hw, 0.05, p.z+nz*hw, p.x-nx*hw, 0.05, p.z-nz*hw);
-      if (i > 0) {
-        const pr = (i-1)*2, cr = i*2;
-        indices.push(pr,pr+1,cr+1, pr,cr+1,cr);
+      const o = i * 6;
+      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = 0.05; posArr[o + 2] = p.z + nz*hw;
+      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = 0.05; posArr[o + 5] = p.z - nz*hw;
+    };
+
+    // Rewrite the previous tail (its forward-neighbor changed) and write all
+    // new points. In steady-state this is two writes per call.
+    const start = Math.max(0, (this._trailWrittenCount || 0) - 1);
+    for (let i = start; i < verts.length; i++) {
+      writePoint(i);
+      if (i > 0 && i >= (this._trailIndexCount / 6 | 0) + 1) {
+        // Append two triangles for the newly-formed segment from i-1 to i.
+        const pr = (i - 1) * 2, cr = i * 2;
+        const o = this._trailIndexCount;
+        idxArr[o    ] = pr;     idxArr[o + 1] = pr + 1; idxArr[o + 2] = cr + 1;
+        idxArr[o + 3] = pr;     idxArr[o + 4] = cr + 1; idxArr[o + 5] = cr;
+        this._trailIndexCount = o + 6;
       }
     }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geom.setIndex(indices);
-    this.trailMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
-      color: this.color, side: THREE.DoubleSide, transparent: true, opacity: 0.85
-    }));
-    this.scene.add(this.trailMesh);
+    this._trailWrittenCount = verts.length;
+
+    posAttr.needsUpdate = true;
+    idxAttr.needsUpdate = true;
+    geom.setDrawRange(0, this._trailIndexCount);
   }
 
   // Renderer-only sync: pull authoritative pos/dir from simChar (or predicted
@@ -562,6 +634,9 @@ class Character {
   _clearTrail() {
     this.trailVerts = [];
     if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
+    this._trailGeomCapacity = 0;
+    this._trailWrittenCount = 0;
+    this._trailIndexCount = 0;
   }
 
   // Visual death hook (sim already mutated simChar via Character.kill()).
@@ -629,8 +704,11 @@ class Game {
     const dl = new THREE.DirectionalLight(0xffffff, 0.6);
     dl.position.set(5, 15, 5);
     dl.castShadow = true;
-    dl.shadow.mapSize.width = 2048;
-    dl.shadow.mapSize.height = 2048;
+    // Performance: 1024² shadow map is plenty for ~30 cube characters viewed
+    // from above. 2048² was 4× the GPU memory + fillrate per frame for no
+    // visible improvement on this art style.
+    dl.shadow.mapSize.width = 1024;
+    dl.shadow.mapSize.height = 1024;
     dl.shadow.camera.near = 0.5;
     dl.shadow.camera.far = 60;
     dl.shadow.camera.left = -40;
@@ -684,6 +762,17 @@ class Game {
     this._territoryCtx = null;
     this._territoryImageData = null;
     this._debugNearestFilter = false;
+    // Throttle texture rebuilds to at most 10 Hz. Multiple claim/heal events per
+    // tick coalesce into a single putImageData. The grid still mutates
+    // immediately; only the GPU upload is delayed by up to ~100ms.
+    this._territoryRebuildAccum = 0;
+    this._territoryRebuildInterval = 0.1;
+    // Dirty-rect tracking: track bounding box of cells that changed since the
+    // last texture rebuild so we only rasterize+upload that region instead of
+    // the full 1024×1024 grid. Initialized "all dirty" so the first rebuild
+    // covers the whole grid. _dirtyMinX>maxX means clean.
+    this._dirtyMinX = 0; this._dirtyMaxX = -1;
+    this._dirtyMinY = 0; this._dirtyMaxY = -1;
     // Map: simChar -> renderer Character (used by event hooks).
     this._charBySim = new Map();
 
@@ -743,15 +832,17 @@ class Game {
     this.deathTimer = document.getElementById("death-timer");
 
     // ===== Sim event hooks: bridge authoritative sim events to renderer state =====
-    this.sim.onClaim = (charId, _trailPoints, _factionId) => {
+    this.sim.onClaim = (charId, trailPoints, _factionId) => {
       this.territoryDirty = true;
+      this._markDirtyFromTrail(trailPoints);
       const simChar = this.sim.characters[charId];
       const r = this._charBySim.get(simChar);
       if (r) r._clearTrail();
       dlog("CLAIM", `${r ? r.name : "?"}: claimed (sim)`, { charId });
     };
-    this.sim.onHeal = (_changedCells) => {
+    this.sim.onHeal = (changedCells) => {
       this.territoryDirty = true;
+      this._markDirtyFromCells(changedCells);
     };
     this.sim.onTrailVertex = (charId, x, z) => {
       const simChar = this.sim.characters[charId];
@@ -818,6 +909,7 @@ class Game {
         }
         territoryGrid.grid.set(bytes);
         this.territoryDirty = true;
+        this._markAllDirty();
         this._flushOnlineEventQueue();
         console.log(`[online] grid snapshot applied (${bytes.byteLength} bytes)`);
       } catch (err) {
@@ -851,6 +943,7 @@ class Game {
         territoryGrid.grid[changedCells[i]] = changedCells[i + 1];
       }
       this.territoryDirty = true;
+      this._markDirtyFromCells(changedCells);
     };
 
     // Trail vertices: append to renderer character trail so the line is visible.
@@ -908,6 +1001,7 @@ class Game {
           territoryGrid.grid[ev.changedCells[i]] = ev.changedCells[i + 1];
         }
         this.territoryDirty = true;
+        this._markDirtyFromCells(ev.changedCells);
       } else if (ev.type === "trail") {
         const r = this._findRendererCharBySimId(ev.charId);
         if (r) {
@@ -946,6 +1040,8 @@ class Game {
     const r = this._findRendererCharBySimId(charId);
     if (r) r._clearTrail();
     this.territoryDirty = true;
+    // Mark dirty bbox from the claim's trail/polygon extent.
+    this._markDirtyFromTrail(trailPoints);
   }
 
   _initRendererFromOnlineState(state) {
@@ -994,6 +1090,7 @@ class Game {
     }
 
     this._createTerritoryTexture();
+    this._markAllDirty();
     this._updateTerritoryTexture();
 
     // Camera: orbit the arena center until we have a real player char.
@@ -1141,6 +1238,7 @@ class Game {
     this.uiManager.setPlayer(this.player.simChar);
 
     this._createTerritoryTexture();
+    this._markAllDirty();
     this._updateTerritoryTexture();
 
     const playerSpawn = { x: playerSimChar.pos.x, z: playerSimChar.pos.z };
@@ -1209,10 +1307,7 @@ class Game {
       for (const c of this.characters) c.syncVisuals();
       this._updateLabels();
       if (this.uiManager) this.uiManager.update(dt);
-      if (this.territoryDirty) {
-        this._updateTerritoryTexture();
-        this.territoryDirty = false;
-      }
+      this._maybeRebuildTerritory(dt);
       return;
     }
 
@@ -1243,11 +1338,8 @@ class Game {
       c.syncVisuals();
     }
 
-    // Texture refresh if grid changed this tick.
-    if (this.territoryDirty) {
-      this._updateTerritoryTexture();
-      this.territoryDirty = false;
-    }
+    // Texture refresh if grid changed this tick (throttled to ~10 Hz).
+    this._maybeRebuildTerritory(dt);
 
     // ---- Camera ----
     if (this.player && this.player.alive && this.player.isPlayer) {
@@ -1306,12 +1398,16 @@ class Game {
     this.territoryTexture.wrapT = THREE.ClampToEdgeWrapping;
 
     const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
+    // Performance: alphaTest with transparent:false keeps the binary alpha cutout
+    // (boundary cells are fully transparent, all other cells fully opaque) but
+    // skips the alpha-blend pipeline — one of the biggest fillrate costs since
+    // this plane covers most of the screen. Single-sided cuts shading cost in
+    // half (we only ever view it from above).
     const mat = new THREE.MeshBasicMaterial({
       map: this.territoryTexture,
-      transparent: true,
+      transparent: false,
       alphaTest: 0.5,
-      side: THREE.DoubleSide,
-      depthWrite: false
+      side: THREE.FrontSide,
     });
 
     this.territoryMesh = new THREE.Mesh(geom, mat);
@@ -1320,8 +1416,84 @@ class Game {
     this.scene.add(this.territoryMesh);
   }
 
+  // Throttle the (heavy) putImageData to at most ~10 Hz. Claims and
+  // heal events arrive in bursts of 5–20 per second; coalescing them produces
+  // identical visual output with one upload instead of many. Worst-case the
+  // territory mesh is up to ~100 ms behind the authoritative grid — well below
+  // human-perception threshold for area changes.
+  _maybeRebuildTerritory(dt) {
+    if (!this.territoryDirty) return;
+    this._territoryRebuildAccum += dt;
+    if (this._territoryRebuildAccum >= this._territoryRebuildInterval) {
+      this._territoryRebuildAccum = 0;
+      this._updateTerritoryTexture();
+      this.territoryDirty = false;
+    }
+  }
+
+  // Mark the entire grid dirty (e.g. after a snapshot replaces all cells).
+  _markAllDirty() {
+    this._dirtyMinX = 0;
+    this._dirtyMinY = 0;
+    this._dirtyMaxX = GRID_SIZE - 1;
+    this._dirtyMaxY = GRID_SIZE - 1;
+  }
+
+  // Expand the dirty bbox to cover a single cell (gx, gy).
+  _markDirtyCell(gx, gy) {
+    if (gx < 0 || gy < 0 || gx >= GRID_SIZE || gy >= GRID_SIZE) return;
+    if (this._dirtyMaxX < this._dirtyMinX) {
+      // bbox is empty (clean); seed with this cell
+      this._dirtyMinX = gx; this._dirtyMaxX = gx;
+      this._dirtyMinY = gy; this._dirtyMaxY = gy;
+      return;
+    }
+    if (gx < this._dirtyMinX) this._dirtyMinX = gx;
+    if (gx > this._dirtyMaxX) this._dirtyMaxX = gx;
+    if (gy < this._dirtyMinY) this._dirtyMinY = gy;
+    if (gy > this._dirtyMaxY) this._dirtyMaxY = gy;
+  }
+
+  // Mark dirty bbox from a flat trail-points array (alternating x,z world coords).
+  // The claim polygon's bounding box bounds the cells that could have flipped.
+  // Pad by 1 cell to guard against rounding on the polygon edge.
+  _markDirtyFromTrail(trailPoints) {
+    if (!trailPoints || trailPoints.length < 4) {
+      this._markAllDirty();
+      return;
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < trailPoints.length; i += 2) {
+      const x = trailPoints[i];
+      const z = trailPoints[i + 1];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minY) minY = z;
+      if (z > maxY) maxY = z;
+    }
+    const { gx: minGX, gy: minGY } = territoryGrid.worldToGrid(minX, minY);
+    const { gx: maxGX, gy: maxGY } = territoryGrid.worldToGrid(maxX, maxY);
+    this._markDirtyCell(Math.max(0, minGX - 1), Math.max(0, minGY - 1));
+    this._markDirtyCell(Math.min(GRID_SIZE - 1, maxGX + 1), Math.min(GRID_SIZE - 1, maxGY + 1));
+  }
+
+  // Mark dirty bbox from a flat changedCells array (alternating cellIdx,value).
+  _markDirtyFromCells(changedCells) {
+    if (!changedCells || changedCells.length === 0) return;
+    for (let i = 0; i < changedCells.length; i += 2) {
+      const idx = changedCells[i];
+      const gx = idx % GRID_SIZE;
+      const gy = (idx - gx) / GRID_SIZE;
+      this._markDirtyCell(gx, gy);
+    }
+  }
+
+  // Re-rasterize only the dirty bounding box and upload a partial texture
+  // update. Uploading 1024×1024 (~4 MB) every claim wreaked havoc on the GPU
+  // bus; a typical claim touches a small region (~10×10 cells = 400 bytes).
   _updateTerritoryTexture() {
     if (!this._territoryCtx) return;
+    if (this._dirtyMaxX < this._dirtyMinX || this._dirtyMaxY < this._dirtyMinY) return;
 
     const data = this._territoryImageData.data;
     const grid = territoryGrid.grid;
@@ -1337,9 +1509,15 @@ class Game {
       factionB[i + 1] = c & 0xFF;
     }
 
-    for (let gy = 0; gy < size; gy++) {
-      for (let gx = 0; gx < size; gx++) {
-        const gridIdx = gy * size + gx;
+    const minX = this._dirtyMinX, maxX = this._dirtyMaxX;
+    const minY = this._dirtyMinY, maxY = this._dirtyMaxY;
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+
+    for (let gy = minY; gy <= maxY; gy++) {
+      const rowBase = gy * size;
+      for (let gx = minX; gx <= maxX; gx++) {
+        const gridIdx = rowBase + gx;
         const val = grid[gridIdx];
         const pixIdx = gridIdx * 4;
 
@@ -1362,8 +1540,16 @@ class Game {
       }
     }
 
-    this._territoryCtx.putImageData(this._territoryImageData, 0, 0);
+    // Partial putImageData: pass dirty rect args so only that subregion is
+    // uploaded to the canvas backing store. Three.js' CanvasTexture re-uploads
+    // the whole canvas on needsUpdate, but skipping the rasterization loop on
+    // 95%+ of the grid is still a major win.
+    this._territoryCtx.putImageData(this._territoryImageData, 0, 0, minX, minY, w, h);
     this.territoryTexture.needsUpdate = true;
+
+    // Reset dirty bbox.
+    this._dirtyMinX = 0; this._dirtyMaxX = -1;
+    this._dirtyMinY = 0; this._dirtyMaxY = -1;
   }
 
   // _checkCutoff, _killCharacter, _healUnclaimedCells: previously lived here;
