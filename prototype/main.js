@@ -5,7 +5,7 @@ import { FACTION_COUNT, FACTION_COLORS } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
 import {
-  ARENA_RADIUS, PLAYER_SPEED, BOT_SPEED,
+  ARENA_RADIUS, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
   GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
 } from "./sim/constants.js";
 
@@ -396,14 +396,24 @@ class Character {
     this.targetDir = this.dir.clone();
     this.speed = isPlayer ? PLAYER_SPEED : BOT_SPEED;
     this.color = color;
-    this.name = simChar.name;
+    this._initialName = simChar.name;
     this.isPlayer = isPlayer;
     this.factionId = simChar.factionId;   // mirror; updated on faction reassign
     this.trailVerts = [];                 // Vector3[]; populated via sim.onTrailVertex hook
     this.trailMesh = null;
+    // Online prediction hook: when set, syncVisuals reads from this object's
+    // {posX, posZ, dirX, dirZ} instead of simChar. Used for the local player
+    // in online mode to eliminate input-roundtrip lag.
+    this.predicted = null;
     this.group = this._buildChar(color);
     scene.add(this.group);
   }
+
+  // Reactive name accessor: in online mode the schema name updates after
+  // handleHello, so we always read the latest value rather than caching at
+  // construction. _updateLabels() and HUD code read c.name each frame.
+  get name() { return this.simChar?.name ?? this._initialName; }
+  set name(v) { this._initialName = v; }
 
   // Convenience accessors that forward to simChar (renderer code reads these
   // for HUD / scoring / kill detection that hasn't moved yet).
@@ -483,18 +493,55 @@ class Character {
     this.scene.add(this.trailMesh);
   }
 
-  // Renderer-only sync: pull authoritative pos/dir from simChar, update mesh.
-  // All simulation work (steer, move, trail, claim, kills) is owned by sim.tick.
+  // Renderer-only sync: pull authoritative pos/dir from simChar (or predicted
+  // state for the local online player) and lerp the mesh toward it. All
+  // simulation work (steer, move, trail, claim, kills) is owned by sim.tick.
   syncVisuals() {
     if (!this.alive) {
       this.group.visible = false;
       return;
     }
-    this.pos.set(this.simChar.pos.x, 0, this.simChar.pos.z);
-    this.dir.set(this.simChar.dir.x, 0, this.simChar.dir.z);
+    // Source of truth for pos/dir: predicted state for local online player,
+    // authoritative simChar (or schema-backed proxy) otherwise.
+    let tgtX, tgtZ, tgtDirX, tgtDirZ;
+    if (this.predicted) {
+      tgtX = this.predicted.posX;
+      tgtZ = this.predicted.posZ;
+      tgtDirX = this.predicted.dirX;
+      tgtDirZ = this.predicted.dirZ;
+    } else {
+      tgtX = this.simChar.pos.x;
+      tgtZ = this.simChar.pos.z;
+      tgtDirX = this.simChar.dir.x;
+      tgtDirZ = this.simChar.dir.z;
+    }
+    this.pos.set(tgtX, 0, tgtZ);
+    this.dir.set(tgtDirX, 0, tgtDirZ);
     this.factionId = this.simChar.factionId;
-    this.group.position.set(this.pos.x, 0, this.pos.z);
-    this.group.rotation.y = Math.atan2(this.dir.x, this.dir.z);
+
+    // Frame-rate independent lerp toward target (smooths 20 Hz server updates
+    // over ~3 frames at 60 FPS). Snap if too far (prevents long lerps after
+    // teleport / respawn / drift reconciliation).
+    const t = 0.30;
+    let mx = this.group.position.x;
+    let mz = this.group.position.z;
+    const dx = tgtX - mx;
+    const dz = tgtZ - mz;
+    if (dx * dx + dz * dz > 9) {
+      // > 3 units away: snap.
+      this.group.position.set(tgtX, this.group.position.y, tgtZ);
+    } else {
+      this.group.position.x = mx + dx * t;
+      this.group.position.z = mz + dz * t;
+    }
+
+    // Shortest-arc lerp of rotation.
+    const targetRot = Math.atan2(tgtDirX, tgtDirZ);
+    let drot = targetRot - this.group.rotation.y;
+    while (drot > Math.PI) drot -= 2 * Math.PI;
+    while (drot < -Math.PI) drot += 2 * Math.PI;
+    this.group.rotation.y += drot * t;
+
     this.group.visible = (this.isPlayer && this.invulnTimer > 0)
       ? Math.sin(performance.now() * 0.01) > 0
       : true;
@@ -965,7 +1012,69 @@ class Game {
     if (!rChar) return;
     rChar.isPlayer = true;
     this.player = rChar;
+    // Initialize client-side prediction state from current schema. The
+    // renderer character will read pos/dir from `predicted` instead of the
+    // schema; we reconcile each frame against the authoritative server pos.
+    const sc = rChar.simChar;
+    this.predicted = {
+      posX: sc.pos.x,
+      posZ: sc.pos.z,
+      dirX: sc.dir.x || 0,
+      dirZ: sc.dir.z || 1,
+    };
+    rChar.predicted = this.predicted;
     console.log(`[online] bound player to char ${this.myCharId}`);
+  }
+
+  // Client-side prediction step for the local online player. Mirrors the
+  // server's Simulation._stepCharacter math (TURN_SPEED rad/s steer,
+  // PLAYER_SPEED * dt advance, arena-radius clamp). Reconciles to the
+  // authoritative server position when drift exceeds a small threshold.
+  _stepPrediction(dt) {
+    if (this.mode !== "online") return;
+    if (!this.player || !this.predicted) return;
+    if (!this.player.alive) return;
+
+    const sc = this.player.simChar;
+    // Reconcile: snap predicted state if the server's authoritative position
+    // has diverged by more than ~2 units (e.g. server-side correction,
+    // collision, respawn). The visual lerp in syncVisuals smooths the snap.
+    const ddx = sc.pos.x - this.predicted.posX;
+    const ddz = sc.pos.z - this.predicted.posZ;
+    if (ddx * ddx + ddz * ddz > 4) {
+      this.predicted.posX = sc.pos.x;
+      this.predicted.posZ = sc.pos.z;
+      this.predicted.dirX = sc.dir.x || this.predicted.dirX;
+      this.predicted.dirZ = sc.dir.z || this.predicted.dirZ;
+    }
+
+    // Steer predicted dir toward this.player.targetDir at TURN_SPEED rad/s.
+    const tdx = this.player.targetDir.x;
+    const tdz = this.player.targetDir.z;
+    const tlen = Math.hypot(tdx, tdz);
+    if (tlen > 1e-6) {
+      const ca = Math.atan2(this.predicted.dirX, this.predicted.dirZ);
+      const ta = Math.atan2(tdx / tlen, tdz / tlen);
+      let diff = ta - ca;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.max(-TURN_SPEED * dt, Math.min(TURN_SPEED * dt, diff));
+      const na = ca + turn;
+      this.predicted.dirX = Math.sin(na);
+      this.predicted.dirZ = Math.cos(na);
+    }
+
+    // Advance predicted pos.
+    this.predicted.posX += this.predicted.dirX * PLAYER_SPEED * dt;
+    this.predicted.posZ += this.predicted.dirZ * PLAYER_SPEED * dt;
+
+    // Arena clamp.
+    const r = Math.hypot(this.predicted.posX, this.predicted.posZ);
+    if (r > ARENA_RADIUS) {
+      const inv = ARENA_RADIUS / r;
+      this.predicted.posX *= inv;
+      this.predicted.posZ *= inv;
+    }
   }
 
   start(name) {
@@ -1079,6 +1188,10 @@ class Game {
     // fire during this call. ----
     if (this.mode === "solo") {
       this.sim.tick(dt);
+    } else if (this.mode === "online") {
+      // Client-side prediction for the local player only — eliminates the
+      // input-roundtrip lag while server reconciliation snaps any drift.
+      this._stepPrediction(dt);
     }
 
     // Match ended: still update visuals/HUD then bail out.
@@ -1158,7 +1271,9 @@ class Game {
       if (!c.alive) { label.style.display = "none"; continue; }
       label.style.display = "";
       label.textContent = c.name;
-      const pos = new THREE.Vector3(c.pos.x, 2.5, c.pos.z);
+      // Use the visual mesh position (lerped) so label tracks mesh, not the
+      // raw target — keeps label glued to the body during interpolation.
+      const pos = new THREE.Vector3(c.group.position.x, 2.5, c.group.position.z);
       pos.project(this.camera);
       label.style.left = `${(pos.x*0.5+0.5)*innerWidth}px`;
       label.style.top = `${(-pos.y*0.5+0.5)*innerHeight}px`;

@@ -185,6 +185,7 @@ export class GameRoom extends Room<GameStateSchema> {
       if (!cs || !c) continue;
       cs.factionId = c.factionId;
       cs.isHuman = c.isHuman;
+      cs.name = c.name;
       cs.posX = c.pos.x;
       cs.posZ = c.pos.z;
       cs.dirX = c.dir.x;
