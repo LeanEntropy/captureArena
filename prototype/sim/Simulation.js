@@ -3,14 +3,12 @@ import {
   RESPAWN_DELAY, BOT_NAMES,
   MIN_POINT_DIST, TURN_SPEED,
   TRAIL_KILL_DIST, SELF_TRAIL_SKIP,
-  CONTINUOUS_LAND,
 } from "./constants.js";
 import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 import { MatchManager } from "./match.js";
 import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
 import { BotAI } from "./BotAI.js";
-import { extractContours, polyArea, closestIdx } from "./grid_geom.js";
 
 export class Simulation {
   constructor({ seed = 1 } = {}) {
@@ -369,154 +367,272 @@ export class Simulation {
     }
   }
 
-  // Public claim. Stamps the character's current trail polygon onto the grid as
-  // their faction territory, runs continuous-land cleanup against any victims,
-  // heals unclaimed cells, fires the onClaim event hook, and reports score.
-  // Returns true if the claim was applied; false if the trail was too short.
+  // ===== flood-fill claim helpers =====
+
+  // Convert a world coord to integer grid coords. Mirrors _getOwnerAt's
+  // convention. Caller must guard against out-of-grid results if needed.
+  _worldToGrid(wx, wz) {
+    const gx = Math.floor((wx - WORLD_MIN) / CELL_SIZE);
+    const gy = Math.floor((wz - WORLD_MIN) / CELL_SIZE);
+    return { gx, gy };
+  }
+
+  // Find the nearest cell whose owner === factionId to the world point (wx, wz).
+  // Returns { gx, gy } or null if the faction owns no arena cells.
+  // Linear scan; fine for now (called twice per claim). If the faction has
+  // territory, the search short-circuits because most arena cells are owned
+  // by some faction at all times — but for correctness we just scan.
+  _nearestOwnCell(factionId, wx, wz) {
+    const { gx: tgx, gy: tgy } = this._worldToGrid(wx, wz);
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    const grid = this.grid;
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] !== factionId) continue;
+      const gx = i % GRID_SIZE;
+      const gy = (i - gx) / GRID_SIZE;
+      const dx = gx - tgx;
+      const dy = gy - tgy;
+      const d = dx * dx + dy * dy;
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+        if (d === 0) break;
+      }
+    }
+    if (bestIdx < 0) return null;
+    const gx = bestIdx % GRID_SIZE;
+    const gy = (bestIdx - gx) / GRID_SIZE;
+    return { gx, gy };
+  }
+
+  // Bresenham-supercover line rasterizer. Sets buffer[gy * GRID_SIZE + gx] = 1
+  // for every grid cell the line from (gx0, gy0) to (gx1, gy1) passes through.
+  // 4-connected coverage: writes intermediate cells on diagonal steps so a
+  // 4-connected BFS cannot leak through a corner.
+  _rasterizeLine(buffer, gx0, gy0, gx1, gy1) {
+    let x = gx0 | 0;
+    let y = gy0 | 0;
+    const x1 = gx1 | 0;
+    const y1 = gy1 | 0;
+    const dx = Math.abs(x1 - x);
+    const dy = Math.abs(y1 - y);
+    const sx = x < x1 ? 1 : -1;
+    const sy = y < y1 ? 1 : -1;
+    let err = dx - dy;
+    const N = GRID_SIZE;
+
+    // Plot starting cell.
+    if (x >= 0 && x < N && y >= 0 && y < N) buffer[y * N + x] = 1;
+
+    while (x !== x1 || y !== y1) {
+      const e2 = 2 * err;
+      let stepX = false, stepY = false;
+      if (e2 > -dy) { err -= dy; x += sx; stepX = true; }
+      if (e2 <  dx) { err += dx; y += sy; stepY = true; }
+      // Supercover: when we step diagonally in a single iteration, also paint
+      // one of the two orthogonal neighbors so a 4-connected flood-fill can't
+      // squeeze through the corner.
+      if (stepX && stepY) {
+        // Paint (x - sx, y) — the cell we'd have passed through if we'd
+        // stepped Y first. Either choice closes the corner; pick the
+        // deterministic "horizontal first" one.
+        const ix = x - sx;
+        if (ix >= 0 && ix < N && y >= 0 && y < N) buffer[y * N + ix] = 1;
+      }
+      if (x >= 0 && x < N && y >= 0 && y < N) buffer[y * N + x] = 1;
+    }
+  }
+
+  // Public claim. Replaces the rasterized trail with a temporary "wall" mask,
+  // floods from the arena edges (sentinel side), and any non-sentinel cell the
+  // flood doesn't reach is enclosed → flips to claimer's faction.
+  // No global victim-fragment reassignment, no heal pass — the BFS produces a
+  // clean enclosed region with no orphans by construction.
+  // Returns true if the claim was applied; false if the trail was too short
+  // or the faction has no territory to close against.
   claim(char) {
     if (!char.trailVerts || char.trailVerts.length < 5) {
       return false;
     }
 
     const trail = char.trailVerts;
+    const factionId = char.factionId;
+    const N = GRID_SIZE;
 
     // Count cells before for score reporting.
     let cellsBefore = 0;
     for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] === char.factionId) cellsBefore++;
+      if (this.grid[i] === factionId) cellsBefore++;
     }
 
-    // Close the trail through the claimer's existing territory boundary so the
-    // resulting polygon fills the enclosed region (Paper.io style) rather than
-    // stamping the raw out-and-back trail (which produces sliver/chevron
-    // artifacts).  Faithful port of the original prototype/main.js
-    // Character._claim() algorithm.
-    const contours = extractContours(this.grid, char.factionId);
-    if (contours.length === 0) {
-      // No existing territory to close against — drop the trail.
+    // 1. Find nearest own cells to the trail endpoints. These act as the
+    //    "anchors" the trail closes against.
+    const startNear = this._nearestOwnCell(factionId, trail[0].x, trail[0].z);
+    const endNear   = this._nearestOwnCell(factionId, trail[trail.length - 1].x, trail[trail.length - 1].z);
+    if (!startNear || !endNear) {
+      // Faction has no territory — nothing to close against.
       char.trailVerts = [];
       return false;
     }
 
-    contours.sort((a, b) => polyArea(b) - polyArea(a));
-    const boundary = contours[0];
+    // 2. Rasterize the trail and the two closure bridges into a wall mask.
+    const walls = new Uint8Array(N * N);
 
-    // contour points are {x, y} in world coords (y = z); convert to {x, z} so
-    // closestIdx can compare directly against trail vertices ({x, z}).
-    const boundaryXZ = boundary.map(p => ({ x: p.x, z: p.y }));
-
-    const si = closestIdx(boundaryXZ, trail[0]);
-    const ei = closestIdx(boundaryXZ, trail[trail.length - 1]);
-
-    // Faithful port of prototype/main.js Character._claim() (commit 7b27aee):
-    // build TWO candidate merged-territory polygons and pick the one with the
-    // larger area. The smaller-area candidate would be the sliver/chevron we
-    // are explicitly trying to avoid.
-    //
-    //   When si != ei:
-    //     Candidate A: boundary arc (ei → si, forward) + trail forward
-    //     Candidate B: boundary arc (si → ei, forward) + trail reversed
-    //
-    //   When si == ei:
-    //     The trail forms a closed loop anchored at one boundary point.
-    //     Insert the trail into the boundary at that point — try both trail
-    //     orientations and keep the larger.
-    //
-    // All polygons are arrays of {x, y} where y = z (stampPolygon's format).
-    const trailFwd = trail.map(t => ({ x: t.x, y: t.z }));
-    const trailRev = [];
-    for (let j = trail.length - 1; j >= 0; j--) {
-      trailRev.push({ x: trail[j].x, y: trail[j].z });
+    // Trail endpoints in grid coords.
+    const tg = new Array(trail.length);
+    for (let i = 0; i < trail.length; i++) {
+      tg[i] = this._worldToGrid(trail[i].x, trail[i].z);
     }
 
-    let candA, candB;
-    if (si === ei) {
-      // Insert trail (forward / reversed) into the boundary at index si.
-      candA = [];
-      for (let k = 0; k <= si; k++) candA.push({ x: boundary[k].x, y: boundary[k].y });
-      for (const t of trailFwd) candA.push(t);
-      for (let k = si + 1; k < boundary.length; k++) candA.push({ x: boundary[k].x, y: boundary[k].y });
+    for (let i = 0; i < trail.length - 1; i++) {
+      this._rasterizeLine(walls, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy);
+    }
+    // Bridges from trail endpoints to nearest-own cells.
+    this._rasterizeLine(walls, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy);
+    this._rasterizeLine(walls, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy);
 
-      candB = [];
-      for (let k = 0; k <= si; k++) candB.push({ x: boundary[k].x, y: boundary[k].y });
-      for (const t of trailRev) candB.push(t);
-      for (let k = si + 1; k < boundary.length; k++) candB.push({ x: boundary[k].x, y: boundary[k].y });
-    } else {
-      const n = boundary.length;
-      // Arc A: ei → si walking forward
-      const arcA = [];
-      for (let i = ei; ; i = (i + 1) % n) {
-        arcA.push({ x: boundary[i].x, y: boundary[i].y });
-        if (i === si) break;
-        if (arcA.length > n) break;
+    // 3. BFS from the arena's outside (sentinel cells & arena edges).
+    //    Blockers = sentinel + own territory + walls.
+    //    Open cells = non-sentinel non-own non-wall.
+    //    Use array-as-queue with head pointer (deterministic; no shift cost).
+    const visited = new Uint8Array(N * N);
+    const queue = [];
+    let head = 0;
+
+    const grid = this.grid;
+
+    // Helper: is this cell a "blocker" (cannot be flooded through)?
+    // Inlined below for hot-path speed.
+
+    // Seed: every non-blocker cell on the grid edge, AND every non-blocker
+    // cell adjacent to a sentinel. Sentinel cells form a halo around the
+    // arena, so flooding from any sentinel-adjacent cell is equivalent to
+    // flooding from "outside the arena."
+    // Walk grid edges:
+    for (let gx = 0; gx < N; gx++) {
+      const top = gx;
+      const bot = (N - 1) * N + gx;
+      if (grid[top] !== GRID_SENTINEL && grid[top] !== factionId && !walls[top] && !visited[top]) {
+        visited[top] = 1; queue.push(top);
       }
-      // Arc B: si → ei walking forward
-      const arcB = [];
-      for (let i = si; ; i = (i + 1) % n) {
-        arcB.push({ x: boundary[i].x, y: boundary[i].y });
-        if (i === ei) break;
-        if (arcB.length > n) break;
+      if (grid[bot] !== GRID_SENTINEL && grid[bot] !== factionId && !walls[bot] && !visited[bot]) {
+        visited[bot] = 1; queue.push(bot);
       }
-
-      // Candidate A: arcA + trail forward
-      candA = arcA.slice();
-      for (const t of trailFwd) candA.push(t);
-
-      // Candidate B: arcB + trail reversed
-      candB = arcB.slice();
-      for (const t of trailRev) candB.push(t);
     }
-
-    const areaA = polyArea(candA);
-    const areaB = polyArea(candB);
-    const trailPoly = areaA > areaB ? candA : candB;
-    const newArea = Math.max(areaA, areaB);
-
-    // Safety: never shrink territory. If both candidates somehow have area
-    // smaller than the current contour (degenerate or self-intersecting trail),
-    // abort.  Faithful port of main.js's "would shrink territory" guard.
-    const prevArea = polyArea(boundary);
-    if (newArea < prevArea) {
-      char.trailVerts = [];
-      return false;
+    for (let gy = 0; gy < N; gy++) {
+      const left = gy * N;
+      const right = gy * N + (N - 1);
+      if (grid[left] !== GRID_SENTINEL && grid[left] !== factionId && !walls[left] && !visited[left]) {
+        visited[left] = 1; queue.push(left);
+      }
+      if (grid[right] !== GRID_SENTINEL && grid[right] !== factionId && !walls[right] && !visited[right]) {
+        visited[right] = 1; queue.push(right);
+      }
     }
-
-    if (trailPoly.length < 3) {
-      char.trailVerts = [];
-      return false;
-    }
-
-    const overwritten = this._stampPolygon(trailPoly, char.factionId);
-
-    // CONTINUOUS_LAND: per overwritten faction, keep largest component, reassign rest.
-    if (CONTINUOUS_LAND && overwritten.size > 0) {
-      for (const victimFactionId of overwritten) {
-        if (victimFactionId === char.factionId) continue;
-        this._floodFillConnected(victimFactionId, char.factionId);
+    // Also seed every non-blocker cell adjacent to a sentinel cell. The arena
+    // is a circle inscribed in the grid; sentinels surround it. Any open cell
+    // touching a sentinel is reachable from "outside" with one step.
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] !== GRID_SENTINEL) continue;
+      const gx = i % N;
+      const gy = (i - gx) / N;
+      // 4-neighbor scan
+      if (gy > 0) {
+        const nIdx = i - N;
+        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gy < N - 1) {
+        const nIdx = i + N;
+        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gx > 0) {
+        const nIdx = i - 1;
+        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gx < N - 1) {
+        const nIdx = i + 1;
+        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
       }
     }
 
-    // Clear trail.
+    // BFS expand (4-connected, deterministic neighbor order: N, S, W, E).
+    while (head < queue.length) {
+      const idx = queue[head++];
+      const gx = idx % N;
+      const gy = (idx - gx) / N;
+
+      if (gy > 0) {
+        const nIdx = idx - N;
+        if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gy < N - 1) {
+        const nIdx = idx + N;
+        if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gx > 0) {
+        const nIdx = idx - 1;
+        if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+      if (gx < N - 1) {
+        const nIdx = idx + 1;
+        if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
+          visited[nIdx] = 1; queue.push(nIdx);
+        }
+      }
+    }
+
+    // 4. Any non-sentinel, non-own, non-visited cell is enclosed → flip to own.
+    //    Also flip wall cells themselves (the trail rasterization).
+    for (let i = 0; i < grid.length; i++) {
+      const v = grid[i];
+      if (v === GRID_SENTINEL) continue;
+      if (v === factionId) continue;
+      if (visited[i]) continue;
+      grid[i] = factionId;
+    }
+    // Trail walls explicitly become own territory (they may sit on sentinel-
+    // adjacent cells whose visited bit is set during seeding — we want them
+    // claimed regardless, since the player physically traversed them).
+    for (let i = 0; i < walls.length; i++) {
+      if (!walls[i]) continue;
+      if (grid[i] === GRID_SENTINEL) continue;
+      grid[i] = factionId;
+    }
+
+    // 5. Clear trail and fire hooks.
     char.trailVerts = [];
 
-    // Heal pass: fill unclaimed cells.
-    this._healUnclaimedCells();
+    // Score tracking.
+    let cellsAfter = 0;
+    for (let i = 0; i < this.grid.length; i++) {
+      if (this.grid[i] === factionId) cellsAfter++;
+    }
+    const cellsFlipped = cellsAfter - cellsBefore;
 
-    // Build flat trail-points array for the event hook (multiplayer client uses this
-    // to re-rasterize the same claim on its local grid copy).
+    // Build flat trail-points array for the event hook (multiplayer client uses
+    // this to re-rasterize the same claim on its local grid copy).
     const trailPointsFlat = new Array(trail.length * 2);
     for (let i = 0; i < trail.length; i++) {
       trailPointsFlat[i * 2] = trail[i].x;
       trailPointsFlat[i * 2 + 1] = trail[i].z;
     }
-    this.onClaim?.(char.id, trailPointsFlat, char.factionId);
+    this.onClaim?.(char.id, trailPointsFlat, factionId);
 
-    // Score tracking.
-    let cellsAfter = 0;
-    for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] === char.factionId) cellsAfter++;
-    }
-    const cellsFlipped = cellsAfter - cellsBefore;
     if (this.scoreTracker?.onCapture && cellsFlipped > 0) {
       this.scoreTracker.onCapture(char, cellsFlipped, this.factionManager);
     }

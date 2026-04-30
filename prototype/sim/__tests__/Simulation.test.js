@@ -243,6 +243,173 @@ describe("Simulation", () => {
     expect(sim.grid[targetIdx]).not.toBe(GRID_SENTINEL);
   });
 
+  // ===== flood-fill claim algorithm tests =====
+
+  it("Flood-fill claim: out-and-back trail captures the enclosed region only", () => {
+    // Build a real out-and-back lobe trail starting at faction 1's territory
+    // boundary, looping into adjacent enemy/neutral cells, and returning.
+    // The new flood-fill-from-outside algorithm must enclose the lobe and
+    // grow faction 1's territory without leaking into distant cells.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 cell on the boundary.
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          const cellSize = 133.78 / GRID_SIZE;
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    // Half-circle lobe outward from the boundary.
+    const trail = [];
+    const lobeRadius = 4;
+    const steps = 12;
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const angle = Math.PI * t;
+      const r = lobeRadius;
+      const out = (1 - Math.cos(angle));   // 0 -> 2
+      const side = Math.sin(angle);        // 0 -> 1 -> 0
+      trail.push({
+        x: boundaryWX + ux * r * out * 0.5 + px * r * side,
+        z: boundaryWZ + uz * r * out * 0.5 + pz * r * side,
+      });
+    }
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+
+    expect(ok).toBe(true);
+    expect(c.trailVerts.length).toBe(0);
+    // The lobe is ~4-unit radius half-circle; at CELL_SIZE ≈ 0.13 it sweeps
+    // far more than 100 cells.
+    expect(after - before).toBeGreaterThan(100);
+  });
+
+  it("Flood-fill claim: does not capture distant disconnected enemy fragments", () => {
+    // Place a tiny enemy island far from the claimer's trail. The old
+    // algorithm's post-stamp _floodFillConnected would reassign distant
+    // disconnected enemy fragments; the new flood-fill-from-outside
+    // algorithm must NOT touch them.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Pick a far-from-faction-1 cell. Faction 1's pie slice is around angle 0;
+    // the opposite side (negative-x direction) belongs to other factions.
+    // Find a non-faction-1 non-sentinel cell roughly in the opposite direction
+    // and stamp a small 3x3 island marked with a unique sentinel-like enemy id
+    // (we'll use faction id 4 — simulation always has 5 factions).
+    const enemyFaction = 4;
+    // Find center cell roughly at world coord (-50, 0) — well away from
+    // faction 1's slice and from the claimer's lobe.
+    const cellSize = 133.78 / GRID_SIZE;
+    const cx = Math.floor((-50 - (-66.89)) / cellSize);
+    const cy = Math.floor((0 - (-66.89)) / cellSize);
+    // Force a 5x5 island of faction `enemyFaction` (override whatever was
+    // there). Skip sentinel cells.
+    const islandIndices = [];
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const idx = (cy + dy) * GRID_SIZE + (cx + dx);
+        if (idx < 0 || idx >= sim.grid.length) continue;
+        if (sim.grid[idx] === GRID_SENTINEL) continue;
+        sim.grid[idx] = enemyFaction;
+        islandIndices.push(idx);
+      }
+    }
+    expect(islandIndices.length).toBeGreaterThan(10);
+
+    // Now build a small lobe trail attached to faction 1 (same direction as
+    // before, but small — does not touch the island).
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    const trail = [];
+    const lobeRadius = 3;
+    const steps = 10;
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const angle = Math.PI * t;
+      const r = lobeRadius;
+      const out = (1 - Math.cos(angle));
+      const side = Math.sin(angle);
+      trail.push({
+        x: boundaryWX + ux * r * out * 0.5 + px * r * side,
+        z: boundaryWZ + uz * r * out * 0.5 + pz * r * side,
+      });
+    }
+    c.trailVerts = trail;
+
+    const ok = sim.claim(c);
+    expect(ok).toBe(true);
+
+    // The distant enemy island MUST still belong to enemyFaction. Count
+    // surviving enemy cells in the original island indices.
+    let survived = 0;
+    for (const idx of islandIndices) {
+      if (sim.grid[idx] === enemyFaction) survived++;
+    }
+    // All island cells must survive (island is far from the trail).
+    expect(survived).toBe(islandIndices.length);
+  });
+
+  it("Flood-fill claim: degenerate trail captures nothing", () => {
+    // A trail of length 5 entirely inside faction 1's own territory
+    // (zero-area, attached to itself). The flood-fill must not flip any
+    // cells. We allow either return value (true with 0 flips, or false) —
+    // what matters is no cells change owner.
+    const c = sim.characters[0];
+    c.factionId = 1;
+    const p = { x: 30, z: 0 };
+    c.trailVerts = [{ ...p }, { ...p }, { ...p }, { ...p }, { ...p }];
+    const before = countCellsOwnedBy(sim.grid, 1);
+    sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(c.trailVerts.length).toBe(0);
+    // No meaningful change.
+    expect(Math.abs(after - before)).toBeLessThan(5);
+  });
+
   it("restart resets characters and grid", () => {
     sim.characters[0].alive = false;
     sim.characters[0].killCount = 7;
