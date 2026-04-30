@@ -8,6 +8,7 @@ import {
   ARENA_RADIUS, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
   GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
 } from "./sim/constants.js";
+import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./portals.js";
 
 // Renderer-only tuning (client-side; not part of shared simulation)
 const CAMERA_HEIGHT = 34;
@@ -1250,6 +1251,19 @@ class Game {
     this.camera.lookAt(playerSpawn.x, 0, playerSpawn.z);
     this.camCurrent.set(playerSpawn.x, 0, playerSpawn.z);
     this.camTarget.copy(this.camCurrent);
+
+    // Vibe Jam 2026 portals — webring (https://vibej.am/2026#portals).
+    // Exit portal (green) always visible; start portal (red) only if the
+    // player arrived via ?portal=true. Lives in its own scene group so it's
+    // visually distinct from the territory plane.
+    this.portalLayer = new THREE.Group();
+    this.scene.add(this.portalLayer);
+    initVibeJamPortals({
+      scene: this.portalLayer,
+      getPlayer: () => this.player?.group ?? null,
+      spawnPoint:   { x: -ARENA_RADIUS + 8, y: 1, z: 0 }, // start (red) — west edge
+      exitPosition: { x:  ARENA_RADIUS - 8, y: 1, z: 0 }, // exit (green) — east edge
+    });
   }
 
   tick(dt) {
@@ -1611,6 +1625,7 @@ class Game {
   }
 
   render() {
+    if (this.started) animateVibeJamPortals();
     this.renderer.render(this.scene, this.camera);
   }
 }
@@ -1662,3 +1677,30 @@ document.getElementById("online-btn").addEventListener("click", () => {
 document.getElementById("name-input").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("solo-btn").click();
 });
+
+// Vibe Jam 2026 — instant load when arriving through the webring.
+// If ?portal=true is set, skip the title/name screen and auto-start in Solo
+// mode (multiplayer's server-connect would add a perceptible startup delay).
+// We also nudge the player to spawn at the start (red) portal so they appear
+// to "walk out of it".
+if (arrivedViaPortal) {
+  const portalQS = new URLSearchParams(window.location.search);
+  const portalName = (portalQS.get("username") || "Player").slice(0, 16);
+  document.getElementById("name-entry").classList.add("hidden");
+  game.startSolo(portalName);
+  // After Game.start() runs synchronously above, this.player exists. Move the
+  // player to the start-portal location so the spawn matches the red portal.
+  const startX = -ARENA_RADIUS + 8;
+  const startZ = 0;
+  if (game.player?.simChar) {
+    game.player.simChar.pos.x = startX;
+    game.player.simChar.pos.z = startZ;
+    game.player.pos.set(startX, 0, startZ);
+    game.player.group.position.set(startX, game.player.group.position.y, startZ);
+    // Recenter camera on the new spawn so the player isn't off-screen.
+    game.camCurrent.set(startX, 0, startZ);
+    game.camTarget.copy(game.camCurrent);
+    game.camera.position.set(startX, CAMERA_HEIGHT, startZ + CAMERA_Z_OFFSET);
+    game.camera.lookAt(startX, 0, startZ);
+  }
+}
