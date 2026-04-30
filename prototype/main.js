@@ -296,7 +296,7 @@ const territoryGrid = {
         });
 
         // Simplify with RDP
-        const simplified = simplifyContour(worldLoop, 0.06);
+        const simplified = simplifyContour(worldLoop, 0.15);
         if (simplified.length >= 3) {
           loops.push(simplified);
         }
@@ -690,7 +690,7 @@ class Character {
         dlog("EXIT", "left territory", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2) });
       }
       this.wasOutside = true;
-    } else if (this.wasOutside && this.trailVerts.length > 2) {
+    } else if (this.wasOutside && this.trailVerts.length >= 5) {
       if (this.isPlayer) {
         dlog("ENTER", "re-entered territory, will claim", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2), trailLen: this.trailVerts.length });
       }
@@ -708,8 +708,8 @@ class Character {
   }
 
   _claim() {
-    if (this.trailVerts.length < 3) {
-      dlog("CLAIM", `${this.name}: aborted, trail too short`, { trailLen: this.trailVerts.length });
+    if (this.trailVerts.length < 5) {
+      dlog("CLAIM", `${this.name}: aborted, trail too short (need >= 5)`, { trailLen: this.trailVerts.length });
       this._clearTrail(); return;
     }
     const trail = this.trailVerts;
@@ -771,13 +771,21 @@ class Character {
       }
     }
 
+    const trailPolyArea = polyArea(trailPoly);
     dlog("CLAIM", `${this.name}: trail polygon built`, {
       trailPolyLen: trailPoly.length,
-      polyArea: polyArea(trailPoly).toFixed(2)
+      polyArea: trailPolyArea.toFixed(2)
     });
 
     if (trailPoly.length < 3) {
       dlog("CLAIM", `${this.name}: aborted, trail polygon too small`, { trailPolyLen: trailPoly.length });
+      this._clearTrail();
+      return;
+    }
+
+    // Reject micro-claims: area too small to be meaningful
+    if (trailPolyArea < 1.0) {
+      dlog("CLAIM", `${this.name}: aborted, micro-claim area too small`, { polyArea: trailPolyArea.toFixed(4) });
       this._clearTrail();
       return;
     }
