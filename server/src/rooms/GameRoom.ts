@@ -80,6 +80,12 @@ export class GameRoom extends Room<GameStateSchema> {
     this.onMessage("hello", (client, msg: { name?: string; playerToken?: string | null }) => {
       this.handleHello(client, msg.name ?? "Player", msg.playerToken ?? null);
     });
+
+    this.onMessage("input", (client, msg: { dirX: number; dirZ: number }) => {
+      const meta = this.clientMeta.get(client.sessionId);
+      if (!meta || meta.charId === null) return;
+      this.sim.setTargetDir(meta.charId, msg.dirX, msg.dirZ);
+    });
   }
 
   private handleHello(client: Client, name: string, playerToken: string | null) {

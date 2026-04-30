@@ -610,6 +610,9 @@ class Game {
     this.mode = "solo";
     this.playerName = "";
     this.killedBy = "";
+    // Input throttling: send to server at 20 Hz (matches server tick rate).
+    this._inputSendAccum = 0;
+    this._inputSendInterval = 1 / 20;
     // Authoritative simulation. Created here so event hooks can be attached
     // even before start() is called.
     this.sim = new Simulation();
@@ -808,6 +811,9 @@ class Game {
     this.mp.onYourCharId = (charId) => {
       this.myCharId = charId;
       console.log(`[online] my char id is ${charId}`);
+      // If renderer is already initialized, bind now; otherwise binding will
+      // happen at the end of _initRendererFromOnlineState.
+      this._bindOnlinePlayer();
     };
 
     try {
@@ -939,6 +945,22 @@ class Game {
 
     this.started = true;
     console.log(`[online] renderer initialized with ${this.characters.length} characters`);
+
+    // If yourCharId already arrived, bind the local player now.
+    this._bindOnlinePlayer();
+  }
+
+  // Bind the local human player to the renderer Character whose simChar.id
+  // matches this.myCharId. Called both when myCharId arrives and after the
+  // online renderer state initializes — whichever happens last triggers the
+  // actual binding. Safe to call multiple times.
+  _bindOnlinePlayer() {
+    if (this.myCharId == null || !this.characters || this.characters.length === 0) return;
+    const rChar = this.characters.find(c => c.simChar?.id === this.myCharId);
+    if (!rChar) return;
+    rChar.isPlayer = true;
+    this.player = rChar;
+    console.log(`[online] bound player to char ${this.myCharId}`);
   }
 
   start(name) {
@@ -1007,8 +1029,8 @@ class Game {
   tick(dt) {
     if (!this.started) return;
 
-    // ---- Player input: only meaningful in solo mode (Task 18 wires online). ----
-    if (this.mode === "solo" && this.player && this.player.alive && this.player.isPlayer) {
+    // ---- Player input: collect WASD + mouse → player.targetDir in any mode. ----
+    if (this.player && this.player.alive && this.player.isPlayer) {
       let kx = 0, kz = 0;
       if (this.keysDown.has("w") || this.keysDown.has("arrowup")) kz -= 1;
       if (this.keysDown.has("s") || this.keysDown.has("arrowdown")) kz += 1;
@@ -1028,7 +1050,16 @@ class Game {
           }
         }
       }
-      this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
+      if (this.mode === "solo") {
+        this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
+      } else if (this.mode === "online" && this.mp) {
+        // Throttle send to 20 Hz (server tick rate).
+        this._inputSendAccum += dt;
+        if (this._inputSendAccum >= this._inputSendInterval) {
+          this._inputSendAccum = 0;
+          this.mp.sendInput(this.player.targetDir.x, this.player.targetDir.z);
+        }
+      }
     }
 
     // Bot AI lives entirely inside sim.tick() now (sim/BotAI.js).
