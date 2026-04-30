@@ -1,15 +1,10 @@
 import * as THREE from "three";
 
-import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
-import { ScoreTracker } from "./sim/scoring.js";
-import { MatchManager } from "./sim/match.js";
+import { FACTION_COUNT, FACTION_COLORS } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
 import {
-  ARENA_RADIUS, MIN_POINT_DIST, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
-  TRAIL_KILL_DIST, SELF_TRAIL_SKIP, BOT_COUNT,
-  RESPAWN_DELAY, INVULN_TIME,
-  CONTINUOUS_LAND, BOT_NAMES,
+  ARENA_RADIUS, PLAYER_SPEED, BOT_SPEED,
   GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
 } from "./sim/constants.js";
 
@@ -412,11 +407,6 @@ function closestIdx(verts, target) {
   }
   return best;
 }
-function dist2D(a, b) {
-  const dx = a.x-b.x, dz = a.z-b.z;
-  return Math.sqrt(dx*dx + dz*dz);
-}
-
 // ===================== CHARACTER (RENDERER WRAPPER) =====================
 // Renderer-side Character. Visual mesh + trail mesh + label.
 // Authoritative simulation state lives on this.simChar (Simulation's plain-data
@@ -523,10 +513,6 @@ class Character {
     this.scene.add(this.trailMesh);
   }
 
-  insideOwn(x, z) {
-    return territoryGrid.getOwner(x, z) === this.factionId;
-  }
-
   // Renderer-only sync: pull authoritative pos/dir from simChar, update mesh.
   // All simulation work (steer, move, trail, claim, kills) is owned by sim.tick.
   syncVisuals() {
@@ -567,9 +553,6 @@ class Character {
     this.botPhase = "idle";
   }
 
-  getAreaPct() {
-    return (territoryGrid.countCells(this.factionId) / territoryGrid.totalArenaCells) * 100;
-  }
 }
 
 // ===================== GAME =====================
