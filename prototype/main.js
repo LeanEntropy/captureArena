@@ -628,6 +628,20 @@ class Character {
       if (this._lastSchemaPosX === null
         || schemaX !== this._lastSchemaPosX
         || schemaZ !== this._lastSchemaPosZ) {
+        // Detect a large pos jump (> 2 world units between consecutive server
+        // snapshots) — this is a server-side discontinuity (death, cutoff,
+        // reassign) that should snap, not interpolate. The matching teleport
+        // event may not have arrived yet (arrives via separate broadcast on
+        // the same WS connection but processed independently from state
+        // patches). Clear the buffer so we snap to the new pos immediately
+        // rather than sliding visibly for 100ms.
+        if (this._lastSchemaPosX !== null) {
+          const dx = schemaX - this._lastSchemaPosX;
+          const dz = schemaZ - this._lastSchemaPosZ;
+          if (dx * dx + dz * dz > 4) {
+            this.posBuffer.length = 0;
+          }
+        }
         this.posBuffer.push({
           t: now,
           x: schemaX,
@@ -1476,6 +1490,11 @@ class Game {
     const ackedSeq = sc._schemaChar?.lastAppliedInputSeq ?? 0;
 
     if (ackedSeq > this._lastAckedSeq) {
+      // Snapshot pre-reconciliation pos so we can detect a large jump and
+      // snap the visual rather than lerping (which would slide for 100+ms).
+      const prevPosX = this.predicted.posX;
+      const prevPosZ = this.predicted.posZ;
+
       // Server has confirmed up to ackedSeq. Reset to server's authoritative
       // pos AT that seq, then replay any inputs after it.
       this.predicted.posX = sc.pos.x;
@@ -1490,14 +1509,34 @@ class Game {
       // Replay each pending input. Each represents one server-tick worth of
       // simulation, so use the server tick interval as dt for the integration.
       // (Slight imprecision OK — the next ack will correct it.)
+      // Cap the replay length: if the inputBuffer has accumulated many
+      // entries (server stall / reconnect window), replaying all of them
+      // produces a huge predicted jump. Cap at 10 ticks (~333ms of motion),
+      // which is much longer than any real ack latency we care about.
       const tickDt = this._inputSendInterval; // 1/30
       const buf = this.mp ? this.mp.inputBuffer : [];
-      for (let i = 0; i < buf.length; i++) {
+      const REPLAY_CAP = 10;
+      const replayStart = Math.max(0, buf.length - REPLAY_CAP);
+      for (let i = replayStart; i < buf.length; i++) {
         const inp = buf[i];
         this._integrateInput(this.predicted, inp.dirX, inp.dirZ, tickDt);
       }
 
       this._lastAckedSeq = ackedSeq;
+
+      // If the predicted-state reset jumped by an unreasonable amount,
+      // snap the visual mesh instead of lerping. This prevents a long
+      // visible slide after a server-side discontinuity (cutoff death's
+      // hold-then-respawn before the teleport event arrives, a delayed
+      // teleport broadcast, or a server tick stall that broadcasts a big
+      // pos delta in a single state patch).
+      const jumpSq =
+        (this.predicted.posX - prevPosX) * (this.predicted.posX - prevPosX) +
+        (this.predicted.posZ - prevPosZ) * (this.predicted.posZ - prevPosZ);
+      // 2 world units = ~6 cells = noticeable jump that shouldn't lerp.
+      if (jumpSq > 4 && this.player) {
+        this.player._snapNextFrame = true;
+      }
     }
 
     // Forward-extrapolate predicted by dt with the latest targetDir so the

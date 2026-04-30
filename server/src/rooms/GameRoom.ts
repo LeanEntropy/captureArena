@@ -216,6 +216,19 @@ export class GameRoom extends Room<GameStateSchema> {
 
   private tick(dt: number) {
     const tickStart = performance.now();
+    // Clamp dt to a sane upper bound. setSimulationInterval normally fires
+    // every TICK_MS=33ms (dt≈0.033s), but if the server stalls (GC pause,
+    // expensive claim, host load spike), the next tick's dt can balloon to
+    // hundreds of ms. An unclamped dt × PLAYER_SPEED produces a single-tick
+    // pos jump of >1 world unit, which broadcasts as a visible mid-movement
+    // teleport on the client. Cap dt so the worst-case is <1 cell of jump.
+    // 60ms (≈ 2× nominal tick) preserves smooth motion for routine scheduling
+    // jitter while bounding the visible damage from real stalls.
+    const MAX_DT = 0.06;
+    if (dt > MAX_DT) {
+      console.warn(`[GameRoom] tick dt clamp: ${(dt * 1000).toFixed(1)}ms → ${(MAX_DT * 1000).toFixed(0)}ms`);
+      dt = MAX_DT;
+    }
     try {
       this._tickInner(dt);
     } finally {

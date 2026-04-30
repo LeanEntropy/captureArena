@@ -393,6 +393,86 @@ describe("Simulation", () => {
     expect(survived).toBe(islandIndices.length);
   });
 
+  it("Flood-fill claim: parallel-section trail at 4-cell spacing fills enclosed region", () => {
+    // Regression: an out-and-back trail with parallel sections sitting
+    // 4 cells apart (≈0.52 world units at CELL_SIZE 0.13) used to leave a
+    // 1-cell gap in a 3-cell-wide wall stamp, letting the BFS leak through.
+    // The visible result was a "trail-shaped strip with no fill" through
+    // enemy territory.
+    //
+    // The fix retries the BFS with progressively thicker walls (radius 1, 3,
+    // 5) so parallel sections at any reasonable spacing seal correctly. With
+    // a 7-cell-wide wall (radius 3) walls overlap at 4-cell spacing,
+    // sealing the loop and capturing the inner ribbon properly.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 boundary cell adjacent to an enemy faction.
+    let bx = 0, bz = 0, dirX = 0, dirZ = 0, found = false;
+    outer:
+    for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const checks = [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+        for (const ch of checks) {
+          const nx = gx + ch.dx, ny = gy + ch.dy;
+          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+          const nv = sim.grid[ny * GRID_SIZE + nx];
+          if (nv > 0 && nv < 6 && nv !== 1) {
+            const cellSize = 133.78 / GRID_SIZE;
+            bx = -66.89 + (gx + 0.5) * cellSize;
+            bz = -66.89 + (gy + 0.5) * cellSize;
+            dirX = ch.dx; dirZ = ch.dy;
+            found = true;
+            break outer;
+          }
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    const cellSize = 133.78 / GRID_SIZE;
+    const ux = dirX, uz = dirZ;
+    const px = -uz, pz = ux;
+    // Single out-and-back lobe with parallel sections 4 cells apart.
+    const trail = [];
+    const DEPTH = 8;
+    const STEP_OUT = cellSize * 4;
+    trail.push({ x: bx, z: bz });
+    for (let s = 1; s <= 32; s++) {
+      const r = (s / 32) * DEPTH;
+      trail.push({ x: bx + ux * r, z: bz + uz * r });
+    }
+    trail.push({ x: bx + ux * DEPTH + px * STEP_OUT, z: bz + uz * DEPTH + pz * STEP_OUT });
+    for (let s = 32; s >= 1; s--) {
+      const r = (s / 32) * DEPTH;
+      trail.push({ x: bx + ux * r + px * STEP_OUT, z: bz + uz * r + pz * STEP_OUT });
+    }
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    const gain = after - before;
+
+    // With the leak, only ~440 trail-wall cells flip (= 1.8× polygon area).
+    // With the fix, the BFS retry seals the loop and captures the entire
+    // ~6-cell-wide ribbon (≈ 1000+ cells = 4× polygon area). Threshold of
+    // 800 cleanly separates the two outcomes.
+    expect(gain).toBeGreaterThan(800);
+
+    // Sample a point in the geometric center of the lobe — it should be
+    // claimer-owned (filled, not "outside"). With the leak, this cell stays
+    // enemy-owned because the BFS reaches it from the bbox perimeter.
+    const midX = bx + ux * (DEPTH * 0.5) + px * (STEP_OUT * 0.5);
+    const midZ = bz + uz * (DEPTH * 0.5) + pz * (STEP_OUT * 0.5);
+    const midGX = Math.floor((midX - (-66.89)) / cellSize);
+    const midGY = Math.floor((midZ - (-66.89)) / cellSize);
+    expect(sim.grid[midGY * GRID_SIZE + midGX]).toBe(1);
+  });
+
   it("Flood-fill claim: degenerate trail captures nothing", () => {
     // A trail of length 5 entirely inside faction 1's own territory
     // (zero-area, attached to itself). The flood-fill must not flip any
