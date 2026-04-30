@@ -40,6 +40,7 @@ export class Character {
     this.invulnTimer = 0;
     this.wasOutside = false;
     this.botWaypoints = [];
+    this.botLoopCount = 0;
   }
 
   respawn(x, z) {
@@ -50,5 +51,6 @@ export class Character {
     this.trailVerts = [];
     this.wasOutside = false;
     this.botWaypoints = [];
+    this.botLoopCount = 0;
   }
 }

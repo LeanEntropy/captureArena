@@ -1,5 +1,5 @@
 import {
-  GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL,
+  GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS,
 } from "./constants.js";
 
 // ---- Local geometry helpers (ported from prototype/main.js) ----
@@ -263,7 +263,7 @@ export class BotAI {
     // Convert boundary {x, y} → {x, z} for closestIdx.
     const boundaryV = boundary.map(p => ({ x: p.x, z: p.y }));
 
-    const aggroChance = bot.botAggroChance ?? 0.25;
+    const aggroChance = bot.botAggroChance;
     const doAggro = Math.random() < aggroChance;
     let outAngle;
 

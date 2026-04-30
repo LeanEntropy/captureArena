@@ -381,32 +381,6 @@ function simplifyContour(points, epsilon) {
   return result.length >= 3 ? result : points;
 }
 
-// ===================== GEOMETRY HELPERS =====================
-function pointInPoly(px, py, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
-    if (((yi > py) !== (yj > py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside = !inside;
-  }
-  return inside;
-}
-function polyArea(pts) {
-  let a = 0;
-  for (let i = 0, n = pts.length; i < n; i++) {
-    const j = (i+1) % n;
-    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-  }
-  return Math.abs(a / 2);
-}
-function closestIdx(verts, target) {
-  let best = 0, bestD = Infinity;
-  for (let i = 0; i < verts.length; i++) {
-    const dx = verts[i].x-target.x, dz = verts[i].z-target.z;
-    const d = dx*dx + dz*dz;
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  return best;
-}
 // ===================== CHARACTER (RENDERER WRAPPER) =====================
 // Renderer-side Character. Visual mesh + trail mesh + label.
 // Authoritative simulation state lives on this.simChar (Simulation's plain-data
