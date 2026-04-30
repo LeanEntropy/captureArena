@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@colyseus/core": "0.16.24",
+    "@colyseus/monitor": "^0.17.8",
     "@colyseus/schema": "^3.0.0",
     "@colyseus/ws-transport": "^0.16.5",
     "@template/shared": "workspace:*",

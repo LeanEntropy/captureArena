@@ -18,6 +18,14 @@ const app = express();
 app.use(express.static(PROTOTYPE_DIR));
 app.get("/health", (_req, res) => { res.send("ok"); });
 
+// Colyseus Monitor — development only. Access at http://localhost:2567/colyseus
+// Gives a live web UI: active rooms, connected clients, full room state.
+if (process.env.NODE_ENV !== "production") {
+  const { monitor } = await import("@colyseus/monitor");
+  app.use("/colyseus", monitor());
+  console.log("[Server] Colyseus Monitor: http://localhost:2567/colyseus");
+}
+
 const httpServer = createServer(app);
 
 const gameServer = new Server({
