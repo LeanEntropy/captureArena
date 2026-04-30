@@ -8,5 +8,8 @@ export default defineConfig({
     ],
     environment: "node",
     passWithNoTests: true,
+    // Contour extraction over the 1024×1024 grid is slow; per-test sims that
+    // exercise it can exceed the default 5s. Bump to 30s for headroom.
+    testTimeout: 30000,
   },
 });

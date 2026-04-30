@@ -10,6 +10,7 @@ import { MatchManager } from "./match.js";
 import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
 import { BotAI } from "./BotAI.js";
+import { extractContours, polyArea, closestIdx } from "./grid_geom.js";
 
 export class Simulation {
   constructor({ seed = 1 } = {}) {
@@ -385,8 +386,105 @@ export class Simulation {
       if (this.grid[i] === char.factionId) cellsBefore++;
     }
 
-    // Build {x, y} polygon (y = z) — stampPolygon's expected format.
-    const trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
+    // Close the trail through the claimer's existing territory boundary so the
+    // resulting polygon fills the enclosed region (Paper.io style) rather than
+    // stamping the raw out-and-back trail (which produces sliver/chevron
+    // artifacts).  Faithful port of the original prototype/main.js
+    // Character._claim() algorithm.
+    const contours = extractContours(this.grid, char.factionId);
+    if (contours.length === 0) {
+      // No existing territory to close against — drop the trail.
+      char.trailVerts = [];
+      return false;
+    }
+
+    contours.sort((a, b) => polyArea(b) - polyArea(a));
+    const boundary = contours[0];
+
+    // contour points are {x, y} in world coords (y = z); convert to {x, z} so
+    // closestIdx can compare directly against trail vertices ({x, z}).
+    const boundaryXZ = boundary.map(p => ({ x: p.x, z: p.y }));
+
+    const si = closestIdx(boundaryXZ, trail[0]);
+    const ei = closestIdx(boundaryXZ, trail[trail.length - 1]);
+
+    // Faithful port of prototype/main.js Character._claim() (commit 7b27aee):
+    // build TWO candidate merged-territory polygons and pick the one with the
+    // larger area. The smaller-area candidate would be the sliver/chevron we
+    // are explicitly trying to avoid.
+    //
+    //   When si != ei:
+    //     Candidate A: boundary arc (ei → si, forward) + trail forward
+    //     Candidate B: boundary arc (si → ei, forward) + trail reversed
+    //
+    //   When si == ei:
+    //     The trail forms a closed loop anchored at one boundary point.
+    //     Insert the trail into the boundary at that point — try both trail
+    //     orientations and keep the larger.
+    //
+    // All polygons are arrays of {x, y} where y = z (stampPolygon's format).
+    const trailFwd = trail.map(t => ({ x: t.x, y: t.z }));
+    const trailRev = [];
+    for (let j = trail.length - 1; j >= 0; j--) {
+      trailRev.push({ x: trail[j].x, y: trail[j].z });
+    }
+
+    let candA, candB;
+    if (si === ei) {
+      // Insert trail (forward / reversed) into the boundary at index si.
+      candA = [];
+      for (let k = 0; k <= si; k++) candA.push({ x: boundary[k].x, y: boundary[k].y });
+      for (const t of trailFwd) candA.push(t);
+      for (let k = si + 1; k < boundary.length; k++) candA.push({ x: boundary[k].x, y: boundary[k].y });
+
+      candB = [];
+      for (let k = 0; k <= si; k++) candB.push({ x: boundary[k].x, y: boundary[k].y });
+      for (const t of trailRev) candB.push(t);
+      for (let k = si + 1; k < boundary.length; k++) candB.push({ x: boundary[k].x, y: boundary[k].y });
+    } else {
+      const n = boundary.length;
+      // Arc A: ei → si walking forward
+      const arcA = [];
+      for (let i = ei; ; i = (i + 1) % n) {
+        arcA.push({ x: boundary[i].x, y: boundary[i].y });
+        if (i === si) break;
+        if (arcA.length > n) break;
+      }
+      // Arc B: si → ei walking forward
+      const arcB = [];
+      for (let i = si; ; i = (i + 1) % n) {
+        arcB.push({ x: boundary[i].x, y: boundary[i].y });
+        if (i === ei) break;
+        if (arcB.length > n) break;
+      }
+
+      // Candidate A: arcA + trail forward
+      candA = arcA.slice();
+      for (const t of trailFwd) candA.push(t);
+
+      // Candidate B: arcB + trail reversed
+      candB = arcB.slice();
+      for (const t of trailRev) candB.push(t);
+    }
+
+    const areaA = polyArea(candA);
+    const areaB = polyArea(candB);
+    const trailPoly = areaA > areaB ? candA : candB;
+    const newArea = Math.max(areaA, areaB);
+
+    // Safety: never shrink territory. If both candidates somehow have area
+    // smaller than the current contour (degenerate or self-intersecting trail),
+    // abort.  Faithful port of main.js's "would shrink territory" guard.
+    const prevArea = polyArea(boundary);
+    if (newArea < prevArea) {
+      char.trailVerts = [];
+      return false;
+    }
+
+    if (trailPoly.length < 3) {
+      char.trailVerts = [];
+      return false;
+    }
 
     const overwritten = this._stampPolygon(trailPoly, char.factionId);
 

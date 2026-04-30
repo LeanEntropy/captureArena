@@ -79,24 +79,98 @@ describe("Simulation", () => {
     expect(c.wasOutside).toBe(true);
   });
 
-  it("claim with a triangle trail fills enclosed cells with the faction id", () => {
-    const c = sim.characters[0]; // faction 1
-    c.setPos(0, 0);
+  it("claim with a zero-length trail (single repeated vertex) does not flip cells", () => {
+    // A trail of identical points has zero enclosed area; the contour-arc
+    // closure picks the same boundary index for both endpoints (si === ei)
+    // and the resulting polygon has no extra interior. Faction 1's cell count
+    // must not change meaningfully.
+    const c = sim.characters[0];
     c.factionId = 1;
-    c.trailVerts = [
-      { x: -1.0, z: -1.0 },
-      { x:  1.0, z: -1.0 },
-      { x:  1.0, z:  1.0 },
-      { x: -1.0, z:  1.0 },
-      { x: -0.5, z:  0.0 }, // 5+ verts required
-    ];
+    // 5 identical points (zero-area trail) at a point safely inside faction 1.
+    const p = { x: 30, z: 0 };
+    c.trailVerts = [{ ...p }, { ...p }, { ...p }, { ...p }, { ...p }];
+    const before = countCellsOwnedBy(sim.grid, 1);
+    sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    // Trail must always be cleared.
+    expect(c.trailVerts.length).toBe(0);
+    // No-op zero-area trail must not produce a sliver. With identical points
+    // the contour arc traverses the entire boundary forward and the result is
+    // essentially the existing territory (modulo tiny rasterization rounding).
+    expect(Math.abs(after - before)).toBeLessThan(20);
+  });
+
+  it("claim closes an out-and-back trail through the territory boundary", () => {
+    // Regression test for the chevron/sliver artifact: a real-world claim trail
+    // is roughly out-and-back (the character leaves territory, loops around,
+    // returns near where it left). Stamping the raw trail as a polygon would
+    // produce a thin sliver — instead the algorithm must close it through the
+    // claimer's own territory contour.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 cell on the boundary (i.e. one of its neighbors is
+    // not faction-1). This is a place where a trail can plausibly start/end.
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        // Has a non-faction-1, non-sentinel neighbor?
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          // Found a faction-1 boundary cell with a non-sentinel non-self
+          // neighbor — convert to world coords.
+          const cellSize = 133.78 / GRID_SIZE;
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    // Build an out-and-back trail starting at the boundary, looping into the
+    // adjacent enemy/neutral cells, and returning near the start.
+    // The trail end should be a couple of vertices apart from the start so the
+    // arc-closure code picks a non-trivial arc through the claimer's contour.
+    const trail = [];
+    const lobeRadius = 4;
+    const steps = 12;
+    // Direction from origin outward through the boundary point — that's the
+    // direction to push the lobe so it goes into enemy territory.
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    // Perpendicular direction (rotate 90°)
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      // Half-circle lobe outward from the boundary
+      const angle = Math.PI * t;
+      const r = lobeRadius;
+      const out = (1 - Math.cos(angle));   // 0 -> 2
+      const side = Math.sin(angle);        // 0 -> 1 -> 0
+      trail.push({
+        x: boundaryWX + ux * r * out * 0.5 + px * r * side,
+        z: boundaryWZ + uz * r * out * 0.5 + pz * r * side,
+      });
+    }
+    c.trailVerts = trail;
+
     const before = countCellsOwnedBy(sim.grid, 1);
     const ok = sim.claim(c);
     const after = countCellsOwnedBy(sim.grid, 1);
+
     expect(ok).toBe(true);
     expect(c.trailVerts.length).toBe(0);
-    // Claim must have gained cells — the trail covers neutral/enemy area.
-    expect(after).toBeGreaterThan(before);
+    // The claim must have meaningfully grown the territory (not produced a
+    // sliver). At CELL_SIZE ≈ 0.13, a 4-unit lobe should sweep >>100 cells.
+    expect(after - before).toBeGreaterThan(100);
   });
 
   it("claim with too-short trail returns false (no-op)", () => {
