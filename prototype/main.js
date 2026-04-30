@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 54.6;
-const CAMERA_Z_OFFSET = 25.48;
+const CAMERA_HEIGHT = 43.68;
+const CAMERA_Z_OFFSET = 20.38;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
