@@ -44,9 +44,53 @@ export class GameRoom extends Room<GameStateSchema> {
     this.sim = new Simulation();
     this.sim.start();
 
-    // Wire sim event hooks → broadcast to clients
+    // Wire sim event hooks → broadcast to clients.
+    //
+    // Two paths for grid-sync:
+    //   - claimResult: server-authoritative cell-diff. Client applies the diff
+    //     directly to its grid copy without re-running the algorithm. This is
+    //     the primary path; clients always trust the server and skip any local
+    //     algorithmic re-run.
+    //   - claim: legacy trail-only event. Still broadcast so the renderer can
+    //     clear the trail mesh by charId; no longer used for grid changes.
+    //
+    // For very large claims the cell-diff can grow big; fall back to broadcasting
+    // only the trail (and let clients re-run the algorithm) above this threshold.
+    const CLAIM_DIFF_MAX_CELLS = 5000;
+    this.sim.onClaimResult = (
+      charId: number,
+      factionId: number,
+      changedCells: number[],
+      _trailPoints: number[],
+    ) => {
+      // Telemetry: only log slow claims (>10ms) — under normal load claims
+      // run in 2-5ms and don't need a log line each.
+      const ms = (this.sim as any)._lastClaimMs ?? 0;
+      if (ms > 10) {
+        console.log(`[claim slow] charId=${charId} faction=${factionId} cells=${changedCells.length} ms=${ms.toFixed(1)}`);
+      }
+      if (changedCells.length === 0) return;
+      if (changedCells.length <= CLAIM_DIFF_MAX_CELLS) {
+        // Plain number[] — Colyseus encodes via msgpack. For ~200-cell claims
+        // this is ~600B over the wire, far cheaper than ~50ms client compute.
+        this.broadcast("claimResult", { charId, factionId, cells: changedCells });
+      } else {
+        // Large claim: leave grid sync to the legacy claim event (trail replay).
+        // Mark this so onClaim broadcasts the trail.
+        (this.sim as any)._lastClaimWasLarge = true;
+      }
+    };
     this.sim.onClaim = (charId: number, trailPoints: number[], factionId: number) => {
-      this.broadcast("claim", { charId, trailPoints, factionId });
+      const isLarge = (this.sim as any)._lastClaimWasLarge === true;
+      (this.sim as any)._lastClaimWasLarge = false;
+      // Always broadcast claim so the renderer can clear the trail mesh.
+      // For LARGE claims, include trailPoints (clients will replay the algorithm).
+      // For small claims, omit trailPoints (claimResult already synced the grid).
+      if (isLarge) {
+        this.broadcast("claim", { charId, trailPoints, factionId, replayTrail: true });
+      } else {
+        this.broadcast("claim", { charId, factionId, replayTrail: false });
+      }
     };
     this.sim.onHeal = (changedCells: number[]) => {
       this.broadcast("heal", { changedCells });
@@ -136,6 +180,24 @@ export class GameRoom extends Room<GameStateSchema> {
   }
 
   private tick(dt: number) {
+    const tickStart = performance.now();
+    try {
+      this._tickInner(dt);
+    } finally {
+      const elapsed = performance.now() - tickStart;
+      if (elapsed > 50) {
+        // Tick exceeded the 50ms budget. Log the simulation's phase breakdown
+        // so we can attribute the cost. Should be rare (claim() and per-tick
+        // grid scans are both bounded; the once-per-second territoryPcts scan
+        // is the only remaining ~50ms outlier).
+        const claimMs = ((this.sim as any)._lastClaimMs ?? 0);
+        const phaseLog = (this.sim as any)._lastTickPhases ?? "";
+        console.warn(`[GameRoom] tick OVER BUDGET: ${elapsed.toFixed(1)}ms (claim=${claimMs.toFixed(1)}ms ${phaseLog})`);
+      }
+    }
+  }
+
+  private _tickInner(dt: number) {
     // Round-rolling: handle intermission countdown
     if (this.state.phase === "intermission") {
       this.intermissionRemaining = Math.max(0, this.intermissionRemaining - dt);

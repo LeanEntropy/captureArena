@@ -410,6 +410,138 @@ describe("Simulation", () => {
     expect(Math.abs(after - before)).toBeLessThan(5);
   });
 
+  it("Flood-fill claim: onClaimResult fires with cell-diff matching the cells flipped to factionId", () => {
+    // The cell-diff hook must contain every cell that changed owner during
+    // the claim, and ONLY those cells. Reconstructing the same grid by
+    // applying the diff to a snapshot must yield the post-claim grid.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 boundary cell.
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          const cellSize = 133.78 / GRID_SIZE;
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    const trail = [];
+    const lobeRadius = 4;
+    const steps = 12;
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const angle = Math.PI * t;
+      const r = lobeRadius;
+      const out = (1 - Math.cos(angle));
+      const side = Math.sin(angle);
+      trail.push({
+        x: boundaryWX + ux * r * out * 0.5 + px * r * side,
+        z: boundaryWZ + uz * r * out * 0.5 + pz * r * side,
+      });
+    }
+    c.trailVerts = trail;
+
+    // Capture the cell-diff via the new hook.
+    let resultCharId = -1;
+    let resultFactionId = -1;
+    let resultCells = null;
+    sim.onClaimResult = (cid, fid, cells) => {
+      resultCharId = cid;
+      resultFactionId = fid;
+      resultCells = cells.slice();
+    };
+
+    // Snapshot the grid pre-claim.
+    const preGrid = new Uint8Array(sim.grid);
+
+    const ok = sim.claim(c);
+    expect(ok).toBe(true);
+    expect(resultCharId).toBe(c.id);
+    expect(resultFactionId).toBe(1);
+    expect(Array.isArray(resultCells)).toBe(true);
+    expect(resultCells.length).toBeGreaterThan(0);
+
+    // Apply the diff to the snapshot and verify it matches sim.grid.
+    for (const idx of resultCells) {
+      preGrid[idx] = 1;
+    }
+    let mismatches = 0;
+    for (let i = 0; i < sim.grid.length; i++) {
+      if (sim.grid[i] !== preGrid[i]) mismatches++;
+    }
+    expect(mismatches).toBe(0);
+  });
+
+  it("Flood-fill claim: completes well under one server tick (50ms) for a typical lobe", () => {
+    // Performance regression guard. With the bbox-bounded BFS, a typical
+    // claim should be <10ms; a 50ms ceiling leaves ample slack for slow CI.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          const cellSize = 133.78 / GRID_SIZE;
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    expect(found).toBe(true);
+
+    const trail = [];
+    const lobeRadius = 4;
+    const steps = 12;
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const angle = Math.PI * t;
+      const r = lobeRadius;
+      const out = (1 - Math.cos(angle));
+      const side = Math.sin(angle);
+      trail.push({
+        x: boundaryWX + ux * r * out * 0.5 + px * r * side,
+        z: boundaryWZ + uz * r * out * 0.5 + pz * r * side,
+      });
+    }
+    c.trailVerts = trail;
+
+    const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const ok = sim.claim(c);
+    const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    expect(ok).toBe(true);
+    expect(t1 - t0).toBeLessThan(50);
+  });
+
   it("restart resets characters and grid", () => {
     sim.characters[0].alive = false;
     sim.characters[0].killCount = 7;

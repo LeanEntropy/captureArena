@@ -10,7 +10,8 @@ export class MultiplayerClient {
 
     // Event hooks (set by host renderer)
     this.onState = null;           // (state) => void
-    this.onClaim = null;           // (charId, trailPoints, factionId) => void
+    this.onClaim = null;           // (charId, factionId, trailPoints?, replayTrail) => void
+    this.onClaimResult = null;     // (charId, factionId, cells:Int32Array) => void
     this.onHeal = null;            // (changedCells) => void
     this.onTrailVertex = null;     // (charId, x, z) => void
     this.onKill = null;            // (killerId, victimId) => void
@@ -37,8 +38,11 @@ export class MultiplayerClient {
     this.room.onStateChange((state) => {
       if (this.onState) this.onState(state);
     });
-    this.room.onMessage("claim", ({ charId, trailPoints, factionId }) => {
-      if (this.onClaim) this.onClaim(charId, trailPoints, factionId);
+    this.room.onMessage("claim", ({ charId, trailPoints, factionId, replayTrail }) => {
+      if (this.onClaim) this.onClaim(charId, factionId, trailPoints, !!replayTrail);
+    });
+    this.room.onMessage("claimResult", ({ charId, factionId, cells }) => {
+      if (this.onClaimResult) this.onClaimResult(charId, factionId, cells);
     });
     this.room.onMessage("heal", ({ changedCells }) => {
       if (this.onHeal) this.onHeal(changedCells);

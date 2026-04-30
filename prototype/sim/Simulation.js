@@ -9,6 +9,7 @@ import { MatchManager } from "./match.js";
 import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
 import { BotAI } from "./BotAI.js";
+import { extractContours, countCells } from "./grid_geom.js";
 
 export class Simulation {
   constructor({ seed = 1 } = {}) {
@@ -23,9 +24,56 @@ export class Simulation {
 
     // Event hooks (set by host: server or client). Optional.
     this.onClaim = null;       // (charId, trailPoints, factionId) => void
+    this.onClaimResult = null; // (charId, factionId, changedCells, trailPoints) => void
     this.onHeal = null;        // (changedCells) => void
     this.onTrailVertex = null; // (charId, x, z) => void
     this.onKill = null;        // (killerId, victimId) => void
+
+    // Per-faction contour cache. Bots re-plan their loops every few seconds
+    // and need the boundary contour of their faction. Computing it is O(N²)
+    // (full grid scan + marching squares). Cache it and invalidate per-faction
+    // whenever cells change owner during claim() or heal().
+    this._contourCache = new Map();   // factionId → { contours, cellCount }
+    this._contourDirty = new Set();   // factionIds with stale cache
+  }
+
+  // Invalidate cached contours for the given faction(s). Pass an iterable of
+  // factionIds, or omit to invalidate all.
+  _invalidateContourCache(factionIds) {
+    if (!factionIds) {
+      this._contourCache.clear();
+      return;
+    }
+    for (const f of factionIds) {
+      this._contourCache.delete(f);
+    }
+  }
+
+  // Cached contour lookup. BotAI calls this many times per second across
+  // many bots; the underlying extractContours is O(grid). The cache is keyed
+  // on factionId and invalidated by claim() and _healUnclaimedCells().
+  getCachedContours(factionId) {
+    let entry = this._contourCache.get(factionId);
+    if (entry) return entry.contours;
+    const contours = extractContours(this.grid, factionId);
+    entry = { contours };
+    this._contourCache.set(factionId, entry);
+    return contours;
+  }
+
+  // Cached cell count per faction. Bots check whether their faction has any
+  // territory, and pick aggro targets among factions with territory.
+  getCachedCellCount(factionId) {
+    let entry = this._contourCache.get(factionId);
+    if (entry && typeof entry.cellCount === "number") return entry.cellCount;
+    const count = countCells(this.grid, factionId);
+    if (!entry) {
+      entry = { cellCount: count };
+      this._contourCache.set(factionId, entry);
+    } else {
+      entry.cellCount = count;
+    }
+    return count;
   }
 
   start() {
@@ -363,6 +411,10 @@ export class Simulation {
     }
 
     if (changedCells.length > 0) {
+      // Invalidate contour cache for every faction that gained cells.
+      for (let i = 1; i < changedCells.length; i += 2) {
+        this._contourCache.delete(changedCells[i]);
+      }
       this.onHeal?.(changedCells);
     }
   }
@@ -379,18 +431,51 @@ export class Simulation {
 
   // Find the nearest cell whose owner === factionId to the world point (wx, wz).
   // Returns { gx, gy } or null if the faction owns no arena cells.
-  // Linear scan; fine for now (called twice per claim). If the faction has
-  // territory, the search short-circuits because most arena cells are owned
-  // by some faction at all times — but for correctness we just scan.
+  // Optimized: scan within a 200-cell radius bbox first; only fall back to a
+  // full grid scan if no own cell is found nearby. The faction nearly always
+  // has territory close to the trail endpoint, so the fast path hits almost
+  // every time.
   _nearestOwnCell(factionId, wx, wz) {
     const { gx: tgx, gy: tgy } = this._worldToGrid(wx, wz);
+    const N = GRID_SIZE;
+    const grid = this.grid;
+    const RADIUS = 200;
+
+    // Fast path: scan a bounded window around the target.
+    const minGX = Math.max(0, tgx - RADIUS);
+    const maxGX = Math.min(N - 1, tgx + RADIUS);
+    const minGY = Math.max(0, tgy - RADIUS);
+    const maxGY = Math.min(N - 1, tgy + RADIUS);
     let bestIdx = -1;
     let bestDist = Infinity;
-    const grid = this.grid;
+    for (let gy = minGY; gy <= maxGY; gy++) {
+      const rowBase = gy * N;
+      const dy = gy - tgy;
+      const dy2 = dy * dy;
+      for (let gx = minGX; gx <= maxGX; gx++) {
+        if (grid[rowBase + gx] !== factionId) continue;
+        const dx = gx - tgx;
+        const d = dx * dx + dy2;
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = rowBase + gx;
+          if (d === 0) {
+            return { gx, gy };
+          }
+        }
+      }
+    }
+    if (bestIdx >= 0) {
+      const gx = bestIdx % N;
+      const gy = (bestIdx - gx) / N;
+      return { gx, gy };
+    }
+
+    // Slow path: full scan (rare — only when faction has no nearby cells).
     for (let i = 0; i < grid.length; i++) {
       if (grid[i] !== factionId) continue;
-      const gx = i % GRID_SIZE;
-      const gy = (i - gx) / GRID_SIZE;
+      const gx = i % N;
+      const gy = (i - gx) / N;
       const dx = gx - tgx;
       const dy = gy - tgy;
       const d = dx * dx + dy * dy;
@@ -401,8 +486,8 @@ export class Simulation {
       }
     }
     if (bestIdx < 0) return null;
-    const gx = bestIdx % GRID_SIZE;
-    const gy = (bestIdx - gx) / GRID_SIZE;
+    const gx = bestIdx % N;
+    const gy = (bestIdx - gx) / N;
     return { gx, gy };
   }
 
@@ -445,26 +530,28 @@ export class Simulation {
   }
 
   // Public claim. Replaces the rasterized trail with a temporary "wall" mask,
-  // floods from the arena edges (sentinel side), and any non-sentinel cell the
-  // flood doesn't reach is enclosed → flips to claimer's faction.
+  // floods from outside the trail loop within a tight bbox, and any
+  // non-sentinel cell the flood doesn't reach is enclosed → flips to claimer's
+  // faction.
   // No global victim-fragment reassignment, no heal pass — the BFS produces a
   // clean enclosed region with no orphans by construction.
   // Returns true if the claim was applied; false if the trail was too short
   // or the faction has no territory to close against.
+  //
+  // Performance: BFS is constrained to a bounding box around the trail+bridges
+  // (expanded by a small margin) instead of scanning the whole 1024×1024 grid.
+  // Tracks the list of changed cell indices and fires onClaimResult() for the
+  // server to broadcast the diff to clients (avoiding a re-run of the algorithm
+  // on every client).
   claim(char) {
     if (!char.trailVerts || char.trailVerts.length < 5) {
       return false;
     }
+    const _claimT0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
 
     const trail = char.trailVerts;
     const factionId = char.factionId;
     const N = GRID_SIZE;
-
-    // Count cells before for score reporting.
-    let cellsBefore = 0;
-    for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] === factionId) cellsBefore++;
-    }
 
     // 1. Find nearest own cells to the trail endpoints. These act as the
     //    "anchors" the trail closes against.
@@ -476,119 +563,144 @@ export class Simulation {
       return false;
     }
 
-    // 2. Rasterize the trail and the two closure bridges into a wall mask.
-    const walls = new Uint8Array(N * N);
-
-    // Trail endpoints in grid coords.
+    // 2. Compute trail+bridge endpoints in grid coords; derive bounding box.
     const tg = new Array(trail.length);
+    let minGX = Infinity, minGY = Infinity, maxGX = -Infinity, maxGY = -Infinity;
     for (let i = 0; i < trail.length; i++) {
-      tg[i] = this._worldToGrid(trail[i].x, trail[i].z);
+      const g = this._worldToGrid(trail[i].x, trail[i].z);
+      tg[i] = g;
+      if (g.gx < minGX) minGX = g.gx;
+      if (g.gx > maxGX) maxGX = g.gx;
+      if (g.gy < minGY) minGY = g.gy;
+      if (g.gy > maxGY) maxGY = g.gy;
     }
+    // Include bridge endpoints in the bbox so the bridges stay inside it.
+    if (startNear.gx < minGX) minGX = startNear.gx;
+    if (startNear.gx > maxGX) maxGX = startNear.gx;
+    if (startNear.gy < minGY) minGY = startNear.gy;
+    if (startNear.gy > maxGY) maxGY = startNear.gy;
+    if (endNear.gx < minGX) minGX = endNear.gx;
+    if (endNear.gx > maxGX) maxGX = endNear.gx;
+    if (endNear.gy < minGY) minGY = endNear.gy;
+    if (endNear.gy > maxGY) maxGY = endNear.gy;
 
+    // Pad bbox by 5 cells on each side to ensure the perimeter cells are
+    // outside the trail+bridge loop. Clamp to grid bounds.
+    const PAD = 5;
+    minGX = Math.max(0, minGX - PAD);
+    minGY = Math.max(0, minGY - PAD);
+    maxGX = Math.min(N - 1, maxGX + PAD);
+    maxGY = Math.min(N - 1, maxGY + PAD);
+
+    // 3. Rasterize the trail and the two closure bridges into a wall mask.
+    //    Allocate a full-grid mask (cheap relative to the BFS savings, and
+    //    keeps _rasterizeLine's bounds-check logic untouched).
+    const walls = new Uint8Array(N * N);
     for (let i = 0; i < trail.length - 1; i++) {
       this._rasterizeLine(walls, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy);
     }
-    // Bridges from trail endpoints to nearest-own cells.
     this._rasterizeLine(walls, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy);
     this._rasterizeLine(walls, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy);
 
-    // 3. BFS from the arena's outside (sentinel cells & arena edges).
+    // 4. BFS bounded to the bbox, seeded from the bbox perimeter.
     //    Blockers = sentinel + own territory + walls.
-    //    Open cells = non-sentinel non-own non-wall.
-    //    Use array-as-queue with head pointer (deterministic; no shift cost).
+    //    Any non-blocker cell touching the bbox perimeter is "outside" the
+    //    trail+bridge loop. The BFS can NEVER need to step outside the bbox
+    //    because the trail+bridges (the only walls in this claim) are entirely
+    //    within (minGX..maxGX, minGY..maxGY) by construction.
     const visited = new Uint8Array(N * N);
     const queue = [];
     let head = 0;
-
     const grid = this.grid;
 
-    // Helper: is this cell a "blocker" (cannot be flooded through)?
-    // Inlined below for hot-path speed.
+    // Seed: bbox perimeter cells (top + bottom rows, left + right cols).
+    for (let gx = minGX; gx <= maxGX; gx++) {
+      const topIdx = minGY * N + gx;
+      const botIdx = maxGY * N + gx;
+      if (grid[topIdx] !== GRID_SENTINEL && grid[topIdx] !== factionId && !walls[topIdx] && !visited[topIdx]) {
+        visited[topIdx] = 1; queue.push(topIdx);
+      }
+      if (minGY !== maxGY) {
+        if (grid[botIdx] !== GRID_SENTINEL && grid[botIdx] !== factionId && !walls[botIdx] && !visited[botIdx]) {
+          visited[botIdx] = 1; queue.push(botIdx);
+        }
+      }
+    }
+    for (let gy = minGY + 1; gy <= maxGY - 1; gy++) {
+      const leftIdx = gy * N + minGX;
+      const rightIdx = gy * N + maxGX;
+      if (grid[leftIdx] !== GRID_SENTINEL && grid[leftIdx] !== factionId && !walls[leftIdx] && !visited[leftIdx]) {
+        visited[leftIdx] = 1; queue.push(leftIdx);
+      }
+      if (minGX !== maxGX) {
+        if (grid[rightIdx] !== GRID_SENTINEL && grid[rightIdx] !== factionId && !walls[rightIdx] && !visited[rightIdx]) {
+          visited[rightIdx] = 1; queue.push(rightIdx);
+        }
+      }
+    }
+    // Also seed any non-blocker cell inside the bbox that is adjacent to a
+    // sentinel — sentinels are "outside the arena," so cells touching them
+    // are reachable from outside with one step. This handles bboxes that
+    // overlap the arena's circular boundary.
+    for (let gy = minGY; gy <= maxGY; gy++) {
+      const rowBase = gy * N;
+      for (let gx = minGX; gx <= maxGX; gx++) {
+        const idx = rowBase + gx;
+        if (grid[idx] !== GRID_SENTINEL) continue;
+        // Sentinel cell — seed any in-bbox non-blocker neighbor.
+        if (gy > minGY) {
+          const nIdx = idx - N;
+          if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+            visited[nIdx] = 1; queue.push(nIdx);
+          }
+        }
+        if (gy < maxGY) {
+          const nIdx = idx + N;
+          if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+            visited[nIdx] = 1; queue.push(nIdx);
+          }
+        }
+        if (gx > minGX) {
+          const nIdx = idx - 1;
+          if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+            visited[nIdx] = 1; queue.push(nIdx);
+          }
+        }
+        if (gx < maxGX) {
+          const nIdx = idx + 1;
+          if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
+            visited[nIdx] = 1; queue.push(nIdx);
+          }
+        }
+      }
+    }
 
-    // Seed: every non-blocker cell on the grid edge, AND every non-blocker
-    // cell adjacent to a sentinel. Sentinel cells form a halo around the
-    // arena, so flooding from any sentinel-adjacent cell is equivalent to
-    // flooding from "outside the arena."
-    // Walk grid edges:
-    for (let gx = 0; gx < N; gx++) {
-      const top = gx;
-      const bot = (N - 1) * N + gx;
-      if (grid[top] !== GRID_SENTINEL && grid[top] !== factionId && !walls[top] && !visited[top]) {
-        visited[top] = 1; queue.push(top);
-      }
-      if (grid[bot] !== GRID_SENTINEL && grid[bot] !== factionId && !walls[bot] && !visited[bot]) {
-        visited[bot] = 1; queue.push(bot);
-      }
-    }
-    for (let gy = 0; gy < N; gy++) {
-      const left = gy * N;
-      const right = gy * N + (N - 1);
-      if (grid[left] !== GRID_SENTINEL && grid[left] !== factionId && !walls[left] && !visited[left]) {
-        visited[left] = 1; queue.push(left);
-      }
-      if (grid[right] !== GRID_SENTINEL && grid[right] !== factionId && !walls[right] && !visited[right]) {
-        visited[right] = 1; queue.push(right);
-      }
-    }
-    // Also seed every non-blocker cell adjacent to a sentinel cell. The arena
-    // is a circle inscribed in the grid; sentinels surround it. Any open cell
-    // touching a sentinel is reachable from "outside" with one step.
-    for (let i = 0; i < grid.length; i++) {
-      if (grid[i] !== GRID_SENTINEL) continue;
-      const gx = i % N;
-      const gy = (i - gx) / N;
-      // 4-neighbor scan
-      if (gy > 0) {
-        const nIdx = i - N;
-        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-          visited[nIdx] = 1; queue.push(nIdx);
-        }
-      }
-      if (gy < N - 1) {
-        const nIdx = i + N;
-        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-          visited[nIdx] = 1; queue.push(nIdx);
-        }
-      }
-      if (gx > 0) {
-        const nIdx = i - 1;
-        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-          visited[nIdx] = 1; queue.push(nIdx);
-        }
-      }
-      if (gx < N - 1) {
-        const nIdx = i + 1;
-        if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-          visited[nIdx] = 1; queue.push(nIdx);
-        }
-      }
-    }
-
-    // BFS expand (4-connected, deterministic neighbor order: N, S, W, E).
+    // BFS expand (4-connected, deterministic neighbor order: N, S, W, E),
+    // confined to the bbox.
     while (head < queue.length) {
       const idx = queue[head++];
       const gx = idx % N;
       const gy = (idx - gx) / N;
 
-      if (gy > 0) {
+      if (gy > minGY) {
         const nIdx = idx - N;
         if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
           visited[nIdx] = 1; queue.push(nIdx);
         }
       }
-      if (gy < N - 1) {
+      if (gy < maxGY) {
         const nIdx = idx + N;
         if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
           visited[nIdx] = 1; queue.push(nIdx);
         }
       }
-      if (gx > 0) {
+      if (gx > minGX) {
         const nIdx = idx - 1;
         if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
           visited[nIdx] = 1; queue.push(nIdx);
         }
       }
-      if (gx < N - 1) {
+      if (gx < maxGX) {
         const nIdx = idx + 1;
         if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
           visited[nIdx] = 1; queue.push(nIdx);
@@ -596,41 +708,45 @@ export class Simulation {
       }
     }
 
-    // 4. Any non-sentinel, non-own, non-visited cell is enclosed → flip to own.
-    //    Also flip wall cells themselves (the trail rasterization).
-    for (let i = 0; i < grid.length; i++) {
-      const v = grid[i];
-      if (v === GRID_SENTINEL) continue;
-      if (v === factionId) continue;
-      if (visited[i]) continue;
-      grid[i] = factionId;
+    // 5. Inside the bbox: any non-sentinel, non-own, non-visited cell is
+    //    enclosed → flip to own. Track the diff. Also flip wall cells that
+    //    aren't sentinel (the trail itself is now own territory).
+    const changedCells = []; // flat list of cell indices
+    const losers = new Set(); // factions that lost cells — must invalidate their contour cache
+    for (let gy = minGY; gy <= maxGY; gy++) {
+      const rowBase = gy * N;
+      for (let gx = minGX; gx <= maxGX; gx++) {
+        const idx = rowBase + gx;
+        const v = grid[idx];
+        if (v === GRID_SENTINEL) continue;
+        if (v === factionId) continue;
+        if (!visited[idx] || walls[idx]) {
+          if (v !== 0) losers.add(v);
+          grid[idx] = factionId;
+          changedCells.push(idx);
+        }
+      }
     }
-    // Trail walls explicitly become own territory (they may sit on sentinel-
-    // adjacent cells whose visited bit is set during seeding — we want them
-    // claimed regardless, since the player physically traversed them).
-    for (let i = 0; i < walls.length; i++) {
-      if (!walls[i]) continue;
-      if (grid[i] === GRID_SENTINEL) continue;
-      grid[i] = factionId;
-    }
+    // Invalidate contour cache for the claimer + every faction that lost cells.
+    this._contourCache.delete(factionId);
+    for (const loser of losers) this._contourCache.delete(loser);
 
-    // 5. Clear trail and fire hooks.
+    // 6. Clear trail and fire hooks.
     char.trailVerts = [];
 
-    // Score tracking.
-    let cellsAfter = 0;
-    for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] === factionId) cellsAfter++;
-    }
-    const cellsFlipped = cellsAfter - cellsBefore;
+    const cellsFlipped = changedCells.length;
 
-    // Build flat trail-points array for the event hook (multiplayer client uses
-    // this to re-rasterize the same claim on its local grid copy).
+    // Build flat trail-points array for the legacy onClaim hook (some hosts
+    // still want the trail polyline, e.g. to clear renderer trail meshes).
     const trailPointsFlat = new Array(trail.length * 2);
     for (let i = 0; i < trail.length; i++) {
       trailPointsFlat[i * 2] = trail[i].x;
       trailPointsFlat[i * 2 + 1] = trail[i].z;
     }
+    // New hook: cell-diff. Hosts can broadcast this directly so peers don't
+    // need to re-run the algorithm. If onClaimResult is wired, prefer it
+    // over onClaim for grid-sync purposes.
+    this.onClaimResult?.(char.id, factionId, changedCells, trailPointsFlat);
     this.onClaim?.(char.id, trailPointsFlat, factionId);
 
     if (this.scoreTracker?.onCapture && cellsFlipped > 0) {
@@ -640,6 +756,10 @@ export class Simulation {
       this.scoreTracker.onClaim(char, this.factionManager);
     }
 
+    const _claimT1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    this._claimMs = (this._claimMs ?? 0) + (_claimT1 - _claimT0);
+    this._claimCount = (this._claimCount ?? 0) + 1;
+    this._lastClaimMs = _claimT1 - _claimT0;
     return true;
   }
 
@@ -714,8 +834,13 @@ export class Simulation {
 
   tick(dt) {
     if (!this.started) return;
+    const _t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     this.matchManager.update(dt, this.grid, GRID_SIZE, GRID_SENTINEL);
-    if (this.matchManager.phase !== "playing") return;
+    if (this.matchManager.phase !== "playing") {
+      this._lastTickPhases = "";
+      return;
+    }
+    const _t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
 
     for (const c of this.characters) {
       if (!c.alive) {
@@ -733,9 +858,22 @@ export class Simulation {
       this._stepCharacter(c, dt);
       this._stepCharacterTrail(c);
     }
+    const _t2 = (typeof performance !== "undefined" ? performance.now() : Date.now());
 
     this._checkTrailKills();
+    const _t3 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     this._checkCutoff();
-    this.factionManager.updateTerritoryPcts(this.grid, GRID_SIZE, GRID_SENTINEL);
+    const _t4 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    // NOTE: updateTerritoryPcts is called inside matchManager.update() at 1Hz
+    // (see MatchManager.update). Calling it here every tick was scanning the
+    // entire 1024×1024 grid 20 times per second — the dominant cost in the
+    // over-budget tick stalls. The 1Hz cadence is plenty for endangered/recovery
+    // checks and HUD readout; per-tick precision isn't needed.
+    const _t5 = _t4;
+
+    this._lastTickPhases =
+      `match=${(_t1-_t0).toFixed(1)} chars=${(_t2-_t1).toFixed(1)} ` +
+      `trailKill=${(_t3-_t2).toFixed(1)} cutoff=${(_t4-_t3).toFixed(1)} ` +
+      `pct=${(_t5-_t4).toFixed(1)}`;
   }
 }

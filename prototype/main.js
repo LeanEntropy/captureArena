@@ -919,13 +919,33 @@ class Game {
     this._onlineGridReady = false;
     this._onlineEventQueue = [];
 
-    // Per-claim event: replay claim against the shared grid via local sim.
-    this.mp.onClaim = (charId, trailPoints, factionId) => {
+    // Per-claim event: handles two paths.
+    //  - Small claim: server already broadcast a claimResult cell-diff; this
+    //    "claim" event arrives only to clear the renderer trail mesh.
+    //  - Large claim: server sent trail polyline with replayTrail=true; we
+    //    re-run the algorithm locally as a fallback.
+    this.mp.onClaim = (charId, factionId, trailPoints, replayTrail) => {
       if (!this._onlineGridReady) {
-        this._onlineEventQueue.push({ type: "claim", charId, trailPoints, factionId });
+        this._onlineEventQueue.push({ type: "claim", charId, factionId, trailPoints, replayTrail });
         return;
       }
-      this._applyOnlineClaim(charId, trailPoints, factionId);
+      if (replayTrail && trailPoints && trailPoints.length >= 2) {
+        // Large-claim fallback: run the algorithm locally.
+        this._applyOnlineClaim(charId, trailPoints, factionId);
+      } else {
+        // Small claim: grid already updated by claimResult; just clear trail mesh.
+        this._clearOnlineCharTrail(charId);
+      }
+    };
+
+    // Per-claim cell-diff: server-authoritative grid update. Just write the
+    // cells into the local grid; no algorithm rerun, no client-side compute spike.
+    this.mp.onClaimResult = (charId, factionId, cells) => {
+      if (!this._onlineGridReady) {
+        this._onlineEventQueue.push({ type: "claimResult", charId, factionId, cells });
+        return;
+      }
+      this._applyOnlineClaimResult(charId, factionId, cells);
     };
 
     // Per-heal event: server already healed; apply the same diff to our grid.
@@ -989,8 +1009,14 @@ class Game {
     const queue = this._onlineEventQueue;
     this._onlineEventQueue = [];
     for (const ev of queue) {
-      if (ev.type === "claim") {
-        this._applyOnlineClaim(ev.charId, ev.trailPoints, ev.factionId);
+      if (ev.type === "claimResult") {
+        this._applyOnlineClaimResult(ev.charId, ev.factionId, ev.cells);
+      } else if (ev.type === "claim") {
+        if (ev.replayTrail && ev.trailPoints && ev.trailPoints.length >= 2) {
+          this._applyOnlineClaim(ev.charId, ev.trailPoints, ev.factionId);
+        } else {
+          this._clearOnlineCharTrail(ev.charId);
+        }
       } else if (ev.type === "heal") {
         for (let i = 0; i < ev.changedCells.length; i += 2) {
           territoryGrid.grid[ev.changedCells[i]] = ev.changedCells[i + 1];
@@ -1005,6 +1031,32 @@ class Game {
       }
     }
     if (queue.length > 0) console.log(`[online] flushed ${queue.length} buffered events`);
+  }
+
+  // Apply a server-authoritative claim cell-diff: write each cell to the
+  // local grid (faction owner) and clear the claimer's renderer trail mesh.
+  // No algorithm rerun, no compute spike on the client.
+  _applyOnlineClaimResult(charId, factionId, cells) {
+    if (!cells) return;
+    // cells may arrive as a typed array (Int32Array) or a plain array.
+    const grid = territoryGrid.grid;
+    const len = cells.length;
+    for (let i = 0; i < len; i++) {
+      grid[cells[i]] = factionId;
+    }
+    // Keep the local sim's faction id in sync (server is authoritative).
+    const simChar = this.sim.characters[charId];
+    if (simChar) {
+      simChar.factionId = factionId;
+      simChar.trailVerts = [];
+    }
+    this._clearOnlineCharTrail(charId);
+    this.territoryDirty = true;
+  }
+
+  _clearOnlineCharTrail(charId) {
+    const r = this._findRendererCharBySimId(charId);
+    if (r) r._clearTrail();
   }
 
   _findRendererCharBySimId(simCharId) {

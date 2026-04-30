@@ -1,7 +1,5 @@
 import { ARENA_RADIUS } from "./constants.js";
 import {
-  countCells,
-  extractContours,
   polyArea,
   closestIdx,
 } from "./grid_geom.js";
@@ -58,7 +56,7 @@ export class BotAI {
     const grid = sim.grid;
 
     // If territory was fully consumed, bot has no home — wander toward center.
-    const cellCount = countCells(grid, bot.factionId);
+    const cellCount = sim.getCachedCellCount(bot.factionId);
     if (cellCount === 0) {
       bot.botWaypoints = [
         { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 },
@@ -68,7 +66,7 @@ export class BotAI {
       return;
     }
 
-    const contours = extractContours(grid, bot.factionId);
+    const contours = sim.getCachedContours(bot.factionId);
     if (contours.length === 0) {
       bot.botWaypoints = [
         { x: bot.pos.x * 0.5, z: bot.pos.z * 0.5 },
@@ -95,7 +93,7 @@ export class BotAI {
         o !== bot &&
         o.alive &&
         o.factionId !== bot.factionId &&
-        countCells(grid, o.factionId) > 0
+        sim.getCachedCellCount(o.factionId) > 0
       );
       if (others.length > 0) {
         const target = others[Math.floor(Math.random() * others.length)];
