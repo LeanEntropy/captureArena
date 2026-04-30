@@ -811,6 +811,10 @@ class Game {
       this.keysDown.add(e.key.toLowerCase());
       if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
       if (e.key.toLowerCase() === "v") this._toggleFactionMeshes();
+      if (e.key.toLowerCase() === "f" && _stats) {
+        // Toggle stats.js FPS/MS/MB overlay
+        _stats.dom.style.display = _stats.dom.style.display === "none" ? "block" : "none";
+      }
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
     window.addEventListener("resize", () => {
@@ -1611,17 +1615,34 @@ class Game {
   }
 }
 
+// ===================== STATS.JS FPS OVERLAY =====================
+// stats.js is loaded as a plain UMD <script> tag (window.Stats).
+// Toggle with F key. Hidden by default — zero overhead when hidden.
+let _stats = null;
+function _initStats() {
+  if (typeof window.Stats === "undefined") return null;
+  const s = new window.Stats();
+  s.dom.style.display = "none"; // hidden until toggled
+  s.dom.style.top = "0px";
+  s.dom.style.left = "0px";
+  document.body.appendChild(s.dom);
+  return s;
+}
+
 // ===================== MAIN =====================
 const game = new Game();
 window.game = game; // debug hook
+_stats = _initStats();
 let lastTime = performance.now();
 
 function loop(now) {
+  if (_stats) _stats.begin();
   requestAnimationFrame(loop);
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
   game.tick(dt);
   game.render();
+  if (_stats) _stats.end();
 }
 requestAnimationFrame(loop);
 
