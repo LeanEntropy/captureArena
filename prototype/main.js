@@ -6,7 +6,7 @@ import { MatchManager } from "./match.js";
 import { UIManager } from "./ui.js";
 
 // ===================== CONSTANTS =====================
-const ARENA_RADIUS = 24.5;
+const ARENA_RADIUS = 73.5;
 const MIN_POINT_DIST = 0.3;
 const PLAYER_SPEED = 8;
 const BOT_SPEED = 6;
@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 30;
-const CAMERA_Z_OFFSET = 14;
+const CAMERA_HEIGHT = 60;
+const CAMERA_Z_OFFSET = 28;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
