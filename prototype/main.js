@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { MultiplayerClient } from "./multiplayer.js";
 import { FACTION_COUNT, FACTION_COLORS } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
@@ -689,10 +690,16 @@ class Game {
     this.start(name);  // existing local sim flow
   }
 
-  startOnline(name) {
+  async startOnline(name) {
     this.mode = "online";
     this.playerName = name;
-    console.log("[online] connecting... (Task 14 will implement)");
+    this.mp = new MultiplayerClient();
+    try {
+      await this.mp.connect(name, null);
+      console.log("[online] connected, sessionId =", this.mp.room.sessionId);
+    } catch (err) {
+      console.error("[online] connection failed:", err);
+    }
   }
 
   start(name) {
