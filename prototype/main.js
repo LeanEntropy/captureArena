@@ -768,12 +768,6 @@ class Game {
     // immediately; only the GPU upload is delayed by up to ~100ms.
     this._territoryRebuildAccum = 0;
     this._territoryRebuildInterval = 0.1;
-    // Dirty-rect tracking: track bounding box of cells that changed since the
-    // last texture rebuild so we only rasterize+upload that region instead of
-    // the full 1024×1024 grid. Initialized "all dirty" so the first rebuild
-    // covers the whole grid. _dirtyMinX>maxX means clean.
-    this._dirtyMinX = 0; this._dirtyMaxX = -1;
-    this._dirtyMinY = 0; this._dirtyMaxY = -1;
     // Map: simChar -> renderer Character (used by event hooks).
     this._charBySim = new Map();
 
@@ -839,7 +833,6 @@ class Game {
     // ===== Sim event hooks: bridge authoritative sim events to renderer state =====
     this.sim.onClaim = (charId, trailPoints, _factionId) => {
       this.territoryDirty = true;
-      this._markDirtyFromTrail(trailPoints);
       const simChar = this.sim.characters[charId];
       const r = this._charBySim.get(simChar);
       if (r) r._clearTrail();
@@ -847,7 +840,6 @@ class Game {
     };
     this.sim.onHeal = (changedCells) => {
       this.territoryDirty = true;
-      this._markDirtyFromCells(changedCells);
     };
     this.sim.onTrailVertex = (charId, x, z) => {
       const simChar = this.sim.characters[charId];
@@ -914,7 +906,6 @@ class Game {
         }
         territoryGrid.grid.set(bytes);
         this.territoryDirty = true;
-        this._markAllDirty();
         this._flushOnlineEventQueue();
         console.log(`[online] grid snapshot applied (${bytes.byteLength} bytes)`);
       } catch (err) {
@@ -948,7 +939,6 @@ class Game {
         territoryGrid.grid[changedCells[i]] = changedCells[i + 1];
       }
       this.territoryDirty = true;
-      this._markDirtyFromCells(changedCells);
     };
 
     // Trail vertices: append to renderer character trail so the line is visible.
@@ -1006,7 +996,6 @@ class Game {
           territoryGrid.grid[ev.changedCells[i]] = ev.changedCells[i + 1];
         }
         this.territoryDirty = true;
-        this._markDirtyFromCells(ev.changedCells);
       } else if (ev.type === "trail") {
         const r = this._findRendererCharBySimId(ev.charId);
         if (r) {
@@ -1045,8 +1034,6 @@ class Game {
     const r = this._findRendererCharBySimId(charId);
     if (r) r._clearTrail();
     this.territoryDirty = true;
-    // Mark dirty bbox from the claim's trail/polygon extent.
-    this._markDirtyFromTrail(trailPoints);
   }
 
   _initRendererFromOnlineState(state) {
@@ -1095,7 +1082,6 @@ class Game {
     }
 
     this._createTerritoryTexture();
-    this._markAllDirty();
     this._updateTerritoryTexture();
 
     // Camera: orbit the arena center until we have a real player char.
@@ -1259,7 +1245,6 @@ class Game {
     this.uiManager.setPlayer(this.player.simChar);
 
     this._createTerritoryTexture();
-    this._markAllDirty();
     this._updateTerritoryTexture();
 
     const playerSpawn = { x: playerSimChar.pos.x, z: playerSimChar.pos.z };
@@ -1514,69 +1499,12 @@ class Game {
     }
   }
 
-  // Mark the entire grid dirty (e.g. after a snapshot replaces all cells).
-  _markAllDirty() {
-    this._dirtyMinX = 0;
-    this._dirtyMinY = 0;
-    this._dirtyMaxX = GRID_SIZE - 1;
-    this._dirtyMaxY = GRID_SIZE - 1;
-  }
-
-  // Expand the dirty bbox to cover a single cell (gx, gy).
-  _markDirtyCell(gx, gy) {
-    if (gx < 0 || gy < 0 || gx >= GRID_SIZE || gy >= GRID_SIZE) return;
-    if (this._dirtyMaxX < this._dirtyMinX) {
-      // bbox is empty (clean); seed with this cell
-      this._dirtyMinX = gx; this._dirtyMaxX = gx;
-      this._dirtyMinY = gy; this._dirtyMaxY = gy;
-      return;
-    }
-    if (gx < this._dirtyMinX) this._dirtyMinX = gx;
-    if (gx > this._dirtyMaxX) this._dirtyMaxX = gx;
-    if (gy < this._dirtyMinY) this._dirtyMinY = gy;
-    if (gy > this._dirtyMaxY) this._dirtyMaxY = gy;
-  }
-
-  // Mark dirty bbox from a flat trail-points array (alternating x,z world coords).
-  // The claim polygon's bounding box bounds the cells that could have flipped.
-  // Pad by 1 cell to guard against rounding on the polygon edge.
-  _markDirtyFromTrail(trailPoints) {
-    if (!trailPoints || trailPoints.length < 4) {
-      this._markAllDirty();
-      return;
-    }
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < trailPoints.length; i += 2) {
-      const x = trailPoints[i];
-      const z = trailPoints[i + 1];
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (z < minY) minY = z;
-      if (z > maxY) maxY = z;
-    }
-    const { gx: minGX, gy: minGY } = territoryGrid.worldToGrid(minX, minY);
-    const { gx: maxGX, gy: maxGY } = territoryGrid.worldToGrid(maxX, maxY);
-    this._markDirtyCell(Math.max(0, minGX - 1), Math.max(0, minGY - 1));
-    this._markDirtyCell(Math.min(GRID_SIZE - 1, maxGX + 1), Math.min(GRID_SIZE - 1, maxGY + 1));
-  }
-
-  // Mark dirty bbox from a flat changedCells array (alternating cellIdx,value).
-  _markDirtyFromCells(changedCells) {
-    if (!changedCells || changedCells.length === 0) return;
-    for (let i = 0; i < changedCells.length; i += 2) {
-      const idx = changedCells[i];
-      const gx = idx % GRID_SIZE;
-      const gy = (idx - gx) / GRID_SIZE;
-      this._markDirtyCell(gx, gy);
-    }
-  }
-
-  // Re-rasterize only the dirty bounding box and upload a partial texture
-  // update. Uploading 1024×1024 (~4 MB) every claim wreaked havoc on the GPU
-  // bus; a typical claim touches a small region (~10×10 cells = 400 bytes).
+  // Re-rasterize the full grid and upload to the territory texture.
+  // Full-grid rebuild is ~10ms; at 10Hz that's ~100ms/sec — acceptable.
+  // Dirty-rect partial updates were dropped because floodFillConnected and the
+  // heal pass mutate cells outside the claimed polygon's bbox, causing holes.
   _updateTerritoryTexture() {
     if (!this._territoryCtx) return;
-    if (this._dirtyMaxX < this._dirtyMinX || this._dirtyMaxY < this._dirtyMinY) return;
 
     const data = this._territoryImageData.data;
     const grid = territoryGrid.grid;
@@ -1592,14 +1520,11 @@ class Game {
       factionB[i + 1] = c & 0xFF;
     }
 
-    const minX = this._dirtyMinX, maxX = this._dirtyMaxX;
-    const minY = this._dirtyMinY, maxY = this._dirtyMaxY;
-    const w = maxX - minX + 1;
-    const h = maxY - minY + 1;
-
-    for (let gy = minY; gy <= maxY; gy++) {
+    // Full-grid rebuild — simpler than dirty-rect bookkeeping which was
+    // missing changes from floodFillConnected and the heal pass.
+    for (let gy = 0; gy < size; gy++) {
       const rowBase = gy * size;
-      for (let gx = minX; gx <= maxX; gx++) {
+      for (let gx = 0; gx < size; gx++) {
         const gridIdx = rowBase + gx;
         const val = grid[gridIdx];
         const pixIdx = gridIdx * 4;
@@ -1623,16 +1548,8 @@ class Game {
       }
     }
 
-    // Partial putImageData: pass dirty rect args so only that subregion is
-    // uploaded to the canvas backing store. Three.js' CanvasTexture re-uploads
-    // the whole canvas on needsUpdate, but skipping the rasterization loop on
-    // 95%+ of the grid is still a major win.
-    this._territoryCtx.putImageData(this._territoryImageData, 0, 0, minX, minY, w, h);
+    this._territoryCtx.putImageData(this._territoryImageData, 0, 0);
     this.territoryTexture.needsUpdate = true;
-
-    // Reset dirty bbox.
-    this._dirtyMinX = 0; this._dirtyMaxX = -1;
-    this._dirtyMinY = 0; this._dirtyMaxY = -1;
   }
 
   // _checkCutoff, _killCharacter, _healUnclaimedCells: previously lived here;
