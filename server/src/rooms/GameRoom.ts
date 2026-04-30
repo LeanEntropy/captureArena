@@ -179,17 +179,36 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`[GameRoom] ${client.sessionId} ("${name}") took over char ${target.id} (faction ${factionId})`);
   }
 
+  // Sliding window stats: every 5s, log max + p99 tick duration. Useful for
+  // confirming that the 1Hz updateTerritoryPcts stall is gone after the
+  // incremental-cellCounts fix.
+  private _tickStatsMaxMs = 0;
+  private _tickStatsLastDumpMs = 0;
+  private _tickStatsCount = 0;
+  private _tickStatsSumMs = 0;
+
   private tick(dt: number) {
     const tickStart = performance.now();
     try {
       this._tickInner(dt);
     } finally {
       const elapsed = performance.now() - tickStart;
+      if (elapsed > this._tickStatsMaxMs) this._tickStatsMaxMs = elapsed;
+      this._tickStatsCount++;
+      this._tickStatsSumMs += elapsed;
+      if (this._tickStatsLastDumpMs === 0) this._tickStatsLastDumpMs = tickStart;
+      if (tickStart - this._tickStatsLastDumpMs >= 5000) {
+        const avg = this._tickStatsSumMs / Math.max(1, this._tickStatsCount);
+        console.log(`[tick stats] window=${(tickStart - this._tickStatsLastDumpMs).toFixed(0)}ms ticks=${this._tickStatsCount} max=${this._tickStatsMaxMs.toFixed(1)}ms avg=${avg.toFixed(2)}ms`);
+        this._tickStatsLastDumpMs = tickStart;
+        this._tickStatsMaxMs = 0;
+        this._tickStatsCount = 0;
+        this._tickStatsSumMs = 0;
+      }
       if (elapsed > 50) {
         // Tick exceeded the 50ms budget. Log the simulation's phase breakdown
-        // so we can attribute the cost. Should be rare (claim() and per-tick
-        // grid scans are both bounded; the once-per-second territoryPcts scan
-        // is the only remaining ~50ms outlier).
+        // so we can attribute the cost. With incremental cellCounts the 1Hz
+        // territoryPcts scan is gone; remaining outliers are rare big claims.
         const claimMs = ((this.sim as any)._lastClaimMs ?? 0);
         const phaseLog = (this.sim as any)._lastTickPhases ?? "";
         console.warn(`[GameRoom] tick OVER BUDGET: ${elapsed.toFixed(1)}ms (claim=${claimMs.toFixed(1)}ms ${phaseLog})`);

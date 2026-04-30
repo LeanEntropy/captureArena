@@ -15,7 +15,7 @@ export class MatchManager {
     this.timeRemaining = MATCH_DURATION;
   }
 
-  update(dt, grid, gridSize, sentinel) {
+  update(dt, grid, gridSize, sentinel, cellCounts, totalArenaCells) {
     if (this.phase !== "playing") return;
 
     this.timeRemaining -= dt;
@@ -24,7 +24,13 @@ export class MatchManager {
     if (this.factionCheckTimer >= 1.0) {
       this.factionCheckTimer -= 1.0;
 
-      this.factionManager.updateTerritoryPcts(grid, gridSize, sentinel);
+      // Prefer O(FACTION_COUNT) incremental counts when the caller maintains
+      // them; fall back to the legacy O(N²) grid scan otherwise.
+      if (cellCounts && typeof totalArenaCells === "number") {
+        this.factionManager.updateTerritoryPctsFromCounts(cellCounts, totalArenaCells);
+      } else {
+        this.factionManager.updateTerritoryPcts(grid, gridSize, sentinel);
+      }
 
       for (const [id] of this.factionManager.factions) {
         this.factionManager.checkEndangered(id);

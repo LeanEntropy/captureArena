@@ -553,10 +553,98 @@ describe("Simulation", () => {
     expect(sim.characters[0].trailVerts).toEqual([]);
     expect(sim.characters[0].wasOutside).toBe(false);
   });
+
+  it("cellCounts stays in sync with grid contents after start, claim, and restart", () => {
+    // Right after start(), the incremental cellCounts must match a full
+    // recount of the grid.
+    expectCellCountsMatchGrid(sim);
+
+    // Run a real claim that flips many cells.
+    const c = sim.characters[0];
+    c.factionId = 1;
+    let boundaryWX = 0, boundaryWZ = 0, found = false;
+    for (let gy = 0; gy < GRID_SIZE && !found; gy++) {
+      for (let gx = 0; gx < GRID_SIZE && !found; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL)) {
+          const cellSize = 133.78 / GRID_SIZE;
+          boundaryWX = -66.89 + (gx + 0.5) * cellSize;
+          boundaryWZ = -66.89 + (gy + 0.5) * cellSize;
+          found = true;
+        }
+      }
+    }
+    const trail = [];
+    const dirLen = Math.hypot(boundaryWX, boundaryWZ);
+    const ux = boundaryWX / dirLen, uz = boundaryWZ / dirLen;
+    const px = -uz, pz = ux;
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
+      const angle = Math.PI * t;
+      const out = (1 - Math.cos(angle));
+      const side = Math.sin(angle);
+      trail.push({
+        x: boundaryWX + ux * 4 * out * 0.5 + px * 4 * side,
+        z: boundaryWZ + uz * 4 * out * 0.5 + pz * 4 * side,
+      });
+    }
+    c.trailVerts = trail;
+    sim.claim(c);
+    // After a claim that flips many cells, counts must still match the grid.
+    expectCellCountsMatchGrid(sim);
+
+    // After restart(), counts must be re-initialized correctly.
+    sim.restart();
+    expectCellCountsMatchGrid(sim);
+  });
+
+  it("updateTerritoryPctsFromCounts produces same results as the legacy grid scan", () => {
+    // Run a claim to ensure cells have moved around.
+    const c = sim.characters[0];
+    c.factionId = 1;
+    c.trailVerts = [
+      { x: 0, z: 0 }, { x: 1, z: 0 }, { x: 2, z: 0 },
+      { x: 3, z: 0 }, { x: 4, z: 0 }, { x: 5, z: 0 },
+    ];
+    sim.claim(c);
+
+    const fm = sim.factionManager;
+
+    // Compute via the new incremental path.
+    fm.updateTerritoryPctsFromCounts(sim.cellCounts, sim.totalArenaCells);
+    const incremental = new Map();
+    for (const [id, f] of fm.factions) incremental.set(id, f.territoryPct);
+
+    // Compute via the legacy slow path; results must match within float epsilon.
+    fm.updateTerritoryPcts(sim.grid, GRID_SIZE, GRID_SENTINEL);
+    for (const [id, f] of fm.factions) {
+      expect(f.territoryPct).toBeCloseTo(incremental.get(id), 6);
+    }
+  });
 });
 
 function countCellsOwnedBy(grid, factionId) {
   let n = 0;
   for (let i = 0; i < grid.length; i++) if (grid[i] === factionId) n++;
   return n;
+}
+
+function expectCellCountsMatchGrid(sim) {
+  // Recompute counts from the grid and compare against sim.cellCounts.
+  const truth = new Uint32Array(sim.cellCounts.length);
+  for (let i = 0; i < sim.grid.length; i++) {
+    const v = sim.grid[i];
+    if (v === GRID_SENTINEL) continue;
+    truth[v]++;
+  }
+  for (let i = 0; i < truth.length; i++) {
+    expect(sim.cellCounts[i]).toBe(truth[i]);
+  }
 }

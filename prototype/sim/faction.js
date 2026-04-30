@@ -103,6 +103,10 @@ export class FactionManager {
 
   /**
    * Recount cells per faction and update territoryPct for all factions.
+   * Legacy O(N²) full-grid scan. Kept as a fallback for callers that don't
+   * maintain incremental cell counts; production paths should use
+   * updateTerritoryPctsFromCounts() instead. Calling this at 1Hz on a
+   * 1024×1024 grid blew the 50ms tick budget.
    * @param {Uint8Array} grid
    * @param {number} gridSize
    * @param {number} sentinel
@@ -128,6 +132,23 @@ export class FactionManager {
 
     for (const [id, faction] of this._factions) {
       faction.territoryPct = (counts.get(id) / totalArenaCells) * 100;
+    }
+  }
+
+  /**
+   * Update territoryPct from a precomputed Uint32Array of cell counts.
+   * cellCounts[factionId] = number of grid cells owned by that faction.
+   * Index 0 is unclaimed (counted toward totalArenaCells but not toward any
+   * faction's percentage). totalArenaCells must be the count of in-arena
+   * (non-sentinel) cells, used as the denominator. O(FACTION_COUNT).
+   * @param {Uint32Array} cellCounts
+   * @param {number} totalArenaCells
+   */
+  updateTerritoryPctsFromCounts(cellCounts, totalArenaCells) {
+    if (totalArenaCells === 0) return;
+    for (const [id, faction] of this._factions) {
+      const count = cellCounts[id] ?? 0;
+      faction.territoryPct = (count / totalArenaCells) * 100;
     }
   }
 

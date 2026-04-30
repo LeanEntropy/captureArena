@@ -416,6 +416,16 @@ class Character {
     // {posX, posZ, dirX, dirZ} instead of simChar. Used for the local player
     // in online mode to eliminate input-roundtrip lag.
     this.predicted = null;
+    // Snapshot interpolation buffer for REMOTE characters in online mode.
+    // Server broadcasts at 20Hz; rendering at 60Hz. Without buffering, the
+    // simple per-frame lerp produces visible stair-stepping every 3 frames
+    // when the lerp target jumps. Glenn Fiedler's snapshot interpolation:
+    // keep the last 2-3 snapshots, render at "now - INTERP_DELAY" by lerping
+    // between the two bracketing snapshots. This produces actual smooth
+    // constant-velocity motion between known states.
+    this.posBuffer = [];           // {t, x, z, dirX, dirZ}, ordered by t ascending
+    this._lastSchemaPosX = null;   // last sampled schema posX (for change detection)
+    this._lastSchemaPosZ = null;
     this.group = this._buildChar(color);
     scene.add(this.group);
   }
@@ -567,62 +577,138 @@ class Character {
   }
 
   // Renderer-only sync: pull authoritative pos/dir from simChar (or predicted
-  // state for the local online player) and lerp the mesh toward it. All
-  // simulation work (steer, move, trail, claim, kills) is owned by sim.tick.
+  // state for the local online player) and place the mesh. All simulation
+  // work (steer, move, trail, claim, kills) is owned by sim.tick.
+  //
+  // Three rendering paths:
+  //   1. Local player with prediction (this.predicted set) — snap to predicted
+  //      pos/dir each frame. Predicted state is already advanced this tick by
+  //      _stepPrediction(); lerping would re-introduce visual lag.
+  //   2. Solo / local sim (simChar exposes plain {x,z}, no _schemaChar) — snap
+  //      directly to simChar pos/dir each frame. Sim runs at render rate so
+  //      the position is already exact every frame.
+  //   3. Remote online characters (simChar is a schema-backed proxy) — use
+  //      snapshot interpolation: maintain a buffer of the last 2-3 server
+  //      snapshots, render at performance.now() - INTERP_DELAY by lerping
+  //      between the two bracketing snapshots. Produces actual smooth
+  //      constant-velocity motion between server states; eliminates the
+  //      stair-stepping that the simple per-frame lerp produced (target only
+  //      changed every ~3 frames at 60Hz render / 20Hz server).
   syncVisuals() {
     if (!this.alive) {
       this.group.visible = false;
       return;
     }
-    // Source of truth for pos/dir: predicted state for local online player,
-    // authoritative simChar (or schema-backed proxy) otherwise.
+    this.factionId = this.simChar.factionId;
+
     let tgtX, tgtZ, tgtDirX, tgtDirZ;
+    let snap = false;
+
     if (this.predicted) {
+      // Path 1: local player with client-side prediction.
       tgtX = this.predicted.posX;
       tgtZ = this.predicted.posZ;
       tgtDirX = this.predicted.dirX;
       tgtDirZ = this.predicted.dirZ;
+      snap = true;
+    } else if (this.simChar && this.simChar._schemaChar) {
+      // Path 3: remote character in online mode — snapshot interpolation.
+      const schemaX = this.simChar.pos.x;
+      const schemaZ = this.simChar.pos.z;
+      const now = performance.now();
+
+      // Push a new snapshot whenever the schema position changed since last
+      // sample. onStateChange runs ~20Hz when server broadcasts, so this
+      // captures each new authoritative pos with its arrival timestamp.
+      if (this._lastSchemaPosX === null
+        || schemaX !== this._lastSchemaPosX
+        || schemaZ !== this._lastSchemaPosZ) {
+        this.posBuffer.push({
+          t: now,
+          x: schemaX,
+          z: schemaZ,
+          dirX: this.simChar.dir.x,
+          dirZ: this.simChar.dir.z,
+        });
+        // Keep the most recent 3 snapshots — enough to bracket render-time
+        // and absorb a single dropped/late packet without losing both ends.
+        if (this.posBuffer.length > 3) this.posBuffer.shift();
+        this._lastSchemaPosX = schemaX;
+        this._lastSchemaPosZ = schemaZ;
+      }
+
+      const INTERP_DELAY = 100; // ms behind real-time, ≈ 2 server ticks at 20Hz
+      const renderTime = now - INTERP_DELAY;
+      const buf = this.posBuffer;
+
+      if (buf.length === 0) {
+        // Just spawned — nothing yet. Use schema as best-effort.
+        tgtX = schemaX;
+        tgtZ = schemaZ;
+        tgtDirX = this.simChar.dir.x;
+        tgtDirZ = this.simChar.dir.z;
+        snap = true;
+      } else if (buf.length === 1) {
+        // Only one snapshot — snap to it.
+        tgtX = buf[0].x;
+        tgtZ = buf[0].z;
+        tgtDirX = buf[0].dirX;
+        tgtDirZ = buf[0].dirZ;
+        snap = true;
+      } else {
+        // Find the two snapshots that bracket renderTime. Prefer the latest
+        // pair; if renderTime is before the oldest, clamp to oldest; if past
+        // the newest, clamp to newest (extrapolation would amplify any lag
+        // spike into a teleport).
+        let i0 = -1, i1 = -1;
+        for (let i = buf.length - 1; i >= 1; i--) {
+          if (buf[i - 1].t <= renderTime && renderTime <= buf[i].t) {
+            i0 = i - 1; i1 = i;
+            break;
+          }
+        }
+        if (i0 < 0) {
+          if (renderTime < buf[0].t) {
+            // Clamp to oldest snapshot.
+            tgtX = buf[0].x; tgtZ = buf[0].z;
+            tgtDirX = buf[0].dirX; tgtDirZ = buf[0].dirZ;
+          } else {
+            // Past newest — clamp to newest (no extrapolation).
+            const last = buf[buf.length - 1];
+            tgtX = last.x; tgtZ = last.z;
+            tgtDirX = last.dirX; tgtDirZ = last.dirZ;
+          }
+        } else {
+          const a = buf[i0], b = buf[i1];
+          const span = b.t - a.t;
+          const t = span > 0 ? (renderTime - a.t) / span : 0;
+          tgtX = a.x + (b.x - a.x) * t;
+          tgtZ = a.z + (b.z - a.z) * t;
+          tgtDirX = a.dirX + (b.dirX - a.dirX) * t;
+          tgtDirZ = a.dirZ + (b.dirZ - a.dirZ) * t;
+          // Renormalize dir (interpolated dir vector loses unit length).
+          const dl = Math.hypot(tgtDirX, tgtDirZ) || 1;
+          tgtDirX /= dl;
+          tgtDirZ /= dl;
+        }
+        snap = true;
+      }
     } else {
+      // Path 2: solo / local sim. simChar.pos is exact every frame.
       tgtX = this.simChar.pos.x;
       tgtZ = this.simChar.pos.z;
       tgtDirX = this.simChar.dir.x;
       tgtDirZ = this.simChar.dir.z;
+      snap = true;
     }
+
     this.pos.set(tgtX, 0, tgtZ);
     this.dir.set(tgtDirX, 0, tgtDirZ);
-    this.factionId = this.simChar.factionId;
 
-    // Local player (solo or online-with-prediction) is already authoritative:
-    // sim pos is exact for solo; predicted pos is already advanced this frame
-    // for online. Lerping would introduce ~3-frame visual lag. Snap directly.
-    // Remote characters keep the lerp to smooth 20 Hz server updates.
-    if (this.isPlayer) {
+    if (snap) {
       this.group.position.x = tgtX;
       this.group.position.z = tgtZ;
       this.group.rotation.y = Math.atan2(tgtDirX, tgtDirZ);
-    } else {
-      // Frame-rate independent lerp toward target (smooths 20 Hz server updates
-      // over ~3 frames at 60 FPS). Snap if too far (prevents long lerps after
-      // teleport / respawn / drift reconciliation).
-      const t = 0.30;
-      let mx = this.group.position.x;
-      let mz = this.group.position.z;
-      const dx = tgtX - mx;
-      const dz = tgtZ - mz;
-      if (dx * dx + dz * dz > 9) {
-        // > 3 units away: snap.
-        this.group.position.set(tgtX, this.group.position.y, tgtZ);
-      } else {
-        this.group.position.x = mx + dx * t;
-        this.group.position.z = mz + dz * t;
-      }
-
-      // Shortest-arc lerp of rotation.
-      const targetRot = Math.atan2(tgtDirX, tgtDirZ);
-      let drot = targetRot - this.group.rotation.y;
-      while (drot > Math.PI) drot -= 2 * Math.PI;
-      while (drot < -Math.PI) drot += 2 * Math.PI;
-      this.group.rotation.y += drot * t;
     }
 
     this.group.visible = (this.isPlayer && this.invulnTimer > 0)

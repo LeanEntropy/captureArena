@@ -21,6 +21,12 @@ export class Simulation {
     this.characters = [];
     this.totalArenaCells = 0;
     this.started = false;
+    // Incremental cell counts per faction (index 0 = unclaimed). Maintained
+    // by every code path that mutates this.grid: claim(), _healUnclaimedCells(),
+    // restart(). Lets updateTerritoryPcts read percentages in O(FACTION_COUNT)
+    // instead of scanning the whole 1024×1024 grid each second (the 50ms stall
+    // that was eating the entire tick budget once per second).
+    this.cellCounts = new Uint32Array(FACTION_COUNT + 1);
 
     // Event hooks (set by host: server or client). Optional.
     this.onClaim = null;       // (charId, trailPoints, factionId) => void
@@ -80,6 +86,9 @@ export class Simulation {
     this._initGrid();
     this._initCharacters();
     this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL);
+    // Initial cellCounts populate. From here, every grid mutation must keep
+    // cellCounts in sync.
+    this._recomputeCellCounts();
     for (const c of this.characters) {
       this.factionManager.addCharacter(c, c.factionId);
     }
@@ -92,6 +101,21 @@ export class Simulation {
     }
     this.matchManager.startMatch();
     this.started = true;
+  }
+
+  // Full O(N) scan to rebuild cellCounts from the current grid contents.
+  // Only called from start() and restart(); per-tick code paths (claim, heal)
+  // maintain the counts incrementally.
+  _recomputeCellCounts() {
+    const counts = this.cellCounts;
+    counts.fill(0);
+    const grid = this.grid;
+    for (let i = 0, len = grid.length; i < len; i++) {
+      const v = grid[i];
+      if (v === GRID_SENTINEL) continue;
+      // v is in [0, FACTION_COUNT]; index 0 = unclaimed.
+      counts[v]++;
+    }
   }
 
   _initGrid() {
@@ -309,6 +333,9 @@ export class Simulation {
           const prev = this.grid[idx];
           if (prev !== GRID_SENTINEL && prev !== ownerId) {
             if (prev !== 0) overwritten.add(prev);
+            // Maintain cellCounts: cell flips from prev → ownerId.
+            this.cellCounts[prev]--;
+            this.cellCounts[ownerId]++;
             this.grid[idx] = ownerId;
           }
         }
@@ -363,6 +390,9 @@ export class Simulation {
     for (let i = 0; i < components.length; i++) {
       if (i === largestIdx) continue;
       for (const cellIdx of components[i]) {
+        // Cell flips from ownerId → reassignTo. Maintain cellCounts.
+        this.cellCounts[ownerId]--;
+        this.cellCounts[reassignTo]++;
         this.grid[cellIdx] = reassignTo;
         reassigned++;
       }
@@ -402,6 +432,9 @@ export class Simulation {
             if (counts[f] > bestCount) { bestCount = counts[f]; best = f; }
           }
           if (best > 0) {
+            // Incrementally maintain cellCounts: cell flips from 0 (unclaimed) → best.
+            this.cellCounts[0]--;
+            this.cellCounts[best]++;
             grid[idx] = best;
             changedCells.push(idx, best);
             changed = true;
@@ -711,8 +744,11 @@ export class Simulation {
     // 5. Inside the bbox: any non-sentinel, non-own, non-visited cell is
     //    enclosed → flip to own. Track the diff. Also flip wall cells that
     //    aren't sentinel (the trail itself is now own territory).
+    //    Maintain cellCounts incrementally (decrement old owner, increment claimer).
     const changedCells = []; // flat list of cell indices
     const losers = new Set(); // factions that lost cells — must invalidate their contour cache
+    const cellCounts = this.cellCounts;
+    let claimerGain = 0;
     for (let gy = minGY; gy <= maxGY; gy++) {
       const rowBase = gy * N;
       for (let gx = minGX; gx <= maxGX; gx++) {
@@ -722,11 +758,15 @@ export class Simulation {
         if (v === factionId) continue;
         if (!visited[idx] || walls[idx]) {
           if (v !== 0) losers.add(v);
+          // Incrementally maintain cellCounts: cell flips from v → factionId.
+          cellCounts[v]--;
+          claimerGain++;
           grid[idx] = factionId;
           changedCells.push(idx);
         }
       }
     }
+    cellCounts[factionId] += claimerGain;
     // Invalidate contour cache for the claimer + every faction that lost cells.
     this._contourCache.delete(factionId);
     for (const loser of losers) this._contourCache.delete(loser);
@@ -812,6 +852,8 @@ export class Simulation {
     this._initGrid();
     this.factionManager = new FactionManager();
     this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL);
+    // Re-init cellCounts after the grid was rewritten.
+    this._recomputeCellCounts();
     for (const c of this.characters) {
       c.alive = true;
       c.trailVerts = [];
@@ -835,7 +877,7 @@ export class Simulation {
   tick(dt) {
     if (!this.started) return;
     const _t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-    this.matchManager.update(dt, this.grid, GRID_SIZE, GRID_SENTINEL);
+    this.matchManager.update(dt, this.grid, GRID_SIZE, GRID_SENTINEL, this.cellCounts, this.totalArenaCells);
     if (this.matchManager.phase !== "playing") {
       this._lastTickPhases = "";
       return;
