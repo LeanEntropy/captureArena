@@ -457,11 +457,12 @@ describe("Simulation", () => {
     expect(ok).toBe(true);
     const gain = after - before;
 
-    // With the leak, only ~440 trail-wall cells flip (= 1.8× polygon area).
-    // With the fix, the BFS retry seals the loop and captures the entire
-    // ~6-cell-wide ribbon (≈ 1000+ cells = 4× polygon area). Threshold of
-    // 800 cleanly separates the two outcomes.
-    expect(gain).toBeGreaterThan(800);
+    // BlocklyIO sub-fill algorithm: with a 3-cell-wide wall stamp (radius=1)
+    // and parallel legs at 4-cell spacing, the inter-leg channel (~1 cell wide)
+    // fills + the wall ribbon itself flips. Pre-fix thin-line bug: only ~17
+    // trail cells. Post-fix: ~400+ cells = real fill of the ribbon. Threshold
+    // 300 cleanly separates "thin line bug" from "real fill".
+    expect(gain).toBeGreaterThan(300);
 
     // Sample a point in the geometric center of the lobe — it should be
     // claimer-owned (filled, not "outside"). With the leak, this cell stays
@@ -725,6 +726,150 @@ describe("Simulation", () => {
     expect(ok).toBe(true);
     // Must produce a real fill (not just trail cells).
     expect(after - before).toBeGreaterThan(trail.length + 5);
+  });
+
+  it("BlocklyIO sub-fill: zigzag trail with parallel sections fills its enclosed pockets", () => {
+    // Regression: a zigzag trail (S-shape) traces several near-parallel
+    // sections separated by a few cells. The BlocklyIO sub-fill must enclose
+    // any genuinely-closed pocket between segments — a leak through one
+    // pocket must NOT cause the others to fail to fill (they're independent
+    // sub-fills).
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 boundary cell adjacent to a different faction (not 0,
+    // not sentinel). Capture the direction from the boundary cell into the
+    // enemy cell — that's the direction the trail must travel to leave own
+    // territory.
+    let bGX = -1, bGY = -1, dirX = 0, dirZ = 0;
+    outer: for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const checks = [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+        for (const ch of checks) {
+          const nx = gx + ch.dx, ny = gy + ch.dy;
+          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+          const nv = sim.grid[ny * GRID_SIZE + nx];
+          if (nv > 0 && nv < 6 && nv !== 1) {
+            bGX = gx; bGY = gy;
+            dirX = ch.dx; dirZ = ch.dy;
+            break outer;
+          }
+        }
+      }
+    }
+    expect(bGX).toBeGreaterThanOrEqual(0);
+    const cellSize = 133.78 / GRID_SIZE;
+    const bx = -66.89 + (bGX + 0.5) * cellSize;
+    const bz = -66.89 + (bGY + 0.5) * cellSize;
+    const ux = dirX, uz = dirZ;
+    const px = -uz, pz = ux;
+
+    // Zigzag with 4-cell parallel-section spacing. Multiple segments switching
+    // direction.
+    const trail = [];
+    const SPACING = cellSize * 4;
+    const DEPTH = 6;
+    // Segment 1: out
+    for (let s = 0; s <= 16; s++) {
+      const r = (s / 16) * DEPTH;
+      trail.push({ x: bx + ux * r, z: bz + uz * r });
+    }
+    // Segment 2: side-step + return
+    for (let s = 16; s >= 0; s--) {
+      const r = (s / 16) * DEPTH;
+      trail.push({ x: bx + ux * r + px * SPACING, z: bz + uz * r + pz * SPACING });
+    }
+    // Segment 3: side-step + out again
+    for (let s = 0; s <= 16; s++) {
+      const r = (s / 16) * DEPTH;
+      trail.push({ x: bx + ux * r + px * SPACING * 2, z: bz + uz * r + pz * SPACING * 2 });
+    }
+    // Segment 4: side-step + return
+    for (let s = 16; s >= 0; s--) {
+      const r = (s / 16) * DEPTH;
+      trail.push({ x: bx + ux * r + px * SPACING * 3, z: bz + uz * r + pz * SPACING * 3 });
+    }
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    // A real fill — at minimum the trail walls (~3-cell-wide × ~120 verts).
+    // No "thin line" outcome (which would be ~17 cells).
+    expect(after - before).toBeGreaterThan(200);
+  });
+
+  it("BlocklyIO sub-fill: balloon-on-string trail fills the balloon enclosure", () => {
+    // Regression: the "balloon on a string" trail = a long thin out-leg
+    // followed by a wide loop. The previous algorithm leaked through the
+    // long string section. The sub-fill must capture only the balloon
+    // interior (not the string), and the string itself becomes own territory
+    // as a trail wall.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    let bGX = -1, bGY = -1, dirX = 0, dirZ = 0;
+    outer: for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const checks = [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+        for (const ch of checks) {
+          const nx = gx + ch.dx, ny = gy + ch.dy;
+          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+          const nv = sim.grid[ny * GRID_SIZE + nx];
+          if (nv > 0 && nv < 6 && nv !== 1) {
+            bGX = gx; bGY = gy;
+            dirX = ch.dx; dirZ = ch.dy;
+            break outer;
+          }
+        }
+      }
+    }
+    expect(bGX).toBeGreaterThanOrEqual(0);
+    const cellSize = 133.78 / GRID_SIZE;
+    const bx = -66.89 + (bGX + 0.5) * cellSize;
+    const bz = -66.89 + (bGY + 0.5) * cellSize;
+    const ux = dirX, uz = dirZ;
+    const px = -uz, pz = ux;
+
+    // String: long thin out-leg.
+    const trail = [];
+    const STRING_LEN = 4;
+    const BALLOON_R = 2;
+    for (let s = 0; s <= 12; s++) {
+      const r = (s / 12) * STRING_LEN;
+      trail.push({ x: bx + ux * r, z: bz + uz * r });
+    }
+    // Balloon: half-circle outward at the end of the string.
+    for (let s = 0; s <= 16; s++) {
+      const angle = Math.PI * (s / 16);
+      const cx2 = bx + ux * (STRING_LEN + BALLOON_R) - ux * BALLOON_R * Math.cos(angle);
+      const cz2 = bz + uz * (STRING_LEN + BALLOON_R) - uz * BALLOON_R * Math.cos(angle);
+      const ox = px * BALLOON_R * Math.sin(angle);
+      const oz = pz * BALLOON_R * Math.sin(angle);
+      trail.push({ x: cx2 + ox, z: cz2 + oz });
+    }
+    // String: long thin return-leg (~2 cells offset from out-leg, makes it a
+    // tight loop along the string).
+    for (let s = 12; s >= 0; s--) {
+      const r = (s / 12) * STRING_LEN;
+      trail.push({ x: bx + ux * r + px * cellSize * 2, z: bz + uz * r + pz * cellSize * 2 });
+    }
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    // Real fill — the balloon interior (~π×r² ≈ 50 cells at r=2 worldUnits)
+    // plus the trail walls (~120+ cells from 43 verts × 3-cell-wide stamp,
+    // with overlap on the parallel string sections). Total >> the thin-line
+    // outcome (= trail.length ≈ 43).
+    expect(after - before).toBeGreaterThan(100);
   });
 
   it("restart resets characters and grid", () => {

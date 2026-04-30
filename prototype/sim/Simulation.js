@@ -293,119 +293,6 @@ export class Simulation {
 
   // ===== claim / heal / grid helpers =====
 
-  // Stamp a 2D polygon ({x, y}[] in world coords; y is the second axis = z) onto
-  // this.grid with the given owner. Returns the set of overwritten owner IDs.
-  // Faithfully mirrors main.js territoryGrid.stampPolygon().
-  _stampPolygon(poly2D, ownerId) {
-    const overwritten = new Set();
-    if (poly2D.length < 3) return overwritten;
-
-    // World-coord bounding box → grid-row range
-    let wMinY = Infinity, wMaxY = -Infinity;
-    for (const p of poly2D) {
-      if (p.y < wMinY) wMinY = p.y;
-      if (p.y > wMaxY) wMaxY = p.y;
-    }
-    const minGY = Math.max(0, Math.min(GRID_SIZE - 1,
-      Math.floor((wMinY - WORLD_MIN) / CELL_SIZE)));
-    const maxGY = Math.max(0, Math.min(GRID_SIZE - 1,
-      Math.floor((wMaxY - WORLD_MIN) / CELL_SIZE)));
-
-    const n = poly2D.length;
-    for (let gy = minGY; gy <= maxGY; gy++) {
-      const scanY = WORLD_MIN + (gy + 0.5) * CELL_SIZE;
-
-      // Find all X intersections of polygon edges with this scanline Y
-      const xIntersections = [];
-      for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
-        const yi = poly2D[i].y, yj = poly2D[j].y;
-        if ((yi <= scanY && yj > scanY) || (yj <= scanY && yi > scanY)) {
-          const t = (scanY - yi) / (yj - yi);
-          const xInt = poly2D[i].x + t * (poly2D[j].x - poly2D[i].x);
-          xIntersections.push(xInt);
-        }
-      }
-      xIntersections.sort((a, b) => a - b);
-
-      // Fill between pairs
-      for (let k = 0; k + 1 < xIntersections.length; k += 2) {
-        const gxStart = Math.max(0, Math.min(GRID_SIZE - 1,
-          Math.floor((xIntersections[k] - WORLD_MIN) / CELL_SIZE)));
-        const gxEnd = Math.max(0, Math.min(GRID_SIZE - 1,
-          Math.floor((xIntersections[k + 1] - WORLD_MIN) / CELL_SIZE)));
-        for (let gx = gxStart; gx <= gxEnd; gx++) {
-          const idx = gy * GRID_SIZE + gx;
-          const prev = this.grid[idx];
-          if (prev !== GRID_SENTINEL && prev !== ownerId) {
-            if (prev !== 0) overwritten.add(prev);
-            // Maintain cellCounts: cell flips from prev → ownerId.
-            this.cellCounts[prev]--;
-            this.cellCounts[ownerId]++;
-            this.grid[idx] = ownerId;
-          }
-        }
-      }
-    }
-    return overwritten;
-  }
-
-  // BFS flood-fill of all cells equal to ownerId. Keeps the largest
-  // connected component; reassigns smaller components to reassignTo.
-  // Returns the count of cells reassigned. Faithful port of
-  // main.js territoryGrid.floodFillConnected (uses array-as-queue for determinism).
-  _floodFillConnected(ownerId, reassignTo) {
-    const visited = new Uint8Array(GRID_SIZE * GRID_SIZE);
-    const components = [];
-
-    for (let i = 0; i < this.grid.length; i++) {
-      if (this.grid[i] !== ownerId || visited[i]) continue;
-
-      const component = [];
-      const gy0 = Math.floor(i / GRID_SIZE);
-      const gx0 = i % GRID_SIZE;
-      const queue = [gx0, gy0];
-      visited[i] = 1;
-      let head = 0;
-
-      while (head < queue.length) {
-        const cx = queue[head++];
-        const cy = queue[head++];
-        component.push(cy * GRID_SIZE + cx);
-
-        const neighbors = [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]];
-        for (const [nx, ny] of neighbors) {
-          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
-          const nIdx = ny * GRID_SIZE + nx;
-          if (visited[nIdx] || this.grid[nIdx] !== ownerId) continue;
-          visited[nIdx] = 1;
-          queue.push(nx, ny);
-        }
-      }
-      components.push(component);
-    }
-
-    if (components.length <= 1) return 0;
-
-    let largestIdx = 0;
-    for (let i = 1; i < components.length; i++) {
-      if (components[i].length > components[largestIdx].length) largestIdx = i;
-    }
-
-    let reassigned = 0;
-    for (let i = 0; i < components.length; i++) {
-      if (i === largestIdx) continue;
-      for (const cellIdx of components[i]) {
-        // Cell flips from ownerId → reassignTo. Maintain cellCounts.
-        this.cellCounts[ownerId]--;
-        this.cellCounts[reassignTo]++;
-        this.grid[cellIdx] = reassignTo;
-        reassigned++;
-      }
-    }
-    return reassigned;
-  }
-
   // Multi-pass: assign each unclaimed in-arena cell (value 0) to its
   // dominant 4-neighbor faction. Repeats until no change.
   // Faithful port of main.js Game._healUnclaimedCells.
@@ -540,7 +427,7 @@ export class Simulation {
   // higher r is used as a fallback when the BFS leaks at r=1 (parallel trail
   // sections sitting 4-5 cells apart leave 1-cell gaps in a 3×3 wall).
   // The radius is in grid cells.
-  _rasterizeLine(buffer, gx0, gy0, gx1, gy1, thick = false, radius = -1) {
+  _rasterizeLine(buffer, gx0, gy0, gx1, gy1, thick = false, radius = -1, plottedOut = null) {
     // Back-compat: thick=true and radius unspecified → 3×3 stamp (radius=1).
     let r = radius;
     if (r < 0) r = thick ? 1 : 0;
@@ -555,9 +442,15 @@ export class Simulation {
     let err = dx - dy;
     const N = GRID_SIZE;
 
+    // Plot a single cell; record it in plottedOut on the first time it's set.
+    // (Subsequent stamps over the same cell don't double-record.)
     const plot = (px, py) => {
       if (px < 0 || px >= N || py < 0 || py >= N) return;
-      buffer[py * N + px] = 1;
+      const idx = py * N + px;
+      if (!buffer[idx]) {
+        buffer[idx] = 1;
+        if (plottedOut) plottedOut.push(idx);
+      }
       if (r === 0) return;
       // Stamp (2r+1)×(2r+1) around (px, py).
       for (let oy = -r; oy <= r; oy++) {
@@ -567,7 +460,11 @@ export class Simulation {
         for (let ox = -r; ox <= r; ox++) {
           const nx = px + ox;
           if (nx < 0 || nx >= N) continue;
-          buffer[rowBase + nx] = 1;
+          const sIdx = rowBase + nx;
+          if (!buffer[sIdx]) {
+            buffer[sIdx] = 1;
+            if (plottedOut) plottedOut.push(sIdx);
+          }
         }
       }
     };
@@ -593,20 +490,22 @@ export class Simulation {
     }
   }
 
-  // Public claim. Replaces the rasterized trail with a temporary "wall" mask,
-  // floods from outside the trail loop within a tight bbox, and any
-  // non-sentinel cell the flood doesn't reach is enclosed → flips to claimer's
-  // faction.
-  // No global victim-fragment reassignment, no heal pass — the BFS produces a
-  // clean enclosed region with no orphans by construction.
-  // Returns true if the claim was applied; false if the trail was too short
-  // or the faction has no territory to close against.
+  // Public claim. BlocklyIO-style BFS sub-fill algorithm
+  // (paper.io clone reference: github.com/lallenlowe/blocklyio).
   //
-  // Performance: BFS is constrained to a bounding box around the trail+bridges
-  // (expanded by a small margin) instead of scanning the whole 1024×1024 grid.
-  // Tracks the list of changed cell indices and fires onClaimResult() for the
-  // server to broadcast the diff to clients (avoiding a re-run of the algorithm
-  // on every client).
+  // Approach: rasterize the trail (and short bridges to the nearest own cell at
+  // each endpoint) into a "trail mask". For each cell adjacent to the trail,
+  // run a bounded sub-flood-fill that aborts and is discarded if it ever
+  // touches the arena boundary (sentinel / out-of-bounds). Only sub-fills that
+  // stay fully enclosed get committed to the claimer's faction.
+  //
+  // Why this is structurally immune to the "thin-line" leak: the sub-fill
+  // either succeeds entirely (region is enclosed) or aborts entirely (region
+  // is open to outside). There is no partial commit, so a 1-cell gap in the
+  // wall just means that sub-fill is discarded — never a half-filled region.
+  //
+  // Returns true if the claim was processed (trail length OK + own faction has
+  // territory to anchor against); false otherwise.
   claim(char) {
     if (!char.trailVerts || char.trailVerts.length < 5) {
       return false;
@@ -616,9 +515,13 @@ export class Simulation {
     const trail = char.trailVerts;
     const factionId = char.factionId;
     const N = GRID_SIZE;
+    const grid = this.grid;
+    const cellCounts = this.cellCounts;
 
-    // 1. Find nearest own cells to the trail endpoints. These act as the
-    //    "anchors" the trail closes against.
+    // 1. Anchor bridges. The trail must close into a loop with the claimer's
+    //    own territory; bridge from trail[0] and trail[N-1] to the nearest
+    //    own-faction cell. Without these the trail is an open arc and no
+    //    sub-fill could ever be enclosed.
     const startNear = this._nearestOwnCell(factionId, trail[0].x, trail[0].z);
     const endNear   = this._nearestOwnCell(factionId, trail[trail.length - 1].x, trail[trail.length - 1].z);
     if (!startNear || !endNear) {
@@ -627,18 +530,21 @@ export class Simulation {
       return false;
     }
 
-    // 2. Compute trail+bridge endpoints in grid coords; derive bounding box.
+    // 2. Rasterize trail + bridges into trailMask. 3-cell-thick (radius 1)
+    //    so a 4-connected sub-fill cannot squeeze through corner gaps that
+    //    supercover Bresenham can leave between adjacent diagonal cells.
+    //    Track plotted cells in trailCells inline (avoids a 1M-cell scan).
+    const trailMask = new Uint8Array(N * N);
+    const trailCells = [];
     const tg = new Array(trail.length);
     let minGX = Infinity, minGY = Infinity, maxGX = -Infinity, maxGY = -Infinity;
     for (let i = 0; i < trail.length; i++) {
-      const g = this._worldToGrid(trail[i].x, trail[i].z);
-      tg[i] = g;
-      if (g.gx < minGX) minGX = g.gx;
-      if (g.gx > maxGX) maxGX = g.gx;
-      if (g.gy < minGY) minGY = g.gy;
-      if (g.gy > maxGY) maxGY = g.gy;
+      tg[i] = this._worldToGrid(trail[i].x, trail[i].z);
+      if (tg[i].gx < minGX) minGX = tg[i].gx;
+      if (tg[i].gx > maxGX) maxGX = tg[i].gx;
+      if (tg[i].gy < minGY) minGY = tg[i].gy;
+      if (tg[i].gy > maxGY) maxGY = tg[i].gy;
     }
-    // Include bridge endpoints in the bbox so the bridges stay inside it.
     if (startNear.gx < minGX) minGX = startNear.gx;
     if (startNear.gx > maxGX) maxGX = startNear.gx;
     if (startNear.gy < minGY) minGY = startNear.gy;
@@ -647,258 +553,151 @@ export class Simulation {
     if (endNear.gx > maxGX) maxGX = endNear.gx;
     if (endNear.gy < minGY) minGY = endNear.gy;
     if (endNear.gy > maxGY) maxGY = endNear.gy;
-
-    // Pad bbox by 5 cells on each side to ensure the perimeter cells are
-    // outside the trail+bridge loop. Clamp to grid bounds.
-    const PAD = 5;
+    // Pad bbox by 3 cells on each side so sub-fill perimeter checks always
+    // have a 1-cell margin around the trail+bridge stamp. Clamp to grid.
+    const PAD = 3;
     minGX = Math.max(0, minGX - PAD);
     minGY = Math.max(0, minGY - PAD);
     maxGX = Math.min(N - 1, maxGX + PAD);
     maxGY = Math.min(N - 1, maxGY + PAD);
 
-    // Polygon shoelace area (in cells). Closed polygon = trail vertices with
-    // implicit edge from last back to first. Used to detect BFS leaks: the
-    // enclosed-cell count should be roughly proportional to this area; far
-    // below it indicates the wall failed to seal.
-    let twoA = 0;
-    for (let i = 0; i < trail.length; i++) {
-      const j = (i + 1) % trail.length;
-      twoA += trail[i].x * trail[j].z - trail[j].x * trail[i].z;
+    for (let i = 0; i < trail.length - 1; i++) {
+      this._rasterizeLine(trailMask, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy, false, 1, trailCells);
     }
-    const polyAreaCells = Math.abs(twoA) / 2 / (CELL_SIZE * CELL_SIZE);
+    // Bridges: trail[0] → nearest own cell, trail[N-1] → nearest own cell.
+    this._rasterizeLine(trailMask, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy, false, 1, trailCells);
+    this._rasterizeLine(trailMask, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy, false, 1, trailCells);
 
-    const grid = this.grid;
-    let walls, visited, enclosedCount;
+    // 3. For every cell adjacent to a trail cell, run a sub-flood-fill.
+    //    Walls = sentinel | own faction | trail cells.
+    //    If the sub-fill ever reaches grid boundary or a sentinel cell during
+    //    expansion, abort: that region is "outside" → discard.
+    //    If it terminates without touching outside, commit those cells to
+    //    factionId.
+    //
+    //    `visited` is shared across all sub-fills: once a region is known to
+    //    be open or already committed, no other seed needs to re-explore it.
+    const visited = new Uint8Array(N * N);
+    const changedCells = []; // flat list of grid indices that flipped owner
+    const losers = new Set(); // factions that lost cells — invalidate contour cache
 
-    // 3+4. Rasterize wall & run BFS. Try with thin walls first (radius 1 →
-    //      3-cell-wide trail). If the BFS leaks (enclosedCount << polygon
-    //      area), retry with progressively thicker walls. This handles the
-    //      common leak class: parallel trail sections 4-7 cells apart leave
-    //      1-2 cell gaps in a 3-cell-wide wall, but a 7-cell-wide wall
-    //      (radius 3) closes those gaps.
-    const RADII_TO_TRY = [1, 3, 5];
-    let usedRadius = -1;
-    for (const radius of RADII_TO_TRY) {
-      walls = new Uint8Array(N * N);
-      for (let i = 0; i < trail.length - 1; i++) {
-        this._rasterizeLine(walls, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy, false, radius);
-      }
-      this._rasterizeLine(walls, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy, false, radius);
-      this._rasterizeLine(walls, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy, false, radius);
+    // Reusable BFS scratch arrays. Re-allocated only if a sub-fill outgrows
+    // them; keeps the common-case allocation cost down to one push per cell.
+    const subQueue = []; // grid indices; index-head pointer for O(1) dequeue
+    const subCells = []; // cells in the current sub-fill (committed if enclosed)
 
-      // BFS bounded to the bbox, seeded from the bbox perimeter.
-      // Blockers = sentinel + own territory + walls.
-      visited = new Uint8Array(N * N);
-      const queue = [];
-      let head = 0;
+    const NEIGHBORS = [
+      [1, 0], [-1, 0], [0, 1], [0, -1],
+    ];
 
-      // Seed: bbox perimeter cells (top + bottom rows, left + right cols).
-      for (let gx = minGX; gx <= maxGX; gx++) {
-        const topIdx = minGY * N + gx;
-        const botIdx = maxGY * N + gx;
-        if (grid[topIdx] !== GRID_SENTINEL && grid[topIdx] !== factionId && !walls[topIdx] && !visited[topIdx]) {
-          visited[topIdx] = 1; queue.push(topIdx);
-        }
-        if (minGY !== maxGY) {
-          if (grid[botIdx] !== GRID_SENTINEL && grid[botIdx] !== factionId && !walls[botIdx] && !visited[botIdx]) {
-            visited[botIdx] = 1; queue.push(botIdx);
-          }
-        }
-      }
-      for (let gy = minGY + 1; gy <= maxGY - 1; gy++) {
-        const leftIdx = gy * N + minGX;
-        const rightIdx = gy * N + maxGX;
-        if (grid[leftIdx] !== GRID_SENTINEL && grid[leftIdx] !== factionId && !walls[leftIdx] && !visited[leftIdx]) {
-          visited[leftIdx] = 1; queue.push(leftIdx);
-        }
-        if (minGX !== maxGX) {
-          if (grid[rightIdx] !== GRID_SENTINEL && grid[rightIdx] !== factionId && !walls[rightIdx] && !visited[rightIdx]) {
-            visited[rightIdx] = 1; queue.push(rightIdx);
-          }
-        }
-      }
-      // Also seed any non-blocker cell inside the bbox that is adjacent to a
-      // sentinel — sentinels are "outside the arena," so cells touching them
-      // are reachable from outside with one step. This handles bboxes that
-      // overlap the arena's circular boundary.
-      for (let gy = minGY; gy <= maxGY; gy++) {
-        const rowBase = gy * N;
-        for (let gx = minGX; gx <= maxGX; gx++) {
-          const idx = rowBase + gx;
-          if (grid[idx] !== GRID_SENTINEL) continue;
-          if (gy > minGY) {
-            const nIdx = idx - N;
-            if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-              visited[nIdx] = 1; queue.push(nIdx);
+    for (let t = 0; t < trailCells.length; t++) {
+      const tIdx = trailCells[t];
+      const tgx = tIdx % N;
+      const tgy = (tIdx - tgx) / N;
+
+      for (let nb = 0; nb < 4; nb++) {
+        const dx = NEIGHBORS[nb][0];
+        const dy = NEIGHBORS[nb][1];
+        const sx = tgx + dx;
+        const sy = tgy + dy;
+        if (sx < 0 || sx >= N || sy < 0 || sy >= N) continue;
+        const sIdx = sy * N + sx;
+        if (visited[sIdx]) continue;
+        const sv = grid[sIdx];
+        // Walls: sentinel, own faction, or part of the trail itself.
+        if (sv === GRID_SENTINEL || sv === factionId || trailMask[sIdx]) continue;
+
+        // Sub-fill from sIdx. Track every cell reached; if we touch the
+        // boundary at any point, mark touchedBoundary and finish enumerating
+        // the region (still mark visited to avoid re-attempting it from other
+        // seeds) but don't commit.
+        subCells.length = 0;
+        subQueue.length = 0;
+        subQueue.push(sIdx);
+        visited[sIdx] = 1;
+        let touchedBoundary = false;
+        let head = 0;
+
+        while (head < subQueue.length) {
+          const cur = subQueue[head++];
+          subCells.push(cur);
+          const cx = cur % N;
+          const cy = (cur - cx) / N;
+          for (let i = 0; i < 4; i++) {
+            const ax = cx + NEIGHBORS[i][0];
+            const ay = cy + NEIGHBORS[i][1];
+            // Out of bbox = "outside the trail loop" = sub-fill escaped.
+            // (The bbox padding guarantees a real escape if the wall has a
+            // gap; without bounding here the sub-fill could traverse the
+            // entire arena chasing a leak, blowing the perf budget.)
+            if (ax < minGX || ax > maxGX || ay < minGY || ay > maxGY) {
+              touchedBoundary = true;
+              continue;
             }
-          }
-          if (gy < maxGY) {
-            const nIdx = idx + N;
-            if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-              visited[nIdx] = 1; queue.push(nIdx);
+            const aIdx = ay * N + ax;
+            const av = grid[aIdx];
+            if (av === GRID_SENTINEL) {
+              // Touched arena boundary → region escapes outside.
+              touchedBoundary = true;
+              continue;
             }
-          }
-          if (gx > minGX) {
-            const nIdx = idx - 1;
-            if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-              visited[nIdx] = 1; queue.push(nIdx);
-            }
-          }
-          if (gx < maxGX) {
-            const nIdx = idx + 1;
-            if (grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx] && !visited[nIdx]) {
-              visited[nIdx] = 1; queue.push(nIdx);
-            }
+            if (av === factionId || trailMask[aIdx]) continue; // wall
+            if (visited[aIdx]) continue;
+            visited[aIdx] = 1;
+            subQueue.push(aIdx);
           }
         }
+
+        if (!touchedBoundary) {
+          // Enclosed region: commit every cell to the claimer.
+          for (let i = 0; i < subCells.length; i++) {
+            const ci = subCells[i];
+            const prev = grid[ci];
+            if (prev === factionId) continue; // shouldn't happen; safety
+            if (prev !== 0) losers.add(prev);
+            cellCounts[prev]--;
+            cellCounts[factionId]++;
+            grid[ci] = factionId;
+            changedCells.push(ci);
+          }
+        }
+        // If touchedBoundary: discard. visited[] entries stay set so other
+        // trail-adjacent seeds skip the same open region.
       }
-
-      // BFS expand (4-connected, deterministic neighbor order: N, S, W, E).
-      while (head < queue.length) {
-        const idx = queue[head++];
-        const gx = idx % N;
-        const gy = (idx - gx) / N;
-
-        if (gy > minGY) {
-          const nIdx = idx - N;
-          if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
-            visited[nIdx] = 1; queue.push(nIdx);
-          }
-        }
-        if (gy < maxGY) {
-          const nIdx = idx + N;
-          if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
-            visited[nIdx] = 1; queue.push(nIdx);
-          }
-        }
-        if (gx > minGX) {
-          const nIdx = idx - 1;
-          if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
-            visited[nIdx] = 1; queue.push(nIdx);
-          }
-        }
-        if (gx < maxGX) {
-          const nIdx = idx + 1;
-          if (!visited[nIdx] && grid[nIdx] !== GRID_SENTINEL && grid[nIdx] !== factionId && !walls[nIdx]) {
-            visited[nIdx] = 1; queue.push(nIdx);
-          }
-        }
-      }
-
-      // Count enclosed cells (non-flooded, non-wall, non-own, non-sentinel
-      // cells inside the bbox).
-      enclosedCount = 0;
-      for (let gy = minGY; gy <= maxGY; gy++) {
-        const rowBase = gy * N;
-        for (let gx = minGX; gx <= maxGX; gx++) {
-          const idx = rowBase + gx;
-          const v = grid[idx];
-          if (v === GRID_SENTINEL || v === factionId) continue;
-          if (walls[idx]) continue;
-          if (!visited[idx]) enclosedCount++;
-        }
-      }
-
-      usedRadius = radius;
-      // BFS-leak heuristic: enclosed should be at least ~50% of the polygon
-      // area when the wall sealed correctly. (Slack accounts for the
-      // bridge-arc closure adding/removing area vs. the raw polygon, plus the
-      // wall stamp eating some cells along its width.) If we're way under,
-      // the BFS leaked through a thin gap → retry with thicker wall.
-      const leaked = polyAreaCells > 50 && enclosedCount < polyAreaCells * 0.5;
-      if (!leaked) break;
     }
 
-    // 5a. Decide path. If the final attempt still leaked OR enclosed nothing,
-    //     the trail is too pathological for any wall thickness (e.g. the
-    //     player traced figure-8 self-crossings) — fall back to polygon-stamp
-    //     so they still get a fill instead of a wall-only thin-line capture.
-    const bfsLeaked = polyAreaCells > 50 && enclosedCount < polyAreaCells * 0.5;
-
-    const changedCells = []; // flat list of cell indices
-    const losers = new Set(); // factions that lost cells — must invalidate their contour cache
-    const cellCounts = this.cellCounts;
-
-    if (enclosedCount === 0 || bfsLeaked) {
-      // FALLBACK: BFS leaked. Stamp the trail as a closed polygon (closing
-      // line trail[0]→trail[N-1]) and use the result as the claimed region.
-      // Build the polygon in world coords (poly2D wants {x, y}; y = z axis).
-      const poly2D = new Array(trail.length);
-      for (let i = 0; i < trail.length; i++) {
-        poly2D[i] = { x: trail[i].x, y: trail[i].z };
-      }
-      // _stampPolygon implicitly closes the polygon (treats edge n-1→0).
-      // It maintains cellCounts and updates losers per-cell, so we need to
-      // capture changed cells ourselves. Snapshot+diff for correctness.
-      const preSnap = new Uint8Array(grid);
-      this._stampPolygon(poly2D, factionId);
-      // Also stamp the wall mask cells (so the trail line itself is filled
-      // even if the polygon's scanline fill missed them at thin/corner spots).
-      let wallGain = 0;
-      for (let gy = minGY; gy <= maxGY; gy++) {
-        const rowBase = gy * N;
-        for (let gx = minGX; gx <= maxGX; gx++) {
-          const idx = rowBase + gx;
-          if (!walls[idx]) continue;
-          const v = grid[idx];
-          if (v === GRID_SENTINEL || v === factionId) continue;
-          if (v !== 0) losers.add(v);
-          cellCounts[v]--;
-          wallGain++;
-          grid[idx] = factionId;
-        }
-      }
-      cellCounts[factionId] += wallGain;
-      // Compute changed cells = post != pre.
-      for (let i = 0; i < grid.length; i++) {
-        if (grid[i] !== preSnap[i]) {
-          const old = preSnap[i];
-          if (old !== 0 && old !== GRID_SENTINEL && old !== factionId) losers.add(old);
-          changedCells.push(i);
-        }
-      }
-    } else {
-      // Normal path: any non-sentinel, non-own, non-visited cell is enclosed
-      // → flip to own. Also flip wall cells (the trail itself is now own
-      // territory). Maintain cellCounts incrementally.
-      let claimerGain = 0;
-      for (let gy = minGY; gy <= maxGY; gy++) {
-        const rowBase = gy * N;
-        for (let gx = minGX; gx <= maxGX; gx++) {
-          const idx = rowBase + gx;
-          const v = grid[idx];
-          if (v === GRID_SENTINEL) continue;
-          if (v === factionId) continue;
-          if (!visited[idx] || walls[idx]) {
-            if (v !== 0) losers.add(v);
-            cellCounts[v]--;
-            claimerGain++;
-            grid[idx] = factionId;
-            changedCells.push(idx);
-          }
-        }
-      }
-      cellCounts[factionId] += claimerGain;
+    // 4. The trail cells themselves also become own faction (they're the
+    //    border of the claimed region). Iterate the trailCells list we built
+    //    earlier to avoid another full mask scan.
+    for (let i = 0; i < trailCells.length; i++) {
+      const ci = trailCells[i];
+      const prev = grid[ci];
+      if (prev === GRID_SENTINEL) continue; // safety: trail clipped against arena
+      if (prev === factionId) continue;
+      if (prev !== 0) losers.add(prev);
+      cellCounts[prev]--;
+      cellCounts[factionId]++;
+      grid[ci] = factionId;
+      changedCells.push(ci);
     }
+
     // Invalidate contour cache for the claimer + every faction that lost cells.
     this._contourCache.delete(factionId);
     for (const loser of losers) this._contourCache.delete(loser);
 
-    // 6. Clear trail and fire hooks.
+    // 5. Clear trail and fire hooks.
     char.trailVerts = [];
-
     const cellsFlipped = changedCells.length;
 
-    // Build flat trail-points array for the legacy onClaim hook (some hosts
-    // still want the trail polyline, e.g. to clear renderer trail meshes).
+    // Build flat trail-points array for the legacy onClaim hook (renderers
+    // use it to clear trail meshes by charId).
     const trailPointsFlat = new Array(trail.length * 2);
     for (let i = 0; i < trail.length; i++) {
       trailPointsFlat[i * 2] = trail[i].x;
       trailPointsFlat[i * 2 + 1] = trail[i].z;
     }
-    // New hook: cell-diff. Hosts can broadcast this directly so peers don't
-    // need to re-run the algorithm. If onClaimResult is wired, prefer it
-    // over onClaim for grid-sync purposes.
+    // Cell-diff hook: GameRoom broadcasts this directly so peers don't need to
+    // re-run the algorithm. Signature kept stable: (charId, factionId, cells, trailPoints).
     this.onClaimResult?.(char.id, factionId, changedCells, trailPointsFlat);
     this.onClaim?.(char.id, trailPointsFlat, factionId);
 
