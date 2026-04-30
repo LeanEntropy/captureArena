@@ -202,6 +202,10 @@ export class Simulation {
     const owner = this._getOwnerAt(char.pos.x, char.pos.z);
     const insideOwn = owner === char.factionId;
     if (insideOwn) {
+      // Track the most recent inside position so we can anchor the trail's
+      // first vertex to the territory boundary rather than one cell past it.
+      char._lastInsidePos = { x: char.pos.x, z: char.pos.z };
+
       // Task 5b claim hook point — re-entered own territory.
       if (char.wasOutside) {
         if (char.trailVerts.length >= 5) {
@@ -214,8 +218,17 @@ export class Simulation {
       return;
     }
 
-    // Outside own territory
-    char.wasOutside = true;
+    // Outside own territory.
+    // First frame outside: push the last-known inside position before the
+    // current outside position so the trail visually starts at the boundary.
+    if (!char.wasOutside) {
+      char.wasOutside = true;
+      if (char._lastInsidePos) {
+        char.trailVerts.push({ x: char._lastInsidePos.x, z: char._lastInsidePos.z });
+        this.onTrailVertex?.(char.id, char._lastInsidePos.x, char._lastInsidePos.z);
+      }
+    }
+
     const last = char.trailVerts[char.trailVerts.length - 1];
     if (!last) {
       char.trailVerts.push({ x: char.pos.x, z: char.pos.z });
@@ -581,6 +594,14 @@ export class Simulation {
     const changedCells = []; // flat list of grid indices that flipped owner
     const losers = new Set(); // factions that lost cells — invalidate contour cache
 
+    // [CLAIM_DIAG] sub-fill statistics
+    let _diagAttempts = 0;
+    let _diagCommitted = 0;
+    let _diagDiscarded = 0;
+    let _diagCellsCommittedTotal = 0;
+    let _diagCellsDiscardedTotal = 0;
+    let _diagLargestDiscardSize = 0;
+
     // Reusable BFS scratch arrays. Re-allocated only if a sub-fill outgrows
     // them; keeps the common-case allocation cost down to one push per cell.
     const subQueue = []; // grid indices; index-head pointer for O(1) dequeue
@@ -615,6 +636,7 @@ export class Simulation {
         subQueue.length = 0;
         subQueue.push(sIdx);
         visited[sIdx] = 1;
+        _diagAttempts++;
         let touchedBoundary = false;
         let head = 0;
 
@@ -650,6 +672,8 @@ export class Simulation {
 
         if (!touchedBoundary) {
           // Enclosed region: commit every cell to the claimer.
+          _diagCommitted++;
+          _diagCellsCommittedTotal += subCells.length;
           for (let i = 0; i < subCells.length; i++) {
             const ci = subCells[i];
             const prev = grid[ci];
@@ -660,6 +684,10 @@ export class Simulation {
             grid[ci] = factionId;
             changedCells.push(ci);
           }
+        } else {
+          _diagDiscarded++;
+          _diagCellsDiscardedTotal += subCells.length;
+          if (subCells.length > _diagLargestDiscardSize) _diagLargestDiscardSize = subCells.length;
         }
         // If touchedBoundary: discard. visited[] entries stay set so other
         // trail-adjacent seeds skip the same open region.
@@ -688,6 +716,78 @@ export class Simulation {
     // 5. Clear trail and fire hooks.
     char.trailVerts = [];
     const cellsFlipped = changedCells.length;
+
+    // [CLAIM_DIAG] Always log basic stats; on suspected thin-line, dump full state.
+    try {
+      const _thinLine = cellsFlipped <= trailCells.length + 5;
+      const _diagSummary = {
+        ts: Date.now(),
+        charId: char.id,
+        factionId,
+        trailLen: trail.length,
+        bridges: {
+          start: { trail: { gx: tg[0].gx, gy: tg[0].gy }, near: { gx: startNear.gx, gy: startNear.gy } },
+          end:   { trail: { gx: tg[trail.length - 1].gx, gy: tg[trail.length - 1].gy }, near: { gx: endNear.gx, gy: endNear.gy } },
+        },
+        bbox: { minGX, minGY, maxGX, maxGY, w: maxGX - minGX, h: maxGY - minGY },
+        trailCells: trailCells.length,
+        subFillStats: {
+          totalAttempts: _diagAttempts,
+          committed: _diagCommitted,
+          discarded: _diagDiscarded,
+          cellsCommittedTotal: _diagCellsCommittedTotal,
+          cellsDiscardedTotal: _diagCellsDiscardedTotal,
+          largestDiscardSize: _diagLargestDiscardSize,
+        },
+        result: cellsFlipped,
+        thinLine: _thinLine,
+      };
+      // eslint-disable-next-line no-console
+      console.log("[CLAIM]", JSON.stringify(_diagSummary));
+      if (_thinLine && typeof window !== "undefined") {
+        // Build a trail/bbox dump. Encode walls as plain int array (small).
+        const wallsArr = Array.from(trailCells);
+        // Snapshot the full grid window inside bbox: row-major, with sentinel→255, factionId→1, others→0.
+        const w = maxGX - minGX + 1;
+        const h = maxGY - minGY + 1;
+        const snap = new Uint8Array(w * h);
+        for (let yy = 0; yy < h; yy++) {
+          for (let xx = 0; xx < w; xx++) {
+            const gv = grid[(minGY + yy) * N + (minGX + xx)];
+            // Encode: 0=empty, 1=ownFaction, 2=otherFaction, 255=sentinel
+            if (gv === GRID_SENTINEL) snap[yy * w + xx] = 255;
+            else if (gv === factionId) snap[yy * w + xx] = 1;
+            else if (gv === 0) snap[yy * w + xx] = 0;
+            else snap[yy * w + xx] = 2;
+          }
+        }
+        // Trail world coords (we capture pre-mutated grid by re-reading bbox after mutation;
+        // but mutations only affect own faction so "1" cells include freshly-claimed which is fine for
+        // post-mortem. Nevertheless save the trail itself for reconstruction.)
+        const trailDump = trail.map(p => ({ x: p.x, z: p.z }));
+        const tgDump = tg.map(p => ({ gx: p.gx, gy: p.gy }));
+        const dump = {
+          summary: _diagSummary,
+          trail: trailDump,
+          trailGrid: tgDump,
+          bbox: { minGX, minGY, maxGX, maxGY, w, h },
+          walls: wallsArr,
+          startNear, endNear,
+          gridSnapshotBase64: typeof Buffer !== "undefined"
+            ? Buffer.from(snap).toString("base64")
+            : (() => {
+                // Browser path: btoa with binary string
+                let s = "";
+                for (let i = 0; i < snap.length; i++) s += String.fromCharCode(snap[i]);
+                return btoa(s);
+              })(),
+        };
+        if (!window.__claimThinLineDumps) window.__claimThinLineDumps = [];
+        window.__claimThinLineDumps.push(dump);
+        // eslint-disable-next-line no-console
+        console.log("[THIN_LINE_DUMP]", `dump#${window.__claimThinLineDumps.length} cellsFlipped=${cellsFlipped} trailCells=${trailCells.length}`);
+      }
+    } catch (_e) { /* diagnostics never throw */ }
 
     // Build flat trail-points array for the legacy onClaim hook (renderers
     // use it to clear trail meshes by charId).
@@ -775,6 +875,7 @@ export class Simulation {
       c.invulnTimer = 0;
       c.respawnTimer = 0;
       c.wasOutside = false;
+      c._lastInsidePos = null;
       c.botWaypoints = [];
       c.botLoopCount = 0;
       this.factionManager.addCharacter(c, c.factionId);
