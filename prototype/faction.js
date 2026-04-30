@@ -17,6 +17,8 @@ export class FactionManager {
     this._factions = new Map();
   }
 
+  get factions() { return this._factions; }
+
   /**
    * Initialize factions and perform pie-slice territory division.
    * @param {Uint8Array} grid

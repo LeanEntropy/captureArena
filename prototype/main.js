@@ -977,7 +977,7 @@ class Game {
       c.update(dt);
       // Respawn
       if (!c.alive && c.respawnTimer <= 0) {
-        const faction = this.factionManager._factions.get(c.factionId);
+        const faction = this.factionManager.factions.get(c.factionId);
         if (faction && faction.respawnsEnabled) {
           const sp = this.factionManager.getSpawnPoint(
             c.factionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
@@ -1003,7 +1003,7 @@ class Game {
               this.uiManager.setPlayer(this.player);
             }
           }
-          for (const [id] of this.factionManager._factions) {
+          for (const [id] of this.factionManager.factions) {
             if (this.factionManager.checkElimination(id)) {
               dlog("ELIMINATED", `Faction ${id} eliminated`);
             }

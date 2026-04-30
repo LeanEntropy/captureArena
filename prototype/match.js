@@ -26,10 +26,10 @@ export class MatchManager {
 
       this.factionManager.updateTerritoryPcts(grid, gridSize, sentinel);
 
-      for (const faction of this.factionManager.factions) {
-        this.factionManager.checkEndangered(faction);
-        this.factionManager.checkRecovery(faction);
-        this.factionManager.checkElimination(faction);
+      for (const [id] of this.factionManager.factions) {
+        this.factionManager.checkEndangered(id);
+        this.factionManager.checkRecovery(id);
+        this.factionManager.checkElimination(id);
       }
     }
 
