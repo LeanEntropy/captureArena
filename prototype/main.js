@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
 import { ScoreTracker } from "./sim/scoring.js";
 import { MatchManager } from "./sim/match.js";
+import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
 import {
   ARENA_RADIUS, MIN_POINT_DIST, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
@@ -416,34 +417,46 @@ function dist2D(a, b) {
   return Math.sqrt(dx*dx + dz*dz);
 }
 
-// ===================== CHARACTER =====================
+// ===================== CHARACTER (RENDERER WRAPPER) =====================
+// Renderer-side Character. Visual mesh + trail mesh + label.
+// Authoritative simulation state lives on this.simChar (Simulation's plain-data
+// Character). Each frame, Game.tick syncs pos/dir from simChar to this.pos/dir.
+// Player/bot input writes to this.targetDir, Game forwards it to sim.
 class Character {
-  constructor(scene, x, z, color, name, isPlayer) {
+  constructor(scene, simChar, color, isPlayer) {
     this.scene = scene;
-    this.pos = new THREE.Vector3(x, 0, z);
-    this.dir = new THREE.Vector3(0, 0, 1);
+    this.simChar = simChar;          // authoritative sim state (Simulation/Character.js)
+    this.pos = new THREE.Vector3(simChar.pos.x, 0, simChar.pos.z);
+    this.dir = new THREE.Vector3(simChar.dir.x, 0, simChar.dir.z);
     this.targetDir = this.dir.clone();
     this.speed = isPlayer ? PLAYER_SPEED : BOT_SPEED;
     this.color = color;
-    this.name = name;
+    this.name = simChar.name;
     this.isPlayer = isPlayer;
-    this.alive = true;
-    this.respawnTimer = 0;
-    this.invulnTimer = INVULN_TIME;
-    this.killCount = 0;
-    this.factionId = 0; // set when game starts, 1-based
-    this.trailVerts = [];
+    this.factionId = simChar.factionId;   // mirror; updated on faction reassign
+    this.trailVerts = [];                 // Vector3[]; populated via sim.onTrailVertex hook
     this.trailMesh = null;
-    this.wasOutside = false;
-    this.allCharacters = null; // set after all characters are created
     this.group = this._buildChar(color);
     scene.add(this.group);
-    // Bot AI state
+    // Bot AI state (kept here until Task 7 moves it into sim)
     this.botPhase = "idle";
     this.botWaypoints = [];
     this.botLoopCount = 0;
     this.botAggroChance = 0.25;
   }
+
+  // Convenience accessors that forward to simChar (renderer code reads these
+  // for HUD / scoring / kill detection that hasn't moved yet).
+  get alive() { return this.simChar.alive; }
+  set alive(v) { this.simChar.alive = v; }
+  get respawnTimer() { return this.simChar.respawnTimer; }
+  set respawnTimer(v) { this.simChar.respawnTimer = v; }
+  get invulnTimer() { return this.simChar.invulnTimer; }
+  set invulnTimer(v) { this.simChar.invulnTimer = v; }
+  get killCount() { return this.simChar.killCount; }
+  set killCount(v) { this.simChar.killCount = v; }
+  get wasOutside() { return this.simChar.wasOutside; }
+  set wasOutside(v) { this.simChar.wasOutside = v; }
 
   _buildChar(color) {
     const g = new THREE.Group();
@@ -514,202 +527,41 @@ class Character {
     return territoryGrid.getOwner(x, z) === this.factionId;
   }
 
-  update(dt) {
-    if (!this.alive) { this.respawnTimer -= dt; return null; }
-    if (this.invulnTimer > 0) this.invulnTimer -= dt;
-
-    // Steer
-    const ca = Math.atan2(this.dir.x, this.dir.z);
-    const ta = Math.atan2(this.targetDir.x, this.targetDir.z);
-    let diff = ta - ca;
-    while (diff > Math.PI) diff -= Math.PI*2;
-    while (diff < -Math.PI) diff += Math.PI*2;
-    const turn = Math.max(-TURN_SPEED*dt, Math.min(TURN_SPEED*dt, diff));
-    const na = ca + turn;
-    this.dir.set(Math.sin(na), 0, Math.cos(na));
-
-    // Move
-    this.pos.x += this.dir.x * this.speed * dt;
-    this.pos.z += this.dir.z * this.speed * dt;
-
-    // Boundary -- solid wall, slide along it
-    if (this.pos.length() > ARENA_RADIUS) {
-      this.pos.normalize().multiplyScalar(ARENA_RADIUS);
-      this.pos.y = 0;
+  // Renderer-only sync: pull authoritative pos/dir from simChar, update mesh.
+  // All simulation work (steer, move, trail, claim, kills) is owned by sim.tick.
+  syncVisuals() {
+    if (!this.alive) {
+      this.group.visible = false;
+      return;
     }
-
-    // Territory check
-    const inside = this.insideOwn(this.pos.x, this.pos.z);
-    if (!inside) {
-      const last = this.trailVerts[this.trailVerts.length - 1];
-      if (!last || dist2D(this.pos, last) >= MIN_POINT_DIST) {
-        this.trailVerts.push(this.pos.clone());
-        this._rebuildTrailMesh();
-        if (this.isPlayer && this.trailVerts.length <= 3) {
-          dlog("TRAIL", `trail point #${this.trailVerts.length}`, { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2) });
-        }
-      }
-      if (!this.wasOutside && this.isPlayer) {
-        dlog("EXIT", "left territory", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2) });
-      }
-      this.wasOutside = true;
-    } else if (this.wasOutside && this.trailVerts.length >= 5) {
-      if (this.isPlayer) {
-        dlog("ENTER", "re-entered territory, will claim", { x: this.pos.x.toFixed(2), z: this.pos.z.toFixed(2), trailLen: this.trailVerts.length });
-      }
-      this._claim();
-      this.wasOutside = false;
-    } else {
-      this.wasOutside = false;
-    }
-
-    // Visual
+    this.pos.set(this.simChar.pos.x, 0, this.simChar.pos.z);
+    this.dir.set(this.simChar.dir.x, 0, this.simChar.dir.z);
+    this.factionId = this.simChar.factionId;
     this.group.position.set(this.pos.x, 0, this.pos.z);
     this.group.rotation.y = Math.atan2(this.dir.x, this.dir.z);
-    this.group.visible = (this.isPlayer && this.invulnTimer > 0) ? Math.sin(performance.now() * 0.01) > 0 : true;
-    return null;
+    this.group.visible = (this.isPlayer && this.invulnTimer > 0)
+      ? Math.sin(performance.now() * 0.01) > 0
+      : true;
   }
 
-  _claim() {
-    if (this.trailVerts.length < 5) {
-      dlog("CLAIM", `${this.name}: aborted, trail too short (need >= 5)`, { trailLen: this.trailVerts.length });
-      this._clearTrail(); return;
-    }
-    const trail = this.trailVerts;
-
-    const areaBefore = territoryGrid.countCells(this.factionId);
-    dlog("CLAIM", `${this.name}: starting claim`, {
-      trailLen: trail.length,
-      areaBefore,
-      trailStart: `${trail[0].x.toFixed(2)},${trail[0].z.toFixed(2)}`,
-      trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`
-    });
-
-    // Build a trail polygon by closing the trail loop through the territory boundary.
-    const contours = territoryGrid.extractContours(this.factionId);
-    if (contours.length === 0) {
-      dlog("CLAIM", `${this.name}: aborted, no contours found`);
-      this._clearTrail();
-      return;
-    }
-
-    // Use largest contour as boundary
-    contours.sort((a, b) => polyArea(b) - polyArea(a));
-    const boundary = contours[0];
-
-    // Convert boundary to Vector3-like for closestIdx (needs .x, .z)
-    const boundaryV3 = boundary.map(p => ({ x: p.x, z: p.y }));
-
-    const si = closestIdx(boundaryV3, trail[0]);
-    const ei = closestIdx(boundaryV3, trail[trail.length - 1]);
-
-    // Build trail polygon: trail points + boundary arc from ei back to si
-    let trailPoly;
-    if (si === ei) {
-      trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
-    } else {
-      const n = boundaryV3.length;
-      const arcFwd = [];
-      for (let i = ei; ; i = (i + 1) % n) {
-        arcFwd.push({ x: boundaryV3[i].x, y: boundaryV3[i].z });
-        if (i === si) break;
-        if (arcFwd.length > n) break;
-      }
-      const arcBwd = [];
-      for (let i = ei; ; i = (i - 1 + n) % n) {
-        arcBwd.push({ x: boundaryV3[i].x, y: boundaryV3[i].z });
-        if (i === si) break;
-        if (arcBwd.length > n) break;
-      }
-      const arc = arcFwd.length <= arcBwd.length ? arcFwd : arcBwd;
-
-      trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
-      for (let i = 0; i < arc.length; i++) {
-        trailPoly.push(arc[i]);
-      }
-    }
-
-    const trailPolyArea = polyArea(trailPoly);
-    dlog("CLAIM", `${this.name}: trail polygon built`, {
-      trailPolyLen: trailPoly.length,
-      polyArea: trailPolyArea.toFixed(2)
-    });
-
-    if (trailPoly.length < 3) {
-      dlog("CLAIM", `${this.name}: aborted, trail polygon too small`, { trailPolyLen: trailPoly.length });
-      this._clearTrail();
-      return;
-    }
-
-    // Reject micro-claims: area too small to be meaningful
-    if (trailPolyArea < 1.0) {
-      dlog("CLAIM", `${this.name}: aborted, micro-claim area too small`, { polyArea: trailPolyArea.toFixed(4) });
-      this._clearTrail();
-      return;
-    }
-
-    // Stamp the trail polygon onto the grid
-    const overwritten = territoryGrid.stampPolygon(trailPoly, this.factionId);
-
-    dlog("CLAIM", `${this.name}: stamped polygon`, {
-      polyVerts: trailPoly.length,
-      overwrittenOwners: [...overwritten]
-    });
-
-    // Handle CONTINUOUS_LAND for victims (per-faction flood fill)
-    if (CONTINUOUS_LAND && overwritten.size > 0) {
-      for (const victimFactionId of overwritten) {
-        const reassigned = territoryGrid.floodFillConnected(victimFactionId, this.factionId);
-        if (reassigned > 0) {
-          dlog("CONTINUOUS_LAND", `faction ${victimFactionId}: reassigned ${reassigned} disconnected cells to faction ${this.factionId}`);
-        }
-      }
-    }
-
-    if (window._game) {
-      window._game.territoryDirty = true;
-    }
-
-    const areaAfter = territoryGrid.countCells(this.factionId);
-    const cellsGained = areaAfter - areaBefore;
-
-    // Report to score tracker
-    if (window._scoreTracker && window._factionManager) {
-      if (cellsGained > 0) window._scoreTracker.onCapture(this, cellsGained, window._factionManager);
-      window._scoreTracker.onClaim(this, window._factionManager);
-    }
-
-    dlog("CLAIM", `${this.name}: SUCCESS`, {
-      cellsBefore: areaBefore,
-      cellsAfter: areaAfter,
-      cellsGained,
-      areaPct: ((areaAfter / territoryGrid.totalArenaCells) * 100).toFixed(2),
-      overwritten: [...overwritten]
-    });
-
-    this._clearTrail();
-  }
-
+  // Renderer trail mesh teardown. Sim owns the actual trailVerts data; this
+  // method clears the renderer mirror used to build the visible mesh.
   _clearTrail() {
     this.trailVerts = [];
     if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
   }
 
-  die() {
-    this.alive = false;
-    this.respawnTimer = RESPAWN_DELAY;
-    this.wasOutside = false;
+  // Visual death hook (sim already mutated simChar via Character.kill()).
+  onDieVisual() {
     this._clearTrail();
     this.group.visible = false;
+    this.botWaypoints = [];
+    this.botPhase = "idle";
   }
 
-  respawn(x, z) {
-    this.pos.set(x, 0, z);
-    this.dir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
-    this.targetDir.copy(this.dir);
-    this.alive = true;
-    this.invulnTimer = INVULN_TIME;
-    this.wasOutside = false;
+  // Visual respawn hook (sim already mutated simChar via Character.respawn()).
+  onRespawnVisual() {
+    this.targetDir.set(this.simChar.dir.x, 0, this.simChar.dir.z);
     this.group.visible = true;
     this.botWaypoints = [];
     this.botPhase = "idle";
@@ -774,9 +626,12 @@ class Game {
     this.started = false;
     this.playerName = "";
     this.killedBy = "";
-    this.factionManager = null;
-    this.matchManager = null;
-    this.scoreTracker = null;
+    // Authoritative simulation. Created here so event hooks can be attached
+    // even before start() is called.
+    this.sim = new Simulation();
+    this.factionManager = null;   // alias to sim.factionManager after start
+    this.matchManager = null;     // alias to sim.matchManager after start
+    this.scoreTracker = null;     // alias to sim.scoreTracker after start
     this.uiManager = null;
     this.territoryDirty = false;
     this.territoryTexture = null;
@@ -785,7 +640,8 @@ class Game {
     this._territoryCtx = null;
     this._territoryImageData = null;
     this._debugNearestFilter = false;
-    this._healTimer = 0;
+    // Map: simChar -> renderer Character (used by event hooks).
+    this._charBySim = new Map();
 
     // Input
     this.mouseNDC = new THREE.Vector2();
@@ -841,72 +697,101 @@ class Game {
     this.deathScreen = document.getElementById("death-screen");
     this.deathMsg = document.getElementById("death-msg");
     this.deathTimer = document.getElementById("death-timer");
+
+    // ===== Sim event hooks: bridge authoritative sim events to renderer state =====
+    this.sim.onClaim = (charId, _trailPoints, _factionId) => {
+      this.territoryDirty = true;
+      const simChar = this.sim.characters[charId];
+      const r = this._charBySim.get(simChar);
+      if (r) r._clearTrail();
+      dlog("CLAIM", `${r ? r.name : "?"}: claimed (sim)`, { charId });
+    };
+    this.sim.onHeal = (_changedCells) => {
+      this.territoryDirty = true;
+    };
+    this.sim.onTrailVertex = (charId, x, z) => {
+      const simChar = this.sim.characters[charId];
+      const r = this._charBySim.get(simChar);
+      if (!r) return;
+      r.trailVerts.push(new THREE.Vector3(x, 0, z));
+      r._rebuildTrailMesh();
+    };
+    this.sim.onKill = (killerId, victimId) => {
+      const victimSim = this.sim.characters[victimId];
+      const victimR = this._charBySim.get(victimSim);
+      const killerSim = killerId !== null ? this.sim.characters[killerId] : null;
+      const killerR = killerSim ? this._charBySim.get(killerSim) : null;
+      if (victimR) {
+        victimR.onDieVisual();
+        if (victimR === this.player) {
+          this.killedBy = killerR ? killerR.name : "";
+          this.deathMsg.textContent = killerR ? `Killed by ${killerR.name}` : "You died!";
+          this.deathScreen.classList.add("visible");
+        }
+        dlog("KILL", `${victimR.name} killed${killerR ? " by " + killerR.name : ""}`, {
+          isPlayer: victimR.isPlayer
+        });
+      }
+    };
   }
 
   start(name) {
     this.playerName = name;
     this.started = true;
 
-    territoryGrid.init();
+    // Boot the authoritative simulation. This initializes the grid, factions,
+    // creates plain-data characters for every faction slot, and starts the match.
+    this.sim.start();
 
-    this.factionManager = new FactionManager();
-    this.scoreTracker = new ScoreTracker();
+    // Alias: existing renderer code (texture rasterizer, minimap, contour
+    // extraction) reads from territoryGrid.grid, so point it at the sim's grid.
+    territoryGrid.grid = this.sim.grid;
+    territoryGrid.totalArenaCells = this.sim.totalArenaCells;
 
-    this.factionManager.init(
-      territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL
-    );
+    // Alias the public managers so the rest of main.js + UIManager keep working.
+    this.factionManager = this.sim.factionManager;
+    this.matchManager = this.sim.matchManager;
+    this.scoreTracker = this.sim.scoreTracker;
 
     window._factionManager = this.factionManager;
     window._scoreTracker = this.scoreTracker;
     window._game = this;
 
+    // Pick the player's faction at random; the player takes the first sim char
+    // belonging to that faction.
     const playerFactionId = Math.floor(Math.random() * FACTION_COUNT) + 1;
+    let playerSimChar = null;
+    for (const sc of this.sim.characters) {
+      if (sc.factionId === playerFactionId) { playerSimChar = sc; break; }
+    }
+    if (!playerSimChar) playerSimChar = this.sim.characters[0]; // safety
+    playerSimChar.name = name;
 
-    const playerSpawn = this.factionManager.getSpawnPoint(
-      playerFactionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-    );
-    this.player = new Character(this.scene, playerSpawn.x, playerSpawn.z, FACTION_COLORS[playerFactionId - 1], name, true);
-    this.factionManager.addCharacter(this.player, playerFactionId);
-    this.scoreTracker.register(this.player);
-    this.characters.push(this.player);
-
-    let botIdx = 0;
-    for (let fid = 1; fid <= FACTION_COUNT; fid++) {
-      const botsNeeded = (fid === playerFactionId) ? CHARS_PER_FACTION - 1 : CHARS_PER_FACTION;
-      for (let b = 0; b < botsNeeded; b++) {
-        const sp = this.factionManager.getSpawnPoint(
-          fid, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-        );
-        const offset = (b + 1) * 2;
-        const angle = Math.random() * Math.PI * 2;
-        const bx = sp.x + Math.cos(angle) * offset;
-        const bz = sp.z + Math.sin(angle) * offset;
-
-        const bot = new Character(this.scene, bx, bz, FACTION_COLORS[fid - 1], BOT_NAMES[botIdx % BOT_NAMES.length], false);
-        this.factionManager.addCharacter(bot, fid);
-        this.scoreTracker.register(bot);
-        this.characters.push(bot);
-        botIdx++;
+    // Build renderer Characters wrapping each sim Character.
+    for (const sc of this.sim.characters) {
+      const isPlayer = (sc === playerSimChar);
+      const color = FACTION_COLORS[sc.factionId - 1];
+      const r = new Character(this.scene, sc, color, isPlayer);
+      this.characters.push(r);
+      this._charBySim.set(sc, r);
+      if (isPlayer) {
+        this.player = r;
+        this.sim.setHumanControl(sc.id, true);
       }
     }
-
-    for (const c of this.characters) {
-      c.allCharacters = this.characters;
-      c.invulnTimer = 0;
-    }
-
-    this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
-    this.matchManager.startMatch();
 
     this.uiManager = new UIManager(
       this.factionManager, this.matchManager, this.scoreTracker,
       territoryGrid.grid, GRID_SIZE, GRID_SENTINEL
     );
-    this.uiManager.setPlayer(this.player);
+    // UIManager reads .pos.{x,z}, .alive, .factionId — sim Character has them.
+    // Score lookups key on simChar (sim.scoreTracker.register registers simChars).
+    this.uiManager.setPlayer(this.player.simChar);
 
     this._createTerritoryTexture();
     this._updateTerritoryTexture();
 
+    const playerSpawn = { x: playerSimChar.pos.x, z: playerSimChar.pos.z };
     this.camera.position.set(playerSpawn.x, CAMERA_HEIGHT, playerSpawn.z + CAMERA_Z_OFFSET);
     this.camera.lookAt(playerSpawn.x, 0, playerSpawn.z);
     this.camCurrent.set(playerSpawn.x, 0, playerSpawn.z);
@@ -916,7 +801,7 @@ class Game {
   tick(dt) {
     if (!this.started) return;
 
-    // Player input
+    // ---- Player input: write to player.targetDir; forwarded to sim below ----
     if (this.player && this.player.alive) {
       let kx = 0, kz = 0;
       if (this.keysDown.has("w") || this.keysDown.has("arrowup")) kz -= 1;
@@ -937,13 +822,14 @@ class Game {
           }
         }
       }
+      this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
     }
 
-    // Bot AI -- loop-based territory claiming
+    // ---- Bot AI: plan waypoints, set targetDir on renderer, forward to sim ----
+    // (Task 7 will move this fully into sim/BotAI.js.)
     for (const c of this.characters) {
       if (c.isPlayer || !c.alive) continue;
 
-      // If no waypoints, plan a new claiming loop
       if (c.botWaypoints.length === 0) {
         try {
           this._planBotLoop(c);
@@ -954,7 +840,6 @@ class Game {
         }
       }
 
-      // Steer toward current waypoint
       if (c.botWaypoints.length > 0) {
         const wp = c.botWaypoints[0];
         const dx = wp.x - c.pos.x, dz = wp.z - c.pos.z;
@@ -965,102 +850,65 @@ class Game {
           c.targetDir.set(dx / d, 0, dz / d);
         }
       }
+      this.sim.setTargetDir(c.simChar.id, c.targetDir.x, c.targetDir.z);
     }
 
-    // Match manager update
-    if (this.matchManager) {
-      this.matchManager.update(dt, territoryGrid.grid, GRID_SIZE, GRID_SENTINEL);
-      if (this.matchManager.phase === "ended") {
-        this._updateLabels();
-        if (this.uiManager) this.uiManager.update(dt);
-        if (this.territoryDirty) {
-          this._updateTerritoryTexture();
-          this.territoryDirty = false;
-        }
-        return;
+    // Track per-char alive state from previous frame so we can fire visual
+    // hooks when sim respawns or kills a character.
+    const wasAlive = new Map();
+    for (const c of this.characters) wasAlive.set(c, c.alive);
+
+    // ---- Run authoritative sim tick: movement, trail, claim, heal, kills,
+    // cutoff, respawn, faction reassign all happen inside. Event hooks
+    // (onClaim, onTrailVertex, onKill, onHeal) fire during this call. ----
+    this.sim.tick(dt);
+
+    // Match ended: still update visuals/HUD then bail out.
+    if (this.matchManager.phase === "ended") {
+      for (const c of this.characters) c.syncVisuals();
+      this._updateLabels();
+      if (this.uiManager) this.uiManager.update(dt);
+      if (this.territoryDirty) {
+        this._updateTerritoryTexture();
+        this.territoryDirty = false;
       }
+      return;
     }
 
-    // Update all characters
+    // ---- Sync renderer-side state from sim ----
     for (const c of this.characters) {
-      c.update(dt);
-      // Respawn
-      if (!c.alive && c.respawnTimer <= 0) {
-        const faction = this.factionManager.factions.get(c.factionId);
-        if (faction && faction.respawnsEnabled) {
-          const sp = this.factionManager.getSpawnPoint(
-            c.factionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-          );
-          c.respawn(sp.x, sp.z);
-          dlog("RESPAWN", `${c.name} respawned in ${faction.name}`, { x: sp.x.toFixed(1), z: sp.z.toFixed(1) });
-          if (c === this.player) this.deathScreen.classList.remove("visible");
-        } else {
-          const newFaction = this.factionManager.reassignCharacter(c);
-          if (newFaction) {
-            c.color = newFaction.color;
-            c.group.children.forEach(child => {
-              if (child.material && child.material.color) child.material.color.setHex(newFaction.color);
-            });
-            this.scoreTracker.onFactionChange(c);
-            const sp = this.factionManager.getSpawnPoint(
-              c.factionId, territoryGrid.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-            );
-            c.respawn(sp.x, sp.z);
-            dlog("REASSIGN", `${c.name} reassigned to ${newFaction.name}`, { factionId: newFaction.id });
-            if (c === this.player) {
-              this.deathScreen.classList.remove("visible");
-              this.uiManager.setPlayer(this.player);
-            }
-          }
-          for (const [id] of this.factionManager.factions) {
-            if (this.factionManager.checkElimination(id)) {
-              dlog("ELIMINATED", `Faction ${id} eliminated`);
-            }
-          }
+      const wasAliveBefore = wasAlive.get(c);
+      const isAliveNow = c.alive;
+
+      // Detect respawn: was dead, is alive now -> visual respawn hook.
+      if (!wasAliveBefore && isAliveNow) {
+        // Faction may have changed (reassignment); recolor the mesh.
+        const newFactionId = c.simChar.factionId;
+        if (newFactionId !== c.factionId) {
+          const newColor = FACTION_COLORS[newFactionId - 1];
+          c.color = newColor;
+          c.factionId = newFactionId;
+          c.group.children.forEach(child => {
+            if (child.material && child.material.color) child.material.color.setHex(newColor);
+          });
+          if (c === this.player && this.uiManager) this.uiManager.setPlayer(this.player.simChar);
+          dlog("REASSIGN", `${c.name} reassigned to faction ${newFactionId}`);
         }
+        c.onRespawnVisual();
+        if (c === this.player) this.deathScreen.classList.remove("visible");
+        dlog("RESPAWN", `${c.name} respawned`, { x: c.simChar.pos.x.toFixed(1), z: c.simChar.pos.z.toFixed(1) });
       }
+
+      c.syncVisuals();
     }
 
-    // Trail collisions
-    for (const c of this.characters) {
-      if (!c.alive || c.invulnTimer > 0) continue;
-      for (const other of this.characters) {
-        if (!other.alive) continue;
-        if (other === c) {
-          // Self-trail collision (skip recent points)
-          for (let i = 0; i < other.trailVerts.length - SELF_TRAIL_SKIP; i++) {
-            if (dist2D(c.pos, other.trailVerts[i]) < TRAIL_KILL_DIST) {
-              this._killCharacter(c);
-              break;
-            }
-          }
-        } else if (other.factionId !== c.factionId) {
-          // Enemy trail collision only
-          for (const tv of other.trailVerts) {
-            if (dist2D(c.pos, tv) < TRAIL_KILL_DIST) {
-              this._killCharacter(other, c);
-              break;
-            }
-          }
-        }
-        if (!c.alive) break;
-      }
-    }
-
-    this._healTimer += dt;
-    if (this._healTimer >= 1.0) {
-      this._healTimer = 0;
-      this._healUnclaimedCells();
-    }
-
+    // Texture refresh if grid changed this tick.
     if (this.territoryDirty) {
       this._updateTerritoryTexture();
       this.territoryDirty = false;
     }
 
-    this._checkCutoff();
-
-    // Camera
+    // ---- Camera ----
     if (this.player && this.player.alive) {
       this.camTarget.set(this.player.pos.x, 0, this.player.pos.z);
     }
@@ -1075,42 +923,9 @@ class Game {
       this.shadowLight.target.updateMatrixWorld();
     }
 
-    // Labels
+    // ---- Labels & UI ----
     this._updateLabels();
-
-    // UI
     if (this.uiManager) this.uiManager.update(dt);
-
-  }
-
-  _checkCutoff() {
-    for (const c of this.characters) {
-      if (!c.alive || c.invulnTimer > 0) continue;
-      // Only kill if not currently trailing — wasOutside means they intentionally left territory
-      if (c.wasOutside) continue;
-      const owner = territoryGrid.getOwner(c.pos.x, c.pos.z);
-      if (owner !== c.factionId && owner !== 0) {
-        this._killCharacter(c);
-      }
-    }
-  }
-
-  _killCharacter(victim, killer) {
-    dlog("KILL", `${victim.name} killed${killer ? " by " + killer.name : ""}`, {
-      victimPos: `${victim.pos.x.toFixed(1)},${victim.pos.z.toFixed(1)}`,
-      trailLen: victim.trailVerts.length,
-      isPlayer: victim.isPlayer
-    });
-    victim.die();
-    if (killer) {
-      killer.killCount++;
-      if (this.scoreTracker) this.scoreTracker.onKill(killer, this.factionManager);
-    }
-    if (victim === this.player) {
-      this.killedBy = killer ? killer.name : "";
-      this.deathMsg.textContent = killer ? `Killed by ${killer.name}` : "You died!";
-      this.deathScreen.classList.add("visible");
-    }
   }
 
   _planBotLoop(bot) {
@@ -1306,46 +1121,9 @@ class Game {
     this.territoryTexture.needsUpdate = true;
   }
 
-  _healUnclaimedCells() {
-    const grid = territoryGrid.grid;
-    const size = GRID_SIZE;
-    let totalHealed = 0;
-
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (let gy = 1; gy < size - 1; gy++) {
-        for (let gx = 1; gx < size - 1; gx++) {
-          const idx = gy * size + gx;
-          if (grid[idx] !== 0) continue;
-
-          const counts = new Uint8Array(FACTION_COUNT + 1);
-          const n = grid[idx - 1];
-          const s = grid[idx + 1];
-          const w = grid[idx - size];
-          const e = grid[idx + size];
-          if (n > 0 && n !== GRID_SENTINEL) counts[n]++;
-          if (s > 0 && s !== GRID_SENTINEL) counts[s]++;
-          if (w > 0 && w !== GRID_SENTINEL) counts[w]++;
-          if (e > 0 && e !== GRID_SENTINEL) counts[e]++;
-
-          let best = 0, bestCount = 0;
-          for (let f = 1; f <= FACTION_COUNT; f++) {
-            if (counts[f] > bestCount) { bestCount = counts[f]; best = f; }
-          }
-          if (best > 0) {
-            grid[idx] = best;
-            totalHealed++;
-            changed = true;
-          }
-        }
-      }
-    }
-
-    if (totalHealed > 0) {
-      this.territoryDirty = true;
-    }
-  }
+  // _checkCutoff, _killCharacter, _healUnclaimedCells: previously lived here;
+  // now owned by Simulation. Visual side-effects (death-screen on player kill)
+  // are wired via the sim.onKill hook in the Game constructor.
 
   _toggleFactionMeshes() {
     if (!this.territoryMesh) return;
