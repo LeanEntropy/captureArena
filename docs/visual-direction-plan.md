@@ -658,3 +658,263 @@ If the Director picks E, this lore can extend: title screen could be a "captain'
 _Companion live mockup → `tools/companion/visual-direction.html` (now 5 directions × 10 trigger buttons each)._
 _Status: 🟡 Director input needed on direction pick + round-3 open questions above._
 
+---
+
+# Round 4 — Execution Plan: Direction E + Tier 0–4 (minus Trail Outline)
+
+_Director decisions on 2026-04-30:_
+> 1. Drop Trail Outline (Tier 0 #4) entirely.
+> 2. Lock direction: **E — Castaway Atoll**. A/B/C/D are out of execution scope.
+
+This section is the build plan to land E + the remaining Tier 0–4 items in the actual game (`prototype/`), shipped slice-by-slice so any executor (subagent or human) can pick up where the last slice ended. It is **not** an implementation; it's the recipe.
+
+> Companion artifacts the executor reads when implementing each slice:
+> - `tools/companion/visual-direction.js` — port FROM here. The relevant config + helpers are listed per-slice below by line number.
+> - `tools/companion/visual-direction.html` — visual reference. Open in a browser to compare against in-game output during each slice.
+> - `docs/visual-direction-mockups/r3/r3-e-baseline-viewport.png` — the visual target for slice 1 ("game looks like an island").
+
+**Key scale gotcha.** In the mockup, `ARENA_RADIUS = 10`. In the actual game, `ARENA_RADIUS = 66.89` (per `prototype/sim/constants.js`, after the recent +30% arena expansion). All mockup geometry that uses `ARENA_RADIUS * <multiplier>` (water plane, sand cylinder, distant atolls) ports cleanly. **Hardcoded heights/widths** (sand cylinder height `0.45u`, grass Y `0.18u`, foam ring widths `1.2u`, cliff-rock sizes `0.5–1.0u`, sailor cap dims, flag pole `0.12 × 4 × 0.12`) all stay **the same in absolute world units** — they don't scale with arena. Re-eyeball each at game scale during slice 1.
+
+---
+
+## Section 18 — Execution Plan: Direction E + Tier 0–4 (minus Trail Outline)
+
+### 18.1 — Tier 0–4 with Trail Outline removed
+
+Original list had 24 items in 5 tiers (Section 1). With #4 Trail Outline dropped, **23 items remain.** Below: each remaining item with its actual-game landing notes — what file in `prototype/`, what to add, hours, perf cost, dependencies.
+
+Item numbering preserved from Section 1 / Section 2 round-2 sections so grep-search of the original plan still maps cleanly.
+
+#### Tier 0 — Critical feedback loops (do first, in this order)
+
+| # | Item | File(s) in `prototype/` | What to add | Effort | Perf cost | Depends on |
+|---|---|---|---|---|---|---|
+| 1 | **Claim flash + scale-pop** (E variant: `wave-ripple` — 3 concentric rings + 8 droplets) | `main.js` (renderer FX), reads `sim.onClaim` hook (already wired) | Port `wave-ripple` block from `visual-direction.js:1507–1545`. Add a per-Game `_fxParticles` pool (BoxGeometry + RingGeometry meshes, lifetime-driven) that ticks in `Game.tick()`. Trigger in `sim.onClaim` callback — entry point = first vertex of the consumed trail, available pre-clear. | M (3–4h) | Pool = 32 BoxGeometry + 8 RingGeometry, allocated once. Active FX <0.15ms/frame; 0 at rest. | E base (slice A) for the `_islandTopY` reference; can land before that with `Y=0.06` and re-tune later. |
+| 2 | **Kill burst** (E variant: `splash` — 14 light-blue droplets + 2 white foam rings) | `main.js` — extend `sim.onKill` hook | Port `splash` block from `visual-direction.js:1668–1708`. Same `_fxParticles` pool as #1. Add screen-shake on `this.camera.position` for ~5 frames if `victimR === this.player` is replaced by `killerR === this.player`. | M (3h) | Same pool; +0.1ms peak. | Item #1 (shared particle pool). |
+| 3 | **Death screen polish** | `index.html` (CSS for `#death-screen`), `main.js` `sim.onKill` callback | Add red flash overlay (200ms CSS keyframe) before the death card. Camera zoom: tween `this.camera.fov` from current → -8°FOV over 300ms, then back. Death card shows kill attribution + respawn timer + own faction's territory %. | S (1.5h) | Free (CSS + 1 tween). | None. |
+| ~~4~~ | ~~Trail outline~~ | — | **DROPPED per Director.** | — | — | — |
+| 5 | **Score pop + kill counter pop** | `ui.js` (`_updateStats`, `_updateRanking`) | When `total` or `kills` increases vs cached prev value, add a CSS class `.score-pop` for 250ms (scale 1.0→1.3→1.0 + color flash). Cache prev values on `this`. | S (1h) | Pure CSS. Free. | None. |
+
+#### Tier 1 — Atmosphere / "I'm in a world"
+
+E's island geometry replaces all four of #6, #7, #8, #9 with E-specific equivalents. Items #6/#7/#9 collapse into slice A (E base build). Item #8 (camera tilt + FOV bump) is independent and survives.
+
+| # | Item | File(s) | What to add | Effort | Perf cost | Depends on |
+|---|---|---|---|---|---|---|
+| 6+7 | **Replace `#f0f0f0` background + add water + island geometry** (E base) | `main.js` `Game.constructor` — replace `scene.background = 0xf0f0f0` and the white CircleGeometry ground with the E stack: gradient sky, fog, water shader, sand cylinder, grass top, cliff-rocks, distant atolls. Lighting also retuned. | Port from `visual-direction.js:902–1037` (`_buildWaterAndIsland`) + lighting block at `:830–847` + bg/fog block from `_initializeMockup` near `:780`. Adapt to game scale (ARENA_RADIUS=66.89). Raise `territoryMesh.position.y` to `_islandTopY + 0.01` (was 0.02 on a flat plane). | L (1 day; this is slice A) | Water shader ~0.4ms; sand+grass+rocks+atolls ~0.07ms; sky/fog free. **+0.5ms total over current.** | None. Highest-impact slice — game becomes E. |
+| 8 | **Camera tilt + slight FOV bump** | `main.js` `Game.constructor` (camera setup) + `tick()` (cam follow) | Lower `CAMERA_HEIGHT` slightly (e.g. 28 → 26) and bump `this.camera.fov` from 45 → 55 (and `updateProjectionMatrix`). Test against minimap visibility at ARENA_RADIUS=66.89 — the player must still see immediate trail/territory contrast. | S (30min) | Free. | None. Independent of slice A. |
+| 9 | ~~Soft territory boundary anti-alias~~ | — | **Skip for slice A.** Drop or defer. The current `NearestFilter` jaggies suit E's chunky stylized look (cliff-rocks, sailor caps are all blocky); a soft AA edge would clash. **Recommend dropping** — flag for Director to confirm. If kept, lives in `_createTerritoryTexture` as a second pass. | (drop) | (drop) | — |
+| 10 | **Subtle ambient particles (E: gulls / sea spray)** | `main.js` (renderer-only) | Optional. 30–50 small white BoxGeometry "spray" motes in a ring just outside the island, drifting horizontally at low opacity. OR: 2–3 procedural seagull cubes drifting at high altitude. Skip if the win-FX seagull is enough. | S (1h) | One Points geometry. Free. | Slice A. |
+
+#### Tier 2 — Character life
+
+| # | Item | File(s) | What to add | Effort | Perf cost | Depends on |
+|---|---|---|---|---|---|---|
+| 11 | **Idle bob animation** | `main.js` `Character` class — add `_updateAnim(dt)`, called from `Game.tick` | Procedural sin on `body.position.y` and `head.position.y`. ±0.05 at 2Hz. Mockup version at `visual-direction.js:2190–2195`. | S (45min) | Free. One sin/char/frame. | None. |
+| 12 | **Walk wobble** | `main.js` `Character._updateAnim` | When `velocity > 0`, add tilt forward 5° (`body.rotation.x`) and rock side-to-side ±3° (`body.rotation.z`) at stride frequency tied to speed. Currently `Character` has no per-tick anim state — add `this._strideT` and step it in `_updateAnim`. | S (1h) | Free. | #11 (same hook). |
+| 13 | **Death dissolve** | `main.js` `Character.onDieVisual` | Replace `this.group.visible = false` with a 200ms scale-down + Y-rotation tween. Add a `_dyingTween` field; while active, `syncVisuals` skips the position write so the corpse stays put. | S (1h) | Free. Tween on existing transforms. | #2 (kill FX should fire at the *start* of the dissolve, not *after*). |
+| 14 | **Respawn pop (E variant: `wash-ashore` — character rises from below + 2 foam rings + 5 droplets)** | `main.js` `Character.onRespawnVisual` | Port `wash-ashore` block from `visual-direction.js:1853–1895`. Set `victim.group.position.y = baseY - 1.2`, tween up to baseY over 0.6s. baseY = `_islandTopY` (per slice A). Spawn 2 foam rings + 5 droplets via the same `_fxParticles` pool from #1. | S (1.5h) | Reuses pool. Free. | Slice A (for `_islandTopY`), #1 (pool). |
+| 15 | **Direction indicator on character** | `main.js` `Character._buildChar` | Add a small darker BoxGeometry strip (0.1 × 0.1 × 0.05) on the front face of the head, color = head color × 0.6. | S (30min) | One extra mesh/char. Trivial. | None. |
+
+#### Tier 3 — HUD pass
+
+E's HUD is themed around "weathered nautical paper / driftwood." All four directions had their own font+style. For E we use Fredoka 600 + driftwood/sundial/sail-banner styling.
+
+| # | Item | File(s) | What to add | Effort | Perf cost | Depends on |
+|---|---|---|---|---|---|---|
+| 16 | **Replace `Segoe UI` with Fredoka (E theme)** | `index.html` `<head>` | Add `<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap">`. Update `body { font-family: ... }` to `Fredoka, system-ui`. | S (15min) | One Google Font. <50KB. | None. |
+| 17a | **HUD card restyle: countdown → `sundial`** | `index.html` (CSS for `#hud-tl`), `ui.js` `_updateTimer` | Port `countdown-sundial` styling from `visual-direction.js:350–360` + companion's CSS `cd-pulse` keyframe. Sandy radial-gradient disc, brass border, slate-blue text normal / coral text + scale-pulse critical. | S (1h) | Pure CSS. Free. | #16 (font). |
+| 17b | **HUD card restyle: faction ranking → `sail-banner` styling for endangered / eliminated / recovered** | `index.html` (CSS additions), `ui.js` `_updateRanking` (emit DOM banners on state change) | Port `bannerStyle: "sail-banner"` from `visual-direction.js:519–566` (DOM construction). Hook: `ui.js` polls `factionManager.getAllFactions()` each frame; cache prev `endangered` + `alive` per faction; on transition, call a new `_showSailBanner(text, kind, color)` that builds the sail DOM, animates in (scale 0.6→1.0 cubic-bezier overshoot), holds 2.0s (eliminated 2.8s), animates out. | M (2.5h) | Pure CSS. Free. | #16, requires no sim changes (read existing faction state). |
+| 17c | **HUD card restyle: notifications → `driftwood`** | `index.html` (CSS), `ui.js` (new `pushNotification` method) | Port `notif-driftwood` styling from `visual-direction.js:427+`. New DOM stack `<div id="notif-stack">` top-right (or bottom-right; see Section 15 Q2). Trigger sources: extend `sim.onKill` (to push "You killed [Name]" if killer is local), extend `sim.onClaim` (to push "You captured X% of [Faction]" if claimer is local), extend `sim.onKill` (to push "You died" if victim is local), extend respawn detection (push "You spawned (invuln 2s)"). | M (3h) | Pure CSS. Free. | #16. Depends on the same delta-detection scaffold as #17b. |
+| 18 | **Minimap polish (E: `nautical-chart`)** | `ui.js` `_updateMinimap` + `index.html` (CSS for `#minimap-container`) | E mockup describes parchment with compass-rose corner, lat/lon grid lines, ink-blot dots. Mockup did NOT implement the chart canvas (only a `minimapStyle: "nautical-chart"` config key). For shipping: add parchment-color background, brass `#a08560` 3px ring border, optional compass-rose corner sprite (procedurally drawn in 2D context). Player dot stays white→pulses. | M (3h) | Existing minimap canvas + CSS. Free. | #16 (font for any minimap labels). |
+| 19 | **Leaderboard row hover / own-row highlight** | `ui.js` `_renderLeaderboardRow` + `index.html` CSS | Add faction-color border-left on local-player row, top-3 medal prefix (gold/silver/bronze SVG inline). Already partially done (own row gets bg+bold); add the medal + faction-color accent. | S (1h) | Pure CSS. Free. | None. |
+| 20 | **Title screen redesign (E theme)** | `index.html` `#name-entry` block | "Castaway Arena" or keep "Territory War" wordmark — see Section 17 Q5. Background: animated water shader (small canvas, low res, ~0.1ms one-time) OR static screenshot of slice A's water. Input field styled as a polished control with sand/cream theme. | M (2h) | One canvas with scaled-down water shader, ~0.1ms while title visible (0 once entered). | Slice A (water shader code) for the live-water title bg, OR independent if static. |
+
+#### Tier 4 — Polish & moments
+
+| # | Item | File(s) | What to add | Effort | Perf cost | Depends on |
+|---|---|---|---|---|---|---|
+| 21 | **Killstreak indicator** | `ui.js` (new `_showKillstreak(n)`), `main.js` `sim.onKill` | Track local-player kill timestamps; when 2 within 5s → flash a small banner ("DOUBLE!"). Use the same DOM stack scaffold as #17c notifications, distinct CSS. | M (2h) | Pure CSS. Free. | #17c (notification scaffold). |
+| 22 | **"Endangered faction" warning — screen-edge tell** | `index.html` (CSS pulse animation), `ui.js` (toggle class on `#ui` parent based on local-faction endangered) | When local player's faction is endangered: pulse left edge in faction color at 1Hz, 30% opacity. When enemy faction endangered: pulse their leaderboard row red at 2Hz. | S (1h) | CSS keyframes. Free. | #17b (delta-detection scaffold for endangered transition). |
+| 23 | **Match-end celebration: `tide-rise` (E variant)** | `main.js` (new `_runWinFX(winnerColor)`), `index.html` (DOM seagulls + foam wash) | Port `tide-rise` block from `visual-direction.js:2032–2075` (WebGL: territory bloom + 3 staggered foam rings + flag rises on a wooden pole at center, stays in the scene as permanent victory marker) + `_spawnSeagullsAndWash` from `:579–625` (DOM seagulls + foam wash gradient). Trigger when `matchManager.phase` transitions to `"ended"`. | L (1 day) | Active ~3s, +0.3ms peak. Pole+flag are 2 meshes after — trivial. | Slice A (for `_islandTopY` and water shader interaction), #16 (font). |
+| 24 | **Audio (out of scope for this round)** | — | Flagged for separate workstream. Sound list to spec: claim ring, kill splash, death thud, respawn rise, killstreak, win flag-up, sundial tick at <10s. | L | <1% CPU per sound | N/A — not in execution scope. |
+
+---
+
+### 18.2 — Direction E's actual-game landing (per-feature breakdown)
+
+This section is what the executor needs to port from the mockup into `prototype/`. Each row maps a mockup source range → target file, plus integration notes.
+
+| Feature | Mockup source | Target file in `prototype/` | Integration notes |
+|---|---|---|---|
+| **Sky gradient + fog** | `visual-direction.js:780–810` (config + `_initializeMockup` setup of `scene.background` and `scene.fog`) | `prototype/main.js` `Game.constructor`, replacing `this.scene.background = new THREE.Color(0xf0f0f0)` | Use a CSS-style background fallback OR a gradient via `THREE.CanvasTexture` rendered to a 1×256 ramp. Set `scene.fog = new THREE.Fog(0xBCD8DE, 28, 90)`. Bump fog `far` to ~120 since arena is 6.7× larger than mockup. |
+| **Water plane + ShaderMaterial** | `visual-direction.js:902–977` (`_buildWaterAndIsland` first half) | `prototype/main.js` new method `_buildEWaterAndIsland()`, called from `Game.constructor` after light setup | ShaderMaterial code ports verbatim. Geometry size already scales with `ARENA_RADIUS × 6`. **Tessellation:** `80×80` is fine at game scale (waves still readable at 6.7× radius); bump to 120×120 if foam strands look too coarse. Add `this._waterMat.uniforms.uTime.value = perfNowSec` to `Game.tick()`. |
+| **Sand cylinder + grass top** | `visual-direction.js:980–1003` | Same method as above | Hardcoded `height: 0.45` and `Y: -0.05/0.18`. At game scale (player is 1u tall), eyeball whether 0.45u sand height reads as "the island is on a beach" — likely fine since the beach-rim is purely silhouette. **Don't scale these**; they're absolute. |
+| **Cliff-rocks rim (14 cubes)** | `visual-direction.js:1005–1022` | Same method | Sizes 0.5–1.0u absolute. At ARENA_RADIUS=66.89 these will look like little pebbles. **Bump to 1.5–3.0u** at game scale to read as actual cliff-rocks. Verify against `r3-e-baseline-viewport.png` aspect ratio. |
+| **Distant atolls (3 cubes)** | `visual-direction.js:1024–1036` | Same method | At game scale these need scaling: `dwidth: 1.6 + Math.random() * 1.2` → multiply by ~6.7 to keep apparent visual size in the fog. Or: leave dimensions and place them further out (radius `4.0 × ARENA_RADIUS`). |
+| **Lighting retune (warm dawn)** | `visual-direction.js:830–847` (config: ambient `0xfff0d8` @ 0.78, directional `0xfff2c8` @ 0.7, bounce `0x88B8D0` @ 0.18) | `prototype/main.js` `Game.constructor` lighting block | Replace existing `0xffffff @ 0.8` ambient + `0xffffff @ 0.6` directional. Keep shadow map config (1024² works fine). Add the bounce light as a second directional from `(-3, 3, -3)`. |
+| **Faction palette retune** | `visual-direction.js:205` (`factionColors: [0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE]`) | `prototype/sim/faction.js` `FACTION_COLORS` array | **Game-affecting:** these colors flow into both renderer (mesh tint) AND minimap AND HUD AND territory texture. Update one constant; everything reads it. **NOTE**: This is a sim-package file change — coordinate with subagent a674740c11bd011d8 if they're touching faction.js. They probably aren't (they're in Simulation.js claim()), but verify before commit. |
+| **Sailor cap (E character treatment)** | `visual-direction.js:1251–1271` (`charStyle === "castaway"` block) | `prototype/main.js` `Character._buildChar`, after the head | Add 3 extra meshes per character: faction-color band cube (Y=1.72), white top cube (Y=1.85), darker rim feet block (Y=0.04). Mockup applies same color to body/head — keep. |
+| **Trail style (smooth ribbon, no outline change)** | `visual-direction.js:1314–1340` (default ribbon path) | `prototype/main.js` `Character._rebuildTrailMesh` | **No change required.** Current trail is already a smooth ribbon. Trail-outline pass dropped per Director. Keep the current ribbon Y at `0.05` but raise to `_islandTopY + 0.05` once slice A lands. |
+| **Territory mesh Y-lift** | `visual-direction.js:1080–1082` (`territoryMesh.position.y = _islandTopY + 0.01`) | `prototype/main.js` `_createTerritoryTexture` (post-mesh-creation), and update `Character` mesh Y, and trail Y | Single global change: characters, trails, territory, particles all need to render *on the island top*, not at world Y=0. Add a `Game._islandTopY` constant (0.19 in mockup) and use it consistently. |
+| **Wave-ripple claim FX** | `visual-direction.js:1507–1545` | `prototype/main.js` new method `_spawnClaimFX(entry, factionColor)`, called from `sim.onClaim` callback | Need to know the trail entry point: the first vertex of the trail (`simChar.trailVerts[0]`) — accessible before the sim clears the trail. Modify `sim.onClaim` callback in `main.js` to capture entry before calling `_clearTrail`. |
+| **Splash kill FX** | `visual-direction.js:1668–1708` | `prototype/main.js` new method `_spawnKillFX(pos, victimColor)`, called from `sim.onKill` callback | Use `victimR.simChar.pos` as `pos`. Add Y offset to `_islandTopY + 1.0` so the splash starts at chest height. |
+| **Wash-ashore respawn FX** | `visual-direction.js:1853–1895` | `prototype/main.js` `Character.onRespawnVisual` (extend) | Set `this.group.position.y = _islandTopY - 1.2`, tween up to `_islandTopY` over 0.6s using a per-Character `_respawnTween` field stepped in `syncVisuals` or `_updateAnim`. Spawn 2 foam rings + 5 droplets via shared particle system. |
+| **Driftwood notifications (DOM)** | `visual-direction.js:427–445` (style block) + `pushNotification` mechanism `:376–478` | `prototype/index.html` (CSS for `.notif-driftwood`), `prototype/ui.js` (new `pushNotification` method on UIManager) | Build a `<div id="notif-stack">` in `index.html` (top-right or bottom-right). UIManager exposes `pushNotification(text, kind, factionColor)` that appends a div, animates it in (slide+fade 0.2s), holds 3s, animates out. Cap at 4 visible. Triggered from main.js `sim.onKill`/`sim.onClaim` when local player. |
+| **Sail-banner (DOM, faction-state announcements)** | `visual-direction.js:519–566` (style block) + banner mechanism `:280+` (`bannerContainer` in `SceneOverlay`) | `prototype/index.html` (banner container), `prototype/ui.js` (new `_showSailBanner(text, kind, color)` + delta detection in `_updateRanking`) | Cache prev `endangered`/`alive` per faction in UIManager. Each frame, compare current vs prev; on transition, build a banner div, animate in (scale+opacity, cubic-bezier overshoot), hold 2-2.8s, animate out. Banner styling = `linear-gradient(180deg, #f8efd6, #e8d9b0)` + brown side+bottom borders + faction-color 6px top stripe + asymmetric border-radius. |
+| **Sundial countdown (DOM)** | `visual-direction.js:350–360` (style block) | `prototype/index.html` (CSS for `#hud-tl` / new `.countdown-sundial`), `prototype/ui.js` `_updateTimer` | Wrap timer text in a sundial-styled div: round (50% border-radius), sandy radial-gradient bg, brass border, inset shadow. Apply `.intense` class when `timeRemaining <= 60` (warning, switch to coral text); add `.critical` class when `<= 10` (scale-pulse 0.6s loop). |
+| **Tide-rise win FX (WebGL flag + foam rings + DOM seagulls + foam wash)** | `visual-direction.js:2032–2075` (WebGL part) + `:579–625` (DOM part) | `prototype/main.js` new method `_runWinFX(winnerColor)`, triggered when `matchManager.phase` transitions to `"ended"` (poll in `Game.tick`) | WebGL: territory tint pulse, 3 staggered foam rings from arena center, flag pole + flag rise (BoxGeometry, 0.12×4 pole + 1.4×0.9 flag, tween Y from `_islandTopY + 0.1` to `_islandTopY + 3.5` over 2.2s). DOM: seagull silhouettes via CSS gradient drift across viewport, foam wash gradient at bottom 60%. Pole+flag remain in scene as permanent victory marker. |
+| **Minimap restyle (`nautical-chart`)** | mockup describes only the config key (`minimapStyle: "nautical-chart"`); not implemented | `prototype/ui.js` `_updateMinimap` + `prototype/index.html` (CSS for `#minimap-container`) | Build from spec: parchment background canvas-fill, brass `#a08560` 3px border (CSS), optional compass-rose corner ornament (4 small lines drawn into the canvas in `_updateMinimap`). Player dot stays white with pulse. **Net-new** — no mockup code to port; this is original work guided by Section 14 spec. |
+
+---
+
+### 18.3 — Suggested execution ORDER (slice by slice)
+
+Each slice ends in a committable, visible improvement. The cheapest first slice gives the biggest visual delta — the game *looks* like Direction E after slice A. Subsequent slices add the FX/HUD/feel.
+
+#### Slice A — "The game looks like an island" (1 day)
+
+**Goal:** Director can open the game and see Castaway Atoll at game scale.
+
+- **6+7** Replace background + add water plane (shader) + sand cylinder + grass top + cliff-rocks rim + distant atolls.
+- Lighting retune (warm dawn ambient + directional + bounce).
+- Faction palette retune (cooler Blue, boosted Yellow).
+- Sailor cap on every character (`Character._buildChar` extension).
+- Territory mesh Y-lift (so claims appear on the grass top, not below the water).
+- Trail Y-lift (so trails appear on the grass top).
+
+**Why first:** This is the visual identity. After this commit, screenshots match `r3-e-baseline-viewport.png`. Everything else is layered on top. Highest-impact ÷ effort ratio in the whole plan.
+
+**What's NOT in slice A:** No FX, no HUD restyle, no animations. Pure look.
+
+**Verification:** Take a screenshot mid-game; compare to `docs/visual-direction-mockups/r3/r3-e-baseline-viewport.png`. They should match conceptually (water animating, sailor caps visible, cliff-rocks at rim, distant atoll on horizon).
+
+---
+
+#### Slice B — "Moments feel right" (1 day)
+
+**Goal:** Claims, kills, respawns now feel like Direction E.
+
+- **#1** Wave-ripple claim FX (port from mockup) — wired to `sim.onClaim`.
+- **#2** Splash kill FX (port from mockup) — wired to `sim.onKill`.
+- **#14** Wash-ashore respawn FX (port from mockup) — wired to `Character.onRespawnVisual`.
+- Shared particle pool (`_fxParticles`): 32 BoxGeometry + 8 RingGeometry meshes, lifetime-driven, recycled.
+- **#13** Death dissolve (200ms scale-down + Y-rotation tween in `Character.onDieVisual`).
+- **#3** Death screen polish (red flash + camera FOV zoom + restyled card).
+- **#15** Direction indicator on character (small darker front-face strip).
+
+**Why second:** These are the three core gameplay-feedback loops (Section TL;DR). Without them, slice A still looks like a polished prototype. With them, the game *feels* alive.
+
+**Verification:** Play-test for 60s. Every claim, kill, respawn should produce a visible distinct FX. Compare against the mockup's E panel (click the per-direction trigger buttons to compare).
+
+---
+
+#### Slice C — "Characters are alive" (0.5 day)
+
+**Goal:** Even when nothing is happening, the world has motion.
+
+- **#11** Idle bob animation.
+- **#12** Walk wobble.
+- **#8** Camera tilt + FOV bump (45 → 55, lower height slightly).
+
+**Why third:** Cheap but adds enormous "life" feel. Camera change validates that slice A's water/island still reads at the new angle.
+
+---
+
+#### Slice D — "HUD pass" (1 day)
+
+**Goal:** HUD looks like it belongs in Direction E, not a debug overlay.
+
+- **#16** Fredoka font.
+- **#17a** Sundial countdown styling.
+- **#17b** Sail-banner system (faction-state announcements: endangered / eliminated / recovered).
+- **#17c** Driftwood notifications (DOM stack: kills, captures, deaths, respawn).
+- **#5** Score pop + kill counter pop (CSS keyframe).
+- **#19** Leaderboard own-row highlight + medal prefix.
+
+**Why fourth:** HUD restyle is independent of in-world FX. Wire after FX so the notification system's DOM scaffold is in place for #21 killstreak.
+
+---
+
+#### Slice E — "Match-end is a moment" (1 day)
+
+**Goal:** Match-end stops feeling like a black overlay.
+
+- **#23** Tide-rise win FX (WebGL flag rise + foam rings + DOM seagulls + foam wash).
+- **#21** Killstreak indicator (depends on slice D notification scaffold).
+- **#22** Endangered screen-edge tell (depends on slice D banner-state cache).
+
+---
+
+#### Slice F — "Polish (optional, do based on time)" (0.5 day)
+
+**Goal:** Nice-to-haves that don't gate ship.
+
+- **#10** Ambient particles (sea spray motes around the island OR procedural seagulls during gameplay).
+- **#18** Minimap restyle (nautical chart with brass border + compass-rose corner).
+- **#20** Title screen redesign (animated water bg or static screenshot).
+
+---
+
+#### Total estimate
+
+| Slice | Hours | Cumulative |
+|---|---|---|
+| A — Island look | 8h | 8h |
+| B — Moments feel right | 8h | 16h |
+| C — Characters alive | 4h | 20h |
+| D — HUD pass | 8h | 28h |
+| E — Match-end moment | 8h | 36h |
+| F — Polish (optional) | 4h | 40h |
+
+**Core (A–E):** ~36h ≈ 4.5 days for one focused dev. Matches Section 16's "Total ~4.5 days" estimate from round 3.
+
+---
+
+### 18.4 — Conflicts with in-flight work
+
+#### Subagent a674740c11bd011d8 — debugging `Simulation.js claim()`
+
+- **Risk:** They commit between this plan and slice A.
+- **Why low risk:** Their work is in `prototype/sim/Simulation.js` (claim algorithm). All slice A–F changes are in:
+  - `prototype/main.js` (renderer + FX + scene setup)
+  - `prototype/ui.js` (HUD)
+  - `prototype/index.html` (CSS, fonts, DOM scaffold)
+  - `prototype/sim/faction.js` — **only one** sim-package file touched, and only a constant array (`FACTION_COLORS`)
+- **Mitigation:** Slice A's faction palette change in `faction.js` is a 1-line array update. If a674740c is touching `faction.js`, coordinate or rebase. Otherwise no overlap.
+
+#### Recent commit `2f5ed2c` — trail starts inside own territory
+
+- Trail-gap fix already landed. Slice A's trail Y-lift to `_islandTopY + 0.05` is independent of the trail-start logic. No conflict.
+
+#### Recent commit `3c6438b` — BlocklyIO BFS-sub-fill claim algorithm
+
+- Algorithm change in `Simulation.js`. Doesn't affect renderer FX hooks (`sim.onClaim` still fires with the same callback signature `(charId, trailPoints, factionId)`). Slice B claim FX uses the entry point from `simChar.trailVerts[0]` — verify this field is still populated by the new algorithm. **Likely yes** (trail vertices are the renderer's input regardless of claim algorithm), but **verify on first port** of wave-ripple FX in slice B.
+
+#### Recent commit `eb17810` — heal pass + disconnected territory reassignment
+
+- Affects `Simulation.js` and `_updateTerritoryTexture` upload throttling. No FX dependency. Slice A's `territoryMesh.position.y` lift doesn't conflict.
+
+#### Recent commit `9bb0f58` — texture-based territory renderer
+
+- This is the foundation slice B and slice E build on (they expect `this.territoryTexture` and `_updateTerritoryTexture`). Already landed; nothing to do.
+
+---
+
+### 18.5 — Open questions / recommendations for Director
+
+These don't block any slice from starting but should be answered before slice ships to main:
+
+1. **Drop or keep #9 (soft territory boundary AA)?** I recommend dropping for E (the chunky NearestFilter look fits the cliff-rocks/sailor-caps aesthetic). Default: drop.
+2. **Keep wordmark "Territory War" or rename to "Castaway Arena" / something nautical?** Default: keep "Territory War" — game works with either, no time wasted on rename.
+3. **Sailor cap variants** (Section 17 Q6) — I'm building universal cap (faction-color band, white top) per the mockup. If Director wants per-faction headwear (bandana, sun hat, helmet), bump slice A by ~2h.
+4. **Mobile water shader fallback** (Section 17 Q3) — does mobile ship matter for v1? If yes, slice A grows by ~1h to add a `quality` toggle that swaps animated shader for a static gradient texture.
+5. **Flag persistence after match-end** (Section 17 Q5) — current spec leaves flag + pole in the scene as a permanent victory marker. Default: keep persistent until next match start.
+6. **Faction-blue palette commit** (Section 17 Q4) — slice A locks `Blue = #3D6CD0` (cooler/desaturated). This becomes canonical. Confirm before the `faction.js` edit lands.
+
+---
+
+_Companion live mockup → `tools/companion/visual-direction.html` (E panel = primary visual reference for ports)._
+_Source-of-truth FX code → `tools/companion/visual-direction.js` (line ranges per row in §18.2)._
+_Status: 🟢 Plan ready. Direction picked. Awaiting Director slice-pick to begin execution._
+

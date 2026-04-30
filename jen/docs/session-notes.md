@@ -4,9 +4,17 @@ _Installed: 2026-04-29_
 
 ## Current Phase
 
-Visual direction plan: four art-direction options + prioritized add-list pending Director pick.
+Visual direction LOCKED to Direction E (Castaway Atoll). Trail outline (Tier 0 #4) dropped per Director. Execution plan ready (Section 18 of plan doc); awaiting Director slice-pick to begin execution.
 
 ## Active Threads
+
+- **Visual Direction Plan — Round 4: Execution Plan (2026-04-30)** — Director picked E + dropped Trail outline. Built Section 18 in `docs/visual-direction-plan.md` (lines 663–920, +260 lines):
+  - **18.1** — Tier 0–4 with #4 dropped (23 items remain, each with target file in `prototype/`, effort, perf cost, deps).
+  - **18.2** — Per-feature breakdown of E's actual-game landing: 16 features, each with mockup source range → target file → integration notes. Key gotcha flagged: ARENA_RADIUS in mockup=10 vs game=66.89 — geometry tied to ARENA_RADIUS scales fine, but absolute-unit sizes (cliff-rock 0.5–1.0u, atoll widths) need re-scaling at game scale.
+  - **18.3** — 6 execution slices (A: island look 8h, B: moments feel right 8h, C: characters alive 4h, D: HUD pass 8h, E: match-end moment 8h, F: polish optional 4h). Total core ≈ 36h matching round-3 estimate.
+  - **18.4** — Conflicts with in-flight subagent a674740c (Simulation.js claim debug) flagged as low-risk — only 1 sim file touched (`faction.js` palette constant). Trail-gap fix `2f5ed2c` and BFS algo `3c6438b` verified non-conflicting.
+  - **18.5** — 6 open questions for Director (drop AA item #9, wordmark rename, sailor cap variants, mobile water fallback, flag persistence, lock faction-blue palette).
+  - 🟡 Director input still needed: pick a slice to begin (recommend slice A — biggest visual delta for 1-day spend).
 
 - **Visual Direction Plan — Round 3 (2026-04-30)** — Director feedback on round 2: "at least one suggestion should be of the background as water or sea and the arena as an island." Round 3 adds Direction E — Castaway Atoll. Deliverables shipped:
   - `docs/visual-direction-plan.md` — appended Section 16 (Direction E full spec) + Section 17 (round 3 open questions). E uses procedural ShaderMaterial water (~0.4ms vertex+fragment, 80×80 plane, two summed sin waves + foam ring + sun-glitter), grass-on-sand cylindrical island (sand cylinder Y=-0.05 r1.18→1.08, grass top Y=+0.18 at r=ARENA_RADIUS), 14 cube cliff-rocks scattered around the rim, 3 distant atolls in the fog. Faction palette retuned for sea-readability (Blue desaturated cooler, Yellow boosted vs teal). Sailor cap (white cube + faction-color band) on every character. Per-direction FX: wave-ripple claim, splash kill, wash-ashore respawn, driftwood notifications, sail banner, sundial countdown, tide-rise win (3 foam-ring sweeps + faction flag rises on a wooden pole at center as a permanent victory marker + DOM seagulls).
