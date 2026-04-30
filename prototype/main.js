@@ -230,12 +230,17 @@ const territoryGrid = {
           case 2:  segments.push([right, bottom]); break;
           case 3:  segments.push([right, left]); break;
           case 4:  segments.push([top, right]); break;
-          case 5:  segments.push([top, left]); segments.push([right, bottom]); break; // saddle
+          case 5:  // saddle: TL and BR owned, TR and BL empty
+            // Separate the two diagonal islands (standard non-connected saddle)
+            segments.push([top, left]); segments.push([right, bottom]);
+            break;
           case 6:  segments.push([top, bottom]); break;
           case 7:  segments.push([top, left]); break;
           case 8:  segments.push([left, top]); break;
           case 9:  segments.push([bottom, top]); break;
-          case 10: segments.push([left, bottom]); segments.push([top, right]); break; // saddle
+          case 10: // saddle: TR and BL owned, TL and BR empty
+            segments.push([left, bottom]); segments.push([top, right]);
+            break;
           case 11: segments.push([right, top]); break;
           case 12: segments.push([left, right]); break;
           case 13: segments.push([bottom, right]); break;
@@ -704,25 +709,25 @@ class Character {
 
   _claim() {
     if (this.trailVerts.length < 3) {
-      if (this.isPlayer) dlog("CLAIM", "aborted: trail too short", { trailLen: this.trailVerts.length });
+      dlog("CLAIM", `${this.name}: aborted, trail too short`, { trailLen: this.trailVerts.length });
       this._clearTrail(); return;
     }
     const trail = this.trailVerts;
 
-    if (this.isPlayer) {
-      dlog("CLAIM", "starting claim (grid method)", {
-        trailLen: trail.length,
-        trailStart: `${trail[0].x.toFixed(2)},${trail[0].z.toFixed(2)}`,
-        trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`
-      });
-    }
+    const areaBefore = territoryGrid.countCells(this.ownerId);
+    dlog("CLAIM", `${this.name}: starting claim`, {
+      trailLen: trail.length,
+      areaBefore,
+      trailStart: `${trail[0].x.toFixed(2)},${trail[0].z.toFixed(2)}`,
+      trailEnd: `${trail[trail.length-1].x.toFixed(2)},${trail[trail.length-1].z.toFixed(2)}`
+    });
 
     // Build a trail polygon by closing the trail loop through the territory boundary.
     // We need boundary vertices to form the arc. Extract a boundary polygon from contours.
     // Use fresh contour extraction to get boundary points.
     const contours = territoryGrid.extractContours(this.ownerId);
     if (contours.length === 0) {
-      if (this.isPlayer) dlog("CLAIM", "aborted: no contours found");
+      dlog("CLAIM", `${this.name}: aborted, no contours found`);
       this._clearTrail();
       return;
     }
@@ -758,19 +763,32 @@ class Character {
       const arc = arcFwd.length <= arcBwd.length ? arcFwd : arcBwd;
 
       trailPoly = trail.map(t => ({ x: t.x, y: t.z }));
-      for (let i = 1; i < arc.length - 1; i++) {
+      // Include ALL arc points: arc[0] is the boundary point near trail end,
+      // arc[last] is the boundary point near trail start. Skipping them
+      // creates gaps between the trail and boundary, producing broken polygons.
+      for (let i = 0; i < arc.length; i++) {
         trailPoly.push(arc[i]);
       }
     }
 
+    dlog("CLAIM", `${this.name}: trail polygon built`, {
+      trailPolyLen: trailPoly.length,
+      polyArea: polyArea(trailPoly).toFixed(2)
+    });
+
     if (trailPoly.length < 3) {
-      if (this.isPlayer) dlog("CLAIM", "aborted: trail polygon too small", { trailPolyLen: trailPoly.length });
+      dlog("CLAIM", `${this.name}: aborted, trail polygon too small`, { trailPolyLen: trailPoly.length });
       this._clearTrail();
       return;
     }
 
     // Stamp the trail polygon onto the grid
     const overwritten = territoryGrid.stampPolygon(trailPoly, this.ownerId);
+
+    dlog("CLAIM", `${this.name}: stamped polygon`, {
+      polyVerts: trailPoly.length,
+      overwrittenOwners: [...overwritten]
+    });
 
     // Handle CONTINUOUS_LAND for victims
     if (CONTINUOUS_LAND && overwritten.size > 0) {
@@ -801,14 +819,14 @@ class Character {
     this.territoryDirty = true;
     this._rebuildAreaMesh();
 
-    if (this.isPlayer) {
-      const cellCount = territoryGrid.countCells(this.ownerId);
-      dlog("CLAIM", "SUCCESS (grid)", {
-        cellCount,
-        areaPct: ((cellCount / territoryGrid.totalArenaCells) * 100).toFixed(2),
-        overwritten: [...overwritten]
-      });
-    }
+    const areaAfter = territoryGrid.countCells(this.ownerId);
+    dlog("CLAIM", `${this.name}: SUCCESS`, {
+      cellsBefore: areaBefore,
+      cellsAfter: areaAfter,
+      cellsGained: areaAfter - areaBefore,
+      areaPct: ((areaAfter / territoryGrid.totalArenaCells) * 100).toFixed(2),
+      overwritten: [...overwritten]
+    });
 
     this._clearTrail();
   }
