@@ -6,18 +6,31 @@ export class MultiplayerClient {
     const url = `${proto}://${location.host}`;
     this.client = new Colyseus.Client(url);
     this.room = null;
+    this.playerToken = null;
 
     // Event hooks (set by host renderer)
-    this.onState = null;        // (state) => void
-    this.onClaim = null;        // (charId, trailPoints, factionId) => void
-    this.onHeal = null;         // (changedCells) => void
-    this.onTrailVertex = null;  // (charId, x, z) => void
-    this.onKill = null;         // (killerId, victimId) => void
-    this.onYourCharId = null;   // (charId) => void
-    this.onGridSnapshot = null; // (b64) => void
+    this.onState = null;           // (state) => void
+    this.onClaim = null;           // (charId, trailPoints, factionId) => void
+    this.onHeal = null;            // (changedCells) => void
+    this.onTrailVertex = null;     // (charId, x, z) => void
+    this.onKill = null;            // (killerId, victimId) => void
+    this.onYourCharId = null;      // (charId) => void
+    this.onGridSnapshot = null;    // (b64) => void
+    this.onCumulativeScore = null; // (score) => void
   }
 
   async connect(playerName, playerToken) {
+    // Resolve token: passed-in > localStorage > generate new
+    let token = playerToken;
+    if (!token) {
+      token = localStorage.getItem("playerToken");
+      if (!token) {
+        token = crypto.randomUUID();
+        localStorage.setItem("playerToken", token);
+      }
+    }
+    this.playerToken = token;
+
     this.room = await this.client.joinOrCreate("game", {});
     this.room.onStateChange((state) => {
       if (this.onState) this.onState(state);
@@ -40,9 +53,12 @@ export class MultiplayerClient {
     this.room.onMessage("gridSnapshot", ({ bytes }) => {
       if (this.onGridSnapshot) this.onGridSnapshot(bytes);
     });
+    this.room.onMessage("cumulativeScore", ({ score }) => {
+      if (this.onCumulativeScore) this.onCumulativeScore(score);
+    });
 
     // Now that handlers are wired, send hello
-    this.room.send("hello", { name: playerName, playerToken });
+    this.room.send("hello", { name: playerName, playerToken: token });
 
     return this.room;
   }

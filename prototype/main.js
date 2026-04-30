@@ -816,6 +816,11 @@ class Game {
       this._bindOnlinePlayer();
     };
 
+    this.mp.onCumulativeScore = (score) => {
+      this.cumulativeScore = score;
+      console.log(`[online] cumulative score from prior sessions: ${score}`);
+    };
+
     try {
       await this.mp.connect(name, null);
       console.log("[online] connected, sessionId =", this.mp.room.sessionId);

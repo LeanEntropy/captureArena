@@ -37,6 +37,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private clientMeta = new Map<string, ClientMeta>();
   private prevPhase: string = "playing";
   private intermissionRemaining: number = 0;
+  private playerScores = new Map<string, { cumulativeScore: number; lastSeenAt: number }>();
 
   onCreate() {
     this.setState(new GameStateSchema());
@@ -123,6 +124,13 @@ export class GameRoom extends Room<GameStateSchema> {
     meta.charId = target.id;
     meta.playerToken = playerToken;
 
+    if (playerToken) {
+      const prior = this.playerScores.get(playerToken) ?? { cumulativeScore: 0, lastSeenAt: 0 };
+      prior.lastSeenAt = Date.now();
+      this.playerScores.set(playerToken, prior);
+      client.send("cumulativeScore", { score: prior.cumulativeScore });
+    }
+
     client.send("yourCharId", { charId: target.id });
     console.log(`[GameRoom] ${client.sessionId} ("${name}") took over char ${target.id} (faction ${factionId})`);
   }
@@ -147,6 +155,7 @@ export class GameRoom extends Room<GameStateSchema> {
     // Detect end-of-round transition
     const simPhase: string = this.sim.matchManager.phase;
     if (this.prevPhase === "playing" && simPhase === "ended") {
+      this.accumulateScores();
       this.intermissionRemaining = INTERMISSION_SECONDS;
       this.state.phase = "intermission";
       this.state.intermissionRemaining = this.intermissionRemaining;
@@ -184,6 +193,19 @@ export class GameRoom extends Room<GameStateSchema> {
       cs.invulnTimer = c.invulnTimer ?? 0;
       cs.killCount = c.killCount ?? 0;
       // score will come from scoreTracker in Task 19; for now leave at 0
+    }
+  }
+
+  private accumulateScores() {
+    for (const [, meta] of this.clientMeta) {
+      if (meta.charId === null || !meta.playerToken) continue;
+      const c = this.sim.characters[meta.charId];
+      if (!c) continue;
+      const score = this.sim.scoreTracker?.getScore?.(c)?.total ?? 0;
+      const prior = this.playerScores.get(meta.playerToken) ?? { cumulativeScore: 0, lastSeenAt: Date.now() };
+      prior.cumulativeScore += score;
+      prior.lastSeenAt = Date.now();
+      this.playerScores.set(meta.playerToken, prior);
     }
   }
 
