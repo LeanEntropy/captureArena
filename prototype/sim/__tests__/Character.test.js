@@ -32,4 +32,32 @@ describe("Character", () => {
     expect(c.alive).toBe(false);
     expect(c.respawnTimer).toBe(3);
   });
+
+  it("kill clears trail vertices and zeros invulnTimer", () => {
+    const c = new Character({ id: 0, factionId: 1, name: "X", respawnDelay: 3 });
+    c.invulnTimer = 1.5;
+    c.trailVerts = [{ x: 0, z: 0 }, { x: 1, z: 0 }];
+    c.kill();
+    expect(c.invulnTimer).toBe(0);
+    expect(c.trailVerts).toEqual([]);
+  });
+
+  it("respawn restores alive state, sets pos, applies invuln, clears trail", () => {
+    const c = new Character({ id: 0, factionId: 1, name: "X" });
+    c.kill();
+    expect(c.alive).toBe(false);
+    c.respawn(7, 9);
+    expect(c.alive).toBe(true);
+    expect(c.pos).toEqual({ x: 7, z: 9 });
+    expect(c.respawnTimer).toBe(0);
+    expect(c.invulnTimer).toBeGreaterThan(0); // INVULN_TIME from constants
+    expect(c.trailVerts).toEqual([]);
+  });
+
+  it("constructor accepts custom speed (player faster than bot)", () => {
+    const player = new Character({ id: 0, factionId: 1, name: "P", speed: 8 });
+    const bot = new Character({ id: 1, factionId: 1, name: "B" });
+    expect(player.speed).toBe(8);
+    expect(bot.speed).toBe(6);
+  });
 });

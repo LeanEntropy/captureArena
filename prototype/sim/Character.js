@@ -1,5 +1,7 @@
+import { BOT_SPEED, INVULN_TIME } from "./constants.js";
+
 export class Character {
-  constructor({ id, factionId, name, respawnDelay = 3 }) {
+  constructor({ id, factionId, name, respawnDelay = 3, speed = BOT_SPEED }) {
     this.id = id;
     this.factionId = factionId;
     this.name = name;
@@ -10,7 +12,7 @@ export class Character {
     this.pos = { x: 0, z: 0 };
     this.dir = { x: 0, z: 1 };
     this.targetDir = { x: 0, z: 1 };
-    this.speed = 6;
+    this.speed = speed;
     this.trailVerts = [];
     this.invulnTimer = 0;
     this.respawnTimer = 0;
@@ -36,7 +38,7 @@ export class Character {
     this.alive = true;
     this.pos = { x, z };
     this.respawnTimer = 0;
-    this.invulnTimer = 2;
+    this.invulnTimer = INVULN_TIME;
     this.trailVerts = [];
   }
 }
