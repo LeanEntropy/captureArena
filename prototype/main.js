@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 22;
-const CAMERA_Z_OFFSET = 10;
+const CAMERA_HEIGHT = 30;
+const CAMERA_Z_OFFSET = 20;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
@@ -465,12 +465,14 @@ class Character {
       new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
     );
     body.position.y = 0.5;
+    body.castShadow = true;
     g.add(body);
     const head = new THREE.Mesh(
       new THREE.BoxGeometry(0.75, 0.75, 0.75),
       new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
     );
     head.position.y = 1.3;
+    head.castShadow = true;
     g.add(head);
     const eyeG = new THREE.BoxGeometry(0.12, 0.12, 0.12);
     const eyeM = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -740,19 +742,35 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.VSMShadowMap;
     document.body.appendChild(this.renderer.domElement);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     const dl = new THREE.DirectionalLight(0xffffff, 0.6);
-    dl.position.set(10, 20, 10);
+    dl.position.set(5, 15, 5);
+    dl.castShadow = true;
+    dl.shadow.mapSize.width = 1024;
+    dl.shadow.mapSize.height = 1024;
+    dl.shadow.camera.near = 0.5;
+    dl.shadow.camera.far = 60;
+    dl.shadow.camera.left = -40;
+    dl.shadow.camera.right = 40;
+    dl.shadow.camera.top = 40;
+    dl.shadow.camera.bottom = -40;
+    dl.shadow.radius = 4;
+    dl.shadow.blurSamples = 8;
     this.scene.add(dl);
+    this.scene.add(dl.target);
+    this.shadowLight = dl;
 
     // Ground
     const ground = new THREE.Mesh(
       new THREE.CircleGeometry(ARENA_RADIUS, 128),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
+      new THREE.MeshLambertMaterial({ color: 0xffffff })
     );
     ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
     this.scene.add(ground);
     // Border
     const ring = new THREE.Mesh(
@@ -1064,6 +1082,12 @@ class Game {
     this.camCurrent.lerp(this.camTarget, smooth);
     this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT, this.camCurrent.z + CAMERA_Z_OFFSET);
     this.camera.lookAt(this.camCurrent.x, 0, this.camCurrent.z);
+
+    if (this.shadowLight) {
+      this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);
+      this.shadowLight.target.position.set(this.camCurrent.x, 0, this.camCurrent.z);
+      this.shadowLight.target.updateMatrixWorld();
+    }
 
     // Labels
     this._updateLabels();
