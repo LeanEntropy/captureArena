@@ -16,6 +16,7 @@ describe("Character", () => {
     expect(c.killCount).toBe(0);
     expect(c.invulnTimer).toBe(0);
     expect(c.respawnTimer).toBe(0);
+    expect(c.wasOutside).toBe(false);
   });
 
   it("setPos updates position immutably (new object)", () => {

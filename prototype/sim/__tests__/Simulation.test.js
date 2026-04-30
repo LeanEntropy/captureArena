@@ -51,7 +51,6 @@ describe("Simulation", () => {
     c.setPos(0, 0);
     c.dir = { x: 1, z: 0 };
     c.targetDir = { x: 1, z: 0 };
-    const speedBefore = c.speed;
     sim.tick(0.1);
     // After 0.1s at default bot speed (6), char should have moved approximately 0.6 along x
     expect(c.pos.x).toBeGreaterThan(0.3);
@@ -64,5 +63,17 @@ describe("Simulation", () => {
     c.invulnTimer = 1.0;
     sim.tick(0.5);
     expect(c.invulnTimer).toBeCloseTo(0.5, 1);
+  });
+
+  it("character.wasOutside flips true when leaving own territory", () => {
+    const c = sim.characters[0]; // faction 1, lives in faction 1's pie slice
+    // Faction 1's pie slice is at angle 0-72°, so put char at 180° (opposite side)
+    c.setPos(-15, 0);
+    c.dir = { x: 0, z: 0 };
+    c.targetDir = { x: 0, z: 0 };
+    expect(c.wasOutside).toBe(false);
+    sim.tick(0.05);
+    // After ticking once at this position, the trail-step logic should detect outside
+    expect(c.wasOutside).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ export class Character {
     this.invulnTimer = 0;
     this.respawnTimer = 0;
     this.killCount = 0;
+    this.wasOutside = false;
   }
 
   setPos(x, z) {
@@ -32,6 +33,7 @@ export class Character {
     this.respawnTimer = this.respawnDelay;
     this.trailVerts = [];
     this.invulnTimer = 0;
+    this.wasOutside = false;
   }
 
   respawn(x, z) {
@@ -40,5 +42,6 @@ export class Character {
     this.respawnTimer = 0;
     this.invulnTimer = INVULN_TIME;
     this.trailVerts = [];
+    this.wasOutside = false;
   }
 }

@@ -113,8 +113,14 @@ export class Simulation {
     if (!char.alive) return;
     const owner = this._getOwnerAt(char.pos.x, char.pos.z);
     const insideOwn = owner === char.factionId;
-    if (insideOwn) return;
+    if (insideOwn) {
+      // Re-entered own territory — clear outside flag (claim will be triggered here in Task 5b)
+      char.wasOutside = false;
+      return;
+    }
 
+    // Outside own territory
+    char.wasOutside = true;
     const last = char.trailVerts[char.trailVerts.length - 1];
     if (!last) {
       char.trailVerts.push({ x: char.pos.x, z: char.pos.z });
@@ -135,8 +141,8 @@ export class Simulation {
     for (const c of this.characters) {
       if (!c.alive) continue;
       if (c.invulnTimer > 0) continue;
-      // Only kill if not currently trailing (no trail = not on a claim run).
-      if (c.trailVerts.length !== 0) continue;
+      // Only kill if not currently trailing — wasOutside means they intentionally left territory.
+      if (c.wasOutside) continue;
       const owner = this._getOwnerAt(c.pos.x, c.pos.z);
       if (owner !== c.factionId && owner !== 0) {
         this._killCharacter(c, null);
@@ -145,13 +151,9 @@ export class Simulation {
   }
 
   _killCharacter(victim, killer) {
-    victim.alive = false;
-    victim.respawnTimer = RESPAWN_DELAY;
-    victim.trailVerts = [];
-    victim.invulnTimer = 0;
-
+    victim.kill();   // single source of truth — sets alive=false, respawnTimer, clears trail, zeros invuln
     if (killer) {
-      killer.killCount = (killer.killCount || 0) + 1;
+      killer.killCount += 1;
       if (this.scoreTracker?.onKill) {
         this.scoreTracker.onKill(killer, this.factionManager);
       }
