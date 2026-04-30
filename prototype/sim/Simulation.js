@@ -15,6 +15,7 @@ export class Simulation {
     this.scoreTracker = new ScoreTracker();
     this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
     this.characters = [];
+    this.totalArenaCells = 0;
     this.started = false;
 
     // Event hooks (set by host: server or client). Optional.
@@ -37,6 +38,7 @@ export class Simulation {
 
   _initGrid() {
     // Mirror the existing prototype/main.js territoryGrid.init() — circular arena.
+    let arenaCount = 0;
     for (let gy = 0; gy < GRID_SIZE; gy++) {
       for (let gx = 0; gx < GRID_SIZE; gx++) {
         const wx = WORLD_MIN + (gx + 0.5) * CELL_SIZE;
@@ -44,8 +46,10 @@ export class Simulation {
         const dist = Math.sqrt(wx * wx + wy * wy);
         const idx = gy * GRID_SIZE + gx;
         this.grid[idx] = (dist > ARENA_RADIUS) ? GRID_SENTINEL : 0;
+        if (this.grid[idx] === 0) arenaCount++;
       }
     }
+    this.totalArenaCells = arenaCount;
   }
 
   _initCharacters() {
@@ -55,6 +59,7 @@ export class Simulation {
         const name = BOT_NAMES[id % BOT_NAMES.length];
         const c = new Character({ id, factionId: f, name, respawnDelay: RESPAWN_DELAY });
         this.characters.push(c);
+        this.scoreTracker.register(c);
         id++;
       }
     }

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Simulation } from "../Simulation.js";
-import { GRID_SIZE, GRID_SENTINEL, ARENA_RADIUS } from "../constants.js";
+import { GRID_SIZE, GRID_SENTINEL } from "../constants.js";
 import { FACTION_COUNT, CHARS_PER_FACTION } from "../faction.js";
 
 describe("Simulation", () => {
@@ -39,5 +39,10 @@ describe("Simulation", () => {
     const before = sim.matchManager.timeRemaining;
     sim.tick(0.1);
     expect(sim.matchManager.timeRemaining).toBeCloseTo(before - 0.1, 5);
+  });
+
+  it("counts arena cells (totalArenaCells > 0 and < grid size)", () => {
+    expect(sim.totalArenaCells).toBeGreaterThan(0);
+    expect(sim.totalArenaCells).toBeLessThan(GRID_SIZE * GRID_SIZE);
   });
 });
