@@ -17,8 +17,8 @@ const SELF_TRAIL_SKIP = 5;
 const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 const RESPAWN_DELAY = 3;
 const INVULN_TIME = 2;
-const CAMERA_HEIGHT = 43.68;
-const CAMERA_Z_OFFSET = 20.38;
+const CAMERA_HEIGHT = 22;
+const CAMERA_Z_OFFSET = 10;
 
 const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss
 
@@ -736,7 +736,7 @@ class Game {
   constructor() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf0f0f0);
-    this.camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+    this.camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.1, 300);
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
