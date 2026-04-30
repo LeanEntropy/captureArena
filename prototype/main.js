@@ -1067,6 +1067,16 @@ class Game {
       this._bindOnlinePlayer();
     };
 
+    // Server tagged a position discontinuity (respawn, restart, faction
+    // reassignment). Clear the renderer's interpolation buffer for this char
+    // so it doesn't smooth across the artificial line between old and new
+    // pos, and snap the mesh directly. For the LOCAL player, also reset
+    // predicted state so the soft tether resumes from the new pos rather
+    // than fighting the discontinuity.
+    this.mp.onTeleport = (charId, posX, posZ, dirX, dirZ, reason) => {
+      this._applyTeleport(charId, posX, posZ, dirX, dirZ, reason);
+    };
+
     this.mp.onCumulativeScore = (score) => {
       this.cumulativeScore = score;
       console.log(`[online] cumulative score from prior sessions: ${score}`);
@@ -1150,6 +1160,41 @@ class Game {
       if (r.simChar && r.simChar.id === simCharId) return r;
     }
     return null;
+  }
+
+  // Apply a server-broadcast teleport: clear the renderer's interpolation
+  // buffer, snap the mesh to the new pos/dir, and (for the local player)
+  // reset predicted state so the soft tether resumes from the new pos
+  // instead of pulling toward the OLD pre-teleport pos.
+  // Reasons: "respawn" (death-respawn), "restart" (round reset), "reassign"
+  // (faction eliminated, char moved to a new faction's spawn).
+  _applyTeleport(charId, posX, posZ, dirX, dirZ, reason) {
+    console.log(`[teleport] ${reason} ${charId} ${posX.toFixed(1)} ${posZ.toFixed(1)}`);
+    const r = this._findRendererCharBySimId(charId);
+    if (!r) return;
+    // Clear the snapshot interpolation buffer so we don't lerp from the
+    // pre-teleport pos to the new one.
+    r.posBuffer = [];
+    r._lastSchemaPosX = null;
+    r._lastSchemaPosZ = null;
+    // Snap mesh + internal vectors directly.
+    r.group.position.x = posX;
+    r.group.position.z = posZ;
+    r.group.rotation.y = Math.atan2(dirX, dirZ);
+    r.pos.set(posX, 0, posZ);
+    r.dir.set(dirX, 0, dirZ);
+    // Local player: reset prediction state so the soft tether doesn't pull
+    // toward the OLD pos. (Without this, _stepPrediction sees a huge
+    // ddx/ddz between predicted and server pos for one frame and the
+    // hard-snap path catches it — which works, but explicit teleport
+    // handling is cleaner and avoids race conditions if the schema sync
+    // arrives one frame late.)
+    if (charId === this.myCharId && this.predicted) {
+      this.predicted.posX = posX;
+      this.predicted.posZ = posZ;
+      this.predicted.dirX = dirX || this.predicted.dirX;
+      this.predicted.dirZ = dirZ || this.predicted.dirZ;
+    }
   }
 
   // Replay a server-broadcast claim on the client by running the local sim's

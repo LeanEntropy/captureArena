@@ -15,6 +15,7 @@ export class MultiplayerClient {
     this.onHeal = null;            // (changedCells) => void
     this.onTrailVertex = null;     // (charId, x, z) => void
     this.onKill = null;            // (killerId, victimId) => void
+    this.onTeleport = null;        // (charId, posX, posZ, dirX, dirZ, reason) => void
     this.onYourCharId = null;      // (charId) => void
     this.onGridSnapshot = null;    // (b64) => void
     this.onCumulativeScore = null; // (score) => void
@@ -52,6 +53,9 @@ export class MultiplayerClient {
     });
     this.room.onMessage("kill", ({ killerId, victimId }) => {
       if (this.onKill) this.onKill(killerId, victimId);
+    });
+    this.room.onMessage("teleport", ({ charId, posX, posZ, dirX, dirZ, reason }) => {
+      if (this.onTeleport) this.onTeleport(charId, posX, posZ, dirX, dirZ, reason);
     });
     this.room.onMessage("yourCharId", ({ charId }) => {
       if (this.onYourCharId) this.onYourCharId(charId);

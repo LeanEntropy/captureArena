@@ -101,6 +101,20 @@ export class GameRoom extends Room<GameStateSchema> {
     this.sim.onKill = (killerId: number | null, victimId: number) => {
       this.broadcast("kill", { killerId, victimId });
     };
+    // Position discontinuity (respawn / restart / faction reassignment).
+    // Broadcast separately from schema state so clients can clear their
+    // interpolation buffers and snap directly to the new pos rather than
+    // smoothing along the artificial line between old and new.
+    this.sim.onTeleport = (
+      charId: number,
+      posX: number,
+      posZ: number,
+      dirX: number,
+      dirZ: number,
+      reason: string,
+    ) => {
+      this.broadcast("teleport", { charId, posX, posZ, dirX, dirZ, reason });
+    };
 
     // Initialize schema from sim's initial state
     for (let f = 1; f <= 5; f++) {
