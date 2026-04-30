@@ -219,12 +219,36 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`[GameRoom] join: ${client.sessionId} (snapshot ${compressed.length} bytes gzip)`);
   }
 
-  onLeave(client: Client) {
+  async onLeave(client: Client, consented: boolean) {
     const meta = this.clientMeta.get(client.sessionId);
-    if (meta?.charId !== null && meta?.charId !== undefined) {
-      this.sim.setHumanControl(meta.charId, false);
+    if (!meta) {
+      console.log(`[GameRoom] leave: ${client.sessionId} (no meta)`);
+      return;
     }
-    this.clientMeta.delete(client.sessionId);
-    console.log(`[GameRoom] leave: ${client.sessionId}`);
+
+    // Consented leave (explicit close from client) → immediate cleanup
+    if (consented) {
+      if (meta.charId !== null) {
+        this.sim.setHumanControl(meta.charId, false);
+      }
+      this.clientMeta.delete(client.sessionId);
+      console.log(`[GameRoom] leave: ${client.sessionId} (consented)`);
+      return;
+    }
+
+    // Unconsented disconnect (network drop) → allow 10s reconnect
+    console.log(`[GameRoom] ${client.sessionId} disconnected, allowing 10s reconnect`);
+    try {
+      await this.allowReconnection(client, 10);
+      // Successful reconnection — meta still in place, char still bound
+      console.log(`[GameRoom] ${client.sessionId} reconnected`);
+    } catch {
+      // Timeout — clean up
+      if (meta.charId !== null) {
+        this.sim.setHumanControl(meta.charId, false);
+      }
+      this.clientMeta.delete(client.sessionId);
+      console.log(`[GameRoom] ${client.sessionId} reconnection timed out — bot resumes`);
+    }
   }
 }

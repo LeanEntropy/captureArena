@@ -20,6 +20,8 @@ export class MultiplayerClient {
   }
 
   async connect(playerName, playerToken) {
+    // Browser refresh = new sessionId. Reconnection grace covers transient
+    // network blips only. Score persistence across refresh is via playerToken.
     // Resolve token: passed-in > localStorage > generate new
     let token = playerToken;
     if (!token) {
