@@ -40,6 +40,10 @@ export class MultiplayerClient {
     this.room.onMessage("gridSnapshot", ({ bytes }) => {
       if (this.onGridSnapshot) this.onGridSnapshot(bytes);
     });
+
+    // Now that handlers are wired, send hello
+    this.room.send("hello", { name: playerName, playerToken });
+
     return this.room;
   }
 

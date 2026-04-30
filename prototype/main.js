@@ -805,6 +805,11 @@ class Game {
       r._rebuildTrailMesh();
     };
 
+    this.mp.onYourCharId = (charId) => {
+      this.myCharId = charId;
+      console.log(`[online] my char id is ${charId}`);
+    };
+
     try {
       await this.mp.connect(name, null);
       console.log("[online] connected, sessionId =", this.mp.room.sessionId);

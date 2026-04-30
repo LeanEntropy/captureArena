@@ -76,6 +76,49 @@ export class GameRoom extends Room<GameStateSchema> {
     }
 
     this.setSimulationInterval((dtMs) => this.tick(dtMs / 1000), TICK_MS);
+
+    this.onMessage("hello", (client, msg: { name?: string; playerToken?: string | null }) => {
+      this.handleHello(client, msg.name ?? "Player", msg.playerToken ?? null);
+    });
+  }
+
+  private handleHello(client: Client, name: string, playerToken: string | null) {
+    // Count humans per faction
+    const humanCounts = new Map<number, number>();
+    for (const c of this.sim.characters) {
+      if (c.isHuman) humanCounts.set(c.factionId, (humanCounts.get(c.factionId) ?? 0) + 1);
+    }
+    const factionsForPick = this.sim.factionManager.getAllFactions().map((f: any) => ({
+      id: f.id, territoryPct: f.territoryPct, alive: f.alive,
+    }));
+    const factionId = pickWeakestFaction(factionsForPick, humanCounts);
+    if (factionId === null) {
+      console.log(`[GameRoom] hello from ${client.sessionId}: no alive factions`);
+      return;
+    }
+
+    // Prefer alive bot in that faction
+    let target = this.sim.characters.find((c: any) =>
+      c.factionId === factionId && !c.isHuman && c.alive,
+    );
+    // Fallback: any non-human in that faction
+    if (!target) {
+      target = this.sim.characters.find((c: any) => c.factionId === factionId && !c.isHuman);
+    }
+    if (!target) {
+      console.log(`[GameRoom] hello from ${client.sessionId}: no available bots in faction ${factionId}`);
+      return;
+    }
+
+    target.isHuman = true;
+    if (name) target.name = name;
+
+    const meta = this.clientMeta.get(client.sessionId)!;
+    meta.charId = target.id;
+    meta.playerToken = playerToken;
+
+    client.send("yourCharId", { charId: target.id });
+    console.log(`[GameRoom] ${client.sessionId} ("${name}") took over char ${target.id} (faction ${factionId})`);
   }
 
   private tick(dt: number) {
