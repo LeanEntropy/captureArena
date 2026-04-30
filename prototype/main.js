@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
 import { MultiplayerClient } from "./multiplayer.js";
-import { FACTION_COUNT, FACTION_COLORS } from "./sim/faction.js";
+import { FACTION_COUNT, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
 import {
@@ -1270,9 +1270,78 @@ class Game {
     // sim.claim() to fire onClaim/onHeal again (we already applied them).
     this.sim.onClaim = null;
     this.sim.onHeal = null;
-    this.factionManager = null;
-    this.matchManager = { phase: "playing", timeRemaining: 0, getTimeString: () => "" };
-    this.scoreTracker = null;
+
+    // Build adapter objects that look like the solo factionManager /
+    // matchManager / scoreTracker, but proxy to the schema state. The renderer
+    // Character + UIManager are unchanged; only the data sources differ.
+    const game = this;
+    this.factionManager = {
+      getAllFactions() {
+        return Array.from(game.mp.room.state.factions).map(f => ({
+          id: f.id,
+          name: FACTION_NAMES[f.id - 1] ?? `F${f.id}`,
+          color: FACTION_COLORS[f.id - 1] ?? 0xffffff,
+          territoryPct: f.territoryPct,
+          alive: f.alive,
+          endangered: f.endangered,
+        }));
+      },
+    };
+    this.matchManager = {
+      getTimeString() {
+        const t = game.mp.room.state.timeRemaining || 0;
+        const m = Math.floor(t / 60);
+        const s = Math.floor(t % 60);
+        return `${m}:${s.toString().padStart(2, "0")}`;
+      },
+      get timeRemaining() { return game.mp.room.state.timeRemaining; },
+      get phase() { return game.mp.room.state.phase; },
+      get winner() {
+        if (game.mp.room.state.phase !== "ended") return null;
+        const factions = game.factionManager.getAllFactions();
+        return factions.slice().sort((a, b) => b.territoryPct - a.territoryPct)[0] ?? null;
+      },
+    };
+    // The scoreTracker adapter operates on the renderer-side proxy chars
+    // (simChar) which are the same objects passed to UIManager.setPlayer.
+    // entry.char === this.player comparisons therefore work the same way as
+    // they do in solo, where the player key is the sim Character instance.
+    this.scoreTracker = {
+      getScore(char) {
+        const id = char?.id;
+        if (id == null) return { total: 0, captures: 0, kills: 0, claims: 0 };
+        const cs = game.mp.room.state.characters.find(c => c.id === id);
+        if (!cs) return { total: 0, captures: 0, kills: 0, claims: 0 };
+        return { total: cs.score, captures: 0, kills: cs.killCount, claims: 0 };
+      },
+      getLeaderboard() {
+        const chars = Array.from(game.mp.room.state.characters);
+        return chars
+          .slice()
+          .sort((a, b) => b.score - a.score)
+          .map(cs => {
+            const rChar = game.characters.find(rc => rc.simChar?.id === cs.id);
+            return {
+              char: rChar?.simChar ?? null,
+              total: cs.score,
+              captures: 0,
+              kills: cs.killCount,
+              claims: 0,
+            };
+          })
+          .filter(e => e.char != null);
+      },
+      getPlayerRankInFaction(char) {
+        const id = char?.id;
+        if (id == null) return -1;
+        const target = game.mp.room.state.characters.find(c => c.id === id);
+        if (!target) return -1;
+        const sameFaction = Array.from(game.mp.room.state.characters)
+          .filter(c => c.factionId === target.factionId)
+          .sort((a, b) => b.score - a.score);
+        return sameFaction.findIndex(c => c.id === id) + 1;
+      },
+    };
 
     // Build renderer Characters wrapping each Colyseus CharacterSchema via
     // a sim-shaped proxy.
@@ -1295,6 +1364,14 @@ class Game {
 
     this._createTerritoryTexture();
     this._updateTerritoryTexture();
+
+    // Instantiate UIManager with the schema-backed adapters. The minimap
+    // reads territoryGrid.grid (now aliased to sim.grid), which is kept in
+    // sync by the gridSnapshot + claimResult/heal events.
+    this.uiManager = new UIManager(
+      this.factionManager, this.matchManager, this.scoreTracker,
+      territoryGrid.grid, GRID_SIZE, GRID_SENTINEL,
+    );
 
     // Camera: orbit the arena center until we have a real player char.
     const spawn = this.player
@@ -1322,6 +1399,10 @@ class Game {
     if (!rChar) return;
     rChar.isPlayer = true;
     this.player = rChar;
+    // Wire UI to the local player char. UIManager indexes player by reference;
+    // pass the simChar proxy so leaderboard equality (entry.char === player)
+    // matches the same proxy returned by getLeaderboard().
+    if (this.uiManager) this.uiManager.setPlayer(rChar.simChar);
     // Initialize client-side prediction state from current schema. The
     // renderer character will read pos/dir from `predicted` instead of the
     // schema; we reconcile each frame against the authoritative server pos.

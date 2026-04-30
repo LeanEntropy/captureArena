@@ -42,6 +42,13 @@ export class GameRoom extends Room<GameStateSchema> {
 
   onCreate() {
     this.setState(new GameStateSchema());
+    // Align patch rate with sim tick rate. Colyseus default is 50ms (20Hz);
+    // sim runs at 30Hz, so the default coalesces ~1.5 sim ticks per patch and
+    // produces bursty client-side state arrival (measured: mean 50ms with
+    // many <5ms intervals from coalescing, p99 171ms when a patch slips).
+    // Matching patchRate to TICK_MS gives clients exactly one patch per sim
+    // tick, evening out the snapshot interpolation buffer's input cadence.
+    this.patchRate = TICK_MS;
     this.sim = new Simulation();
     this.sim.start();
 
@@ -304,7 +311,8 @@ export class GameRoom extends Room<GameStateSchema> {
       cs.invulnTimer = c.invulnTimer ?? 0;
       cs.killCount = c.killCount ?? 0;
       cs.lastAppliedInputSeq = seqByCharId.get(c.id) ?? 0;
-      // score will come from scoreTracker in Task 19; for now leave at 0
+      const sc = this.sim.scoreTracker?.getScore?.(c);
+      cs.score = sc?.total ?? 0;
     }
   }
 
