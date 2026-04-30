@@ -34,6 +34,12 @@ export class Simulation {
     this.onHeal = null;        // (changedCells) => void
     this.onTrailVertex = null; // (charId, x, z) => void
     this.onKill = null;        // (killerId, victimId) => void
+    // Position discontinuity (respawn / restart / faction reassignment).
+    // Distinct from onKill — fires at the moment the character's pos jumps
+    // to a new location, NOT when they die. Lets clients clear interpolation
+    // buffers / prediction state so they don't smooth across the artificial
+    // line between old and new positions.
+    this.onTeleport = null;    // (charId, posX, posZ, dirX, dirZ, reason) => void
 
     // Per-faction contour cache. Bots re-plan their loops every few seconds
     // and need the boundary contour of their faction. Computing it is O(N²)
@@ -528,7 +534,13 @@ export class Simulation {
   // for every grid cell the line from (gx0, gy0) to (gx1, gy1) passes through.
   // 4-connected coverage: writes intermediate cells on diagonal steps so a
   // 4-connected BFS cannot leak through a corner.
-  _rasterizeLine(buffer, gx0, gy0, gx1, gy1) {
+  //
+  // When `thick` is true, also stamp each plotted cell as a 3×3 (the cell + its
+  // 8 neighbors). This widens the wall to 3 cells, which guarantees the line
+  // is watertight against a 4-connected BFS even if a parallel section of the
+  // same wall (e.g. an out-and-back trail with thin gap) sits 1-2 cells away.
+  // Used by claim() to prevent thin-line flood-fill leaks.
+  _rasterizeLine(buffer, gx0, gy0, gx1, gy1, thick = false) {
     let x = gx0 | 0;
     let y = gy0 | 0;
     const x1 = gx1 | 0;
@@ -540,8 +552,25 @@ export class Simulation {
     let err = dx - dy;
     const N = GRID_SIZE;
 
+    const plot = (px, py) => {
+      if (px < 0 || px >= N || py < 0 || py >= N) return;
+      buffer[py * N + px] = 1;
+      if (!thick) return;
+      // Stamp 3×3 around (px, py).
+      for (let oy = -1; oy <= 1; oy++) {
+        const ny = py + oy;
+        if (ny < 0 || ny >= N) continue;
+        const rowBase = ny * N;
+        for (let ox = -1; ox <= 1; ox++) {
+          const nx = px + ox;
+          if (nx < 0 || nx >= N) continue;
+          buffer[rowBase + nx] = 1;
+        }
+      }
+    };
+
     // Plot starting cell.
-    if (x >= 0 && x < N && y >= 0 && y < N) buffer[y * N + x] = 1;
+    plot(x, y);
 
     while (x !== x1 || y !== y1) {
       const e2 = 2 * err;
@@ -555,10 +584,9 @@ export class Simulation {
         // Paint (x - sx, y) — the cell we'd have passed through if we'd
         // stepped Y first. Either choice closes the corner; pick the
         // deterministic "horizontal first" one.
-        const ix = x - sx;
-        if (ix >= 0 && ix < N && y >= 0 && y < N) buffer[y * N + ix] = 1;
+        plot(x - sx, y);
       }
-      if (x >= 0 && x < N && y >= 0 && y < N) buffer[y * N + x] = 1;
+      plot(x, y);
     }
   }
 
@@ -628,12 +656,19 @@ export class Simulation {
     // 3. Rasterize the trail and the two closure bridges into a wall mask.
     //    Allocate a full-grid mask (cheap relative to the BFS savings, and
     //    keeps _rasterizeLine's bounds-check logic untouched).
+    //
+    //    Use 3×3 thick stamps. A 1-cell line is NOT watertight against a
+    //    4-connected BFS when a parallel section of the same wall sits within
+    //    1-2 cells (out-and-back trails with thin gaps). 3×3 stamping forces
+    //    the wall to be at least 3 cells wide, which is provably watertight.
+    //    Cost: a tiny bit of extra area gets captured at the wall edge —
+    //    visually identical at gameplay scale (CELL_SIZE ≈ 0.13 worldUnits).
     const walls = new Uint8Array(N * N);
     for (let i = 0; i < trail.length - 1; i++) {
-      this._rasterizeLine(walls, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy);
+      this._rasterizeLine(walls, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy, true);
     }
-    this._rasterizeLine(walls, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy);
-    this._rasterizeLine(walls, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy);
+    this._rasterizeLine(walls, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy, true);
+    this._rasterizeLine(walls, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy, true);
 
     // 4. BFS bounded to the bbox, seeded from the bbox perimeter.
     //    Blockers = sentinel + own territory + walls.
@@ -741,32 +776,89 @@ export class Simulation {
       }
     }
 
-    // 5. Inside the bbox: any non-sentinel, non-own, non-visited cell is
-    //    enclosed → flip to own. Track the diff. Also flip wall cells that
-    //    aren't sentinel (the trail itself is now own territory).
-    //    Maintain cellCounts incrementally (decrement old owner, increment claimer).
-    const changedCells = []; // flat list of cell indices
-    const losers = new Set(); // factions that lost cells — must invalidate their contour cache
-    const cellCounts = this.cellCounts;
-    let claimerGain = 0;
+    // 5a. Count enclosed cells (non-flooded, non-wall, non-own, non-sentinel
+    //     cells inside the bbox). If zero, the wall failed to seal — likely
+    //     the trail self-pinches with a sub-3-cell gap that even thick walls
+    //     couldn't close, OR the bridges land in a leaky spot. Fall back to
+    //     polygon-stamping the trail with a direct closing line so the player
+    //     still gets a fill rather than a thin-line capture.
+    let enclosedCount = 0;
     for (let gy = minGY; gy <= maxGY; gy++) {
       const rowBase = gy * N;
       for (let gx = minGX; gx <= maxGX; gx++) {
         const idx = rowBase + gx;
         const v = grid[idx];
-        if (v === GRID_SENTINEL) continue;
-        if (v === factionId) continue;
-        if (!visited[idx] || walls[idx]) {
-          if (v !== 0) losers.add(v);
-          // Incrementally maintain cellCounts: cell flips from v → factionId.
-          cellCounts[v]--;
-          claimerGain++;
-          grid[idx] = factionId;
-          changedCells.push(idx);
-        }
+        if (v === GRID_SENTINEL || v === factionId) continue;
+        if (walls[idx]) continue;
+        if (!visited[idx]) enclosedCount++;
       }
     }
-    cellCounts[factionId] += claimerGain;
+
+    const changedCells = []; // flat list of cell indices
+    const losers = new Set(); // factions that lost cells — must invalidate their contour cache
+    const cellCounts = this.cellCounts;
+
+    if (enclosedCount === 0) {
+      // FALLBACK: BFS leaked. Stamp the trail as a closed polygon (closing
+      // line trail[0]→trail[N-1]) and use the result as the claimed region.
+      // Build the polygon in world coords (poly2D wants {x, y}; y = z axis).
+      const poly2D = new Array(trail.length);
+      for (let i = 0; i < trail.length; i++) {
+        poly2D[i] = { x: trail[i].x, y: trail[i].z };
+      }
+      // _stampPolygon implicitly closes the polygon (treats edge n-1→0).
+      // It maintains cellCounts and updates losers per-cell, so we need to
+      // capture changed cells ourselves. Snapshot+diff for correctness.
+      const preSnap = new Uint8Array(grid);
+      this._stampPolygon(poly2D, factionId);
+      // Also stamp the wall mask cells (so the trail line itself is filled
+      // even if the polygon's scanline fill missed them at thin/corner spots).
+      let wallGain = 0;
+      for (let gy = minGY; gy <= maxGY; gy++) {
+        const rowBase = gy * N;
+        for (let gx = minGX; gx <= maxGX; gx++) {
+          const idx = rowBase + gx;
+          if (!walls[idx]) continue;
+          const v = grid[idx];
+          if (v === GRID_SENTINEL || v === factionId) continue;
+          if (v !== 0) losers.add(v);
+          cellCounts[v]--;
+          wallGain++;
+          grid[idx] = factionId;
+        }
+      }
+      cellCounts[factionId] += wallGain;
+      // Compute changed cells = post != pre.
+      for (let i = 0; i < grid.length; i++) {
+        if (grid[i] !== preSnap[i]) {
+          const old = preSnap[i];
+          if (old !== 0 && old !== GRID_SENTINEL && old !== factionId) losers.add(old);
+          changedCells.push(i);
+        }
+      }
+    } else {
+      // Normal path: any non-sentinel, non-own, non-visited cell is enclosed
+      // → flip to own. Also flip wall cells (the trail itself is now own
+      // territory). Maintain cellCounts incrementally.
+      let claimerGain = 0;
+      for (let gy = minGY; gy <= maxGY; gy++) {
+        const rowBase = gy * N;
+        for (let gx = minGX; gx <= maxGX; gx++) {
+          const idx = rowBase + gx;
+          const v = grid[idx];
+          if (v === GRID_SENTINEL) continue;
+          if (v === factionId) continue;
+          if (!visited[idx] || walls[idx]) {
+            if (v !== 0) losers.add(v);
+            cellCounts[v]--;
+            claimerGain++;
+            grid[idx] = factionId;
+            changedCells.push(idx);
+          }
+        }
+      }
+      cellCounts[factionId] += claimerGain;
+    }
     // Invalidate contour cache for the claimer + every faction that lost cells.
     this._contourCache.delete(factionId);
     for (const loser of losers) this._contourCache.delete(loser);
@@ -813,6 +905,7 @@ export class Simulation {
         c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
       );
       c.respawn(sp.x, sp.z);
+      this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "respawn");
       return;
     }
 
@@ -823,6 +916,7 @@ export class Simulation {
         c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
       );
       c.respawn(sp.x, sp.z);
+      this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "reassign");
     }
 
     // Update elimination state for all factions (mirrors main.js).
@@ -868,7 +962,10 @@ export class Simulation {
       const sp = this.factionManager.getSpawnPoint(
         c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
       );
-      if (sp) c.setPos(sp.x, sp.z);
+      if (sp) {
+        c.setPos(sp.x, sp.z);
+        this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "restart");
+      }
     }
     this.matchManager = new MatchManager(this.factionManager, this.scoreTracker);
     this.matchManager.startMatch();

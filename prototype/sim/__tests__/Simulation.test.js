@@ -542,6 +542,111 @@ describe("Simulation", () => {
     expect(t1 - t0).toBeLessThan(50);
   });
 
+  it("Flood-fill claim: thin out-and-back trail produces a real fill, not a thin line", () => {
+    // Regression test for the "thin-line claim" bug. A trail whose two legs
+    // run within ~3 cells of each other (an out-and-back with a small lateral
+    // offset) defeated the 1-cell wall rasterizer: the BFS leaked through the
+    // 1-2 cell gap between the two legs, the enclosed set ended up empty,
+    // and only the trail walls themselves got flipped → user saw their trail
+    // as a thin line of their color, no fill.
+    //
+    // Fix: 3×3 thick stamping makes the wall watertight, and a fallback path
+    // polygon-stamps the trail when the BFS still leaks. Either way the claim
+    // must produce a real fill (>> trail length).
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    // Find a faction-1 cell on the boundary.
+    let bGX = -1, bGY = -1;
+    outer: for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL && v !== 0)) {
+          bGX = gx; bGY = gy; break outer;
+        }
+      }
+    }
+    expect(bGX).toBeGreaterThanOrEqual(0);
+    const cellSize = 133.78 / GRID_SIZE;
+    const bx = -66.89 + (bGX + 0.5) * cellSize;
+    const bz = -66.89 + (bGY + 0.5) * cellSize;
+    const dirLen = Math.hypot(bx, bz);
+    const ux = bx / dirLen, uz = bz / dirLen;
+    const px = -uz, pz = ux;
+
+    // Build the trail shape that triggered the bug: out-leg + return-leg
+    // separated by 0.4 worldUnits (~3 cells at CELL_SIZE ≈ 0.13). With a
+    // 1-cell wall this leaves a 1-2 cell gap the BFS leaked through.
+    const trail = [];
+    for (let i = 0; i < 8; i++) {
+      trail.push({ x: bx + ux * (i*0.4) + px * 0.2, z: bz + uz * (i*0.4) + pz * 0.2 });
+    }
+    for (let i = 7; i >= 0; i--) {
+      trail.push({ x: bx + ux * (i*0.4) - px * 0.2, z: bz + uz * (i*0.4) - pz * 0.2 });
+    }
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    // Must produce a REAL fill — not just trail-cells. Pre-fix this was ≤ trail.length (~16).
+    // Real fill is dozens to hundreds of cells. Allow margin for tighter fits.
+    expect(after - before).toBeGreaterThan(trail.length + 5);
+  });
+
+  it("Flood-fill claim: pinched/self-touching trail still fills (no thin-line regression)", () => {
+    // Another shape that triggered the thin-line bug: a self-touching pinch
+    // where the trail crosses itself or comes within sub-3-cell distance.
+    const c = sim.characters[0];
+    c.factionId = 1;
+
+    let bGX = -1, bGY = -1;
+    outer: for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        const idx = gy * GRID_SIZE + gx;
+        if (sim.grid[idx] !== 1) continue;
+        const nbrs = [
+          gy > 0 ? sim.grid[(gy - 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gy < GRID_SIZE - 1 ? sim.grid[(gy + 1) * GRID_SIZE + gx] : GRID_SENTINEL,
+          gx > 0 ? sim.grid[gy * GRID_SIZE + gx - 1] : GRID_SENTINEL,
+          gx < GRID_SIZE - 1 ? sim.grid[gy * GRID_SIZE + gx + 1] : GRID_SENTINEL,
+        ];
+        if (nbrs.some(v => v !== 1 && v !== GRID_SENTINEL && v !== 0)) {
+          bGX = gx; bGY = gy; break outer;
+        }
+      }
+    }
+    expect(bGX).toBeGreaterThanOrEqual(0);
+    const cellSize = 133.78 / GRID_SIZE;
+    const bx = -66.89 + (bGX + 0.5) * cellSize;
+    const bz = -66.89 + (bGY + 0.5) * cellSize;
+    const dirLen = Math.hypot(bx, bz);
+    const ux = bx / dirLen, uz = bz / dirLen;
+    const px = -uz, pz = ux;
+
+    // Pinch shape (16 verts) — trail loops back near its start with a tight gap.
+    const trail = [];
+    for (let i=0;i<6;i++) trail.push({ x: bx + ux*(0.3 + i*0.3), z: bz + px*(0.05 + i*0.05) });
+    for (let i=0;i<4;i++) trail.push({ x: bx + ux*1.5 + px*(0.5 + i*0.4), z: bz + 0.5 + uz*(i*0.2) });
+    for (let i=5;i>=0;i--) trail.push({ x: bx + ux*(0.3 + i*0.3), z: bz - px*(0.05 + i*0.05) });
+    c.trailVerts = trail;
+
+    const before = countCellsOwnedBy(sim.grid, 1);
+    const ok = sim.claim(c);
+    const after = countCellsOwnedBy(sim.grid, 1);
+    expect(ok).toBe(true);
+    // Must produce a real fill (not just trail cells).
+    expect(after - before).toBeGreaterThan(trail.length + 5);
+  });
+
   it("restart resets characters and grid", () => {
     sim.characters[0].alive = false;
     sim.characters[0].killCount = 7;
