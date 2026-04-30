@@ -4,7 +4,9 @@
     "rootDir": "src",
     "outDir": "dist",
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "emitDecoratorMetadata": true,
+    "allowJs": true,
+    "checkJs": false
   },
   "include": ["src"]
 }

@@ -5,3 +5,6 @@ dist/
 .env
 .playwright-mcp/
 screenshots/
+
+# Generated: copied from prototype/sim/ by server/scripts/copy-sim.mjs
+server/src/sim/
