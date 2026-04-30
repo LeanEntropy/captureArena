@@ -1370,6 +1370,23 @@ class Game {
       }
 
       c.syncVisuals();
+
+      // Self-correcting visual cleanup: if the character is alive and standing
+      // in their own territory, the renderer trail must be empty.  This catches
+      // the case where the sim discards a short trail (<5 verts) without firing
+      // onClaim, so the renderer never got a _clearTrail() notification.
+      if (isAliveNow && c.trailVerts.length > 0) {
+        const wx = c.simChar.pos.x;
+        const wz = c.simChar.pos.z;
+        const gx = Math.floor((wx - WORLD_MIN) / CELL_SIZE);
+        const gz = Math.floor((wz - WORLD_MIN) / CELL_SIZE);
+        if (gx >= 0 && gx < GRID_SIZE && gz >= 0 && gz < GRID_SIZE) {
+          const cellOwner = territoryGrid.grid[gz * GRID_SIZE + gx];
+          if (cellOwner === c.simChar.factionId) {
+            c._clearTrail();
+          }
+        }
+      }
     }
 
     // Texture refresh if grid changed this tick (throttled to ~10 Hz).
