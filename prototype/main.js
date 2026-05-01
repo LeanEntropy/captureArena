@@ -1458,6 +1458,34 @@ class Game {
       console.log(`[online] cumulative score from prior sessions: ${score}`);
     };
 
+    // Server-broadcast kill: mirror the sim.onKill side effects from solo —
+    // voxel-debris FX at the victim, death-screen toggle for the local player,
+    // and a notification toast naming the killer/victim. The character's
+    // alive=false flag arrives via the schema sync (handled by the wasAlive
+    // loop in tick() for the dead→alive respawn case); this hook adds the
+    // visual + HUD feedback that solo gets through sim.onKill.
+    this.mp.onKill = (killerId, victimId) => {
+      const victimR = this._findRendererCharBySimId(victimId);
+      const killerR = killerId !== null ? this._findRendererCharBySimId(killerId) : null;
+      if (!victimR) return;
+      const baseY = victimR.baseY != null ? victimR.baseY : ISLAND_TOP_Y;
+      this.fx.triggerKill(
+        victimR.simChar.pos.x, victimR.simChar.pos.z,
+        baseY, victimR.color,
+      );
+      victimR.onDieVisual();
+      if (victimR === this.player) {
+        this.killedBy = killerR ? killerR.name : "";
+        if (this.deathScreen) this.deathScreen.classList.add("visible");
+        this.hud.push(killerR ? `Killed by ${killerR.name}` : `Cut off`);
+      } else if (killerR === this.player) {
+        this.hud.push(`You killed ${victimR.name}`);
+      }
+      dlog("KILL", `${victimR.name} killed${killerR ? " by " + killerR.name : ""}`, {
+        isPlayer: victimR.isPlayer,
+      });
+    };
+
     try {
       await this.mp.connect(name, null);
       console.log("[online] connected, sessionId =", this.mp.room.sessionId);
@@ -1524,6 +1552,7 @@ class Game {
     }
     this._clearOnlineCharTrail(charId);
     this.territoryDirty = true;
+    this._emitOnlineClaimFX(charId, factionId);
   }
 
   _clearOnlineCharTrail(charId) {
@@ -1604,6 +1633,24 @@ class Game {
     const r = this._findRendererCharBySimId(charId);
     if (r) r._clearTrail();
     this.territoryDirty = true;
+    this._emitOnlineClaimFX(charId, factionId);
+  }
+
+  // Mirror solo's sim.onClaim side effects: wave-ripple FX at the claimer's
+  // current position + notification toast for the local player. Used by both
+  // the small-claim (claimResult cell-diff) and large-claim (algorithm replay)
+  // online paths so the visual feedback matches solo regardless of payload.
+  _emitOnlineClaimFX(charId, factionId) {
+    const r = this._findRendererCharBySimId(charId);
+    if (!r) return;
+    const x = r.simChar.pos.x, z = r.simChar.pos.z;
+    this.fx.triggerClaim(x, z);
+    if (r === this.player && this.factionManager) {
+      const faction = this.factionManager.getAllFactions().find(f => f.id === factionId);
+      const fname = faction ? faction.name : `F${factionId}`;
+      this.hud.push(`Claimed for ${fname}`);
+    }
+    dlog("CLAIM", `${r.name}: claimed (mp)`, { charId });
   }
 
   _initRendererFromOnlineState(state) {
@@ -1748,6 +1795,31 @@ class Game {
 
     this.started = true;
     console.log(`[online] renderer initialized with ${this.characters.length} characters`);
+
+    // Vibe Jam 2026 portals — webring (https://vibej.am/2026#portals).
+    // Mirrors the solo-mode init in start(): green exit always visible; red
+    // start portal only when the player arrived via ?portal=true. Wires the
+    // player-state callbacks so the portals can forward username/team/color
+    // through to the next game in the webring.
+    this.portalLayer = new THREE.Group();
+    this.scene.add(this.portalLayer);
+    initVibeJamPortals({
+      scene: this.portalLayer,
+      getPlayer: () => this.player?.group ?? null,
+      spawnPoint:   { x: -ARENA_RADIUS + 1, y: 1, z: 0 }, // start (red) — west edge
+      exitPosition: { x:  ARENA_RADIUS - 1, y: 1, z: 0 }, // exit (green) — east edge
+      getUsername: () => this.playerName || null,
+      getColor: () => {
+        const fid = this.player?.simChar?.factionId;
+        return (fid != null && fid > 0) ? (FACTION_COLORS[fid - 1] ?? null) : null;
+      },
+      getSpeed: () => PLAYER_SPEED,
+      getTeam: () => {
+        const fid = this.player?.simChar?.factionId;
+        return (fid != null && fid > 0) ? (FACTION_NAMES[fid - 1] ?? null) : null;
+      },
+      getHp: () => (this.player?.alive ? 100 : 1),
+    });
 
     // If yourCharId already arrived, bind the local player now.
     this._bindOnlinePlayer();
