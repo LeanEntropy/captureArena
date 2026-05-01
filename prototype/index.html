@@ -267,6 +267,22 @@
       padding-bottom: 1px;
     }
     #ts-byline a:hover { color: #FFE140; border-bottom-color: #FFE140; }
+    #ts-rules {
+      margin-top: 22px; max-width: 460px;
+      font-family: 'Fredoka', system-ui, sans-serif; font-size: 13px;
+      color: #fff; line-height: 1.5; text-align: left;
+      background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px; padding: 12px 16px;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+    }
+    #ts-rules .rules-title {
+      font-family: 'Lilita One', sans-serif; font-size: 16px; letter-spacing: 2px;
+      color: #FFE140; margin-bottom: 6px; text-align: center;
+    }
+    #ts-rules ul { list-style: none; padding-left: 0; margin: 0; }
+    #ts-rules li { padding: 2px 0; }
+    #ts-rules li::before { content: "▸ "; color: #FFE140; font-weight: bold; }
+    #ts-rules b { color: #FFE140; font-weight: 700; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -322,6 +338,17 @@
       </div>
       <div id="ts-music-row">
         <button id="music-toggle-title" title="Toggle music">&#x1F50A;</button>
+      </div>
+      <div id="ts-rules">
+        <div class="rules-title">HOW TO PLAY</div>
+        <ul>
+          <li>Move with <b>WASD</b> / <b>arrow keys</b> or the <b>mouse</b>.</li>
+          <li>Leave your territory to draw a trail. Close the loop back to your colour to <b>capture</b> the enclosed land.</li>
+          <li>Don't get caught off your territory — if anyone <b>crosses your trail</b>, you die.</li>
+          <li>Standing on enemy land while not trailing also gets you killed.</li>
+          <li><b>15-min rounds.</b> The faction with the most territory wins.</li>
+          <li><b>Mouse wheel</b> zooms; <b>Main Menu</b> button returns to title.</li>
+        </ul>
       </div>
       <div id="ts-byline">A GAME BY
         <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a>
