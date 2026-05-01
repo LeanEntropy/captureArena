@@ -1072,11 +1072,21 @@ class DirectionScene {
   }
 
   // -- Water + Island (Direction E) ---------------------------------------
-  // Cheap procedural water using a custom ShaderMaterial:
-  //   * Vertex stage adds two summed sin waves (cost: ~5 ops/vert; geometry is 80x80).
-  //   * Fragment stage mixes deep teal + foam ring near island + sun-stripe highlight.
-  // No reflection probe, no Water-class FFT — this is a stylized cartoon sea
-  // that fits the box-y arcade direction. Total cost: <0.4ms/frame on 1920x1080.
+  // FACETED low-poly Vanta water (synced 2026-05-01 with prototype/main.js commit
+  // e7e6b56 — Director rejected the previous smooth-shaded depth-gradient + sun-
+  // glitter look as "wrong visual"). Each triangle of the 80x80 plane reads as
+  // one uniform shade via screen-space derivatives (dFdx/dFdy on view-space
+  // position) → flat per-face normal even on a shared-vertex grid. Lambert
+  // mix between deep blue (#0d3556) and light blue (#5093d0) with smoothstep
+  // contrast curve for hard-edged "crystal facet" look. No glitter, no foam,
+  // no scrolling sun stripes. Three.js r170 ships WebGL2 by default so
+  // dFdx/dFdy are core (no extension declaration needed).
+  //
+  // Spatial frequencies + amplitude were tuned in-game at ARENA_RADIUS=66.89.
+  // Companion runs at ARENA_RADIUS=16, so we scale frequencies UP by the
+  // ratio (~4.18x) and amplitude DOWN by the same ratio — preserves the
+  // facet density and per-triangle slope variance, so the panel reads like
+  // the in-game look, not a stretched zoom-in.
   _buildWaterAndIsland() {
     const c = this.config;
     // Two layouts share the water shader:
@@ -1090,75 +1100,123 @@ class DirectionScene {
     //                        at Y=0.65 — three planes, no Z-fighting.
     const isFlatCylinder = !!c.outerGround.cylinder;
 
-    // 1) Animated water plane (radius ARENA_RADIUS * 4, square)
+    // 1) Animated water plane (square, side = ARENA_RADIUS * 6)
     // For F we push the water LOWER and leave the cylinder edge as the only
     // surface near the cliff line — so wave animation stays OUTSIDE the
     // playable area as required.
     const waterGeom = new THREE.PlaneGeometry(ARENA_RADIUS * 6, ARENA_RADIUS * 6, 80, 80);
-    const seaCol = new THREE.Color(c.outerGround.color);
-    const foamCol = new THREE.Color(c.outerGround.foam);
-    const sunCol = new THREE.Color(c.outerGround.sun);
+    // Game-scale tunings (from prototype/main.js):
+    //   ARENA_RADIUS_GAME = 66.89, amp = 1.6, freqX = 0.025, freqY = 0.015.
+    // Companion-scale port: scale frequencies up and amplitude down by the
+    // arena-radius ratio so each grid cell carries the same slope and the
+    // facet pattern reads identically across the panel.
+    const SCALE = 66.89 / ARENA_RADIUS;             // ~4.18 at companion radius 16
+    const waveAmp = 1.6 / SCALE;                    // ~0.383
+    const freqX = 0.025 * SCALE;                    // ~0.105
+    const freqY = 0.015 * SCALE;                    // ~0.063
+    // Vanta default palette — same as the in-game build. Hardcoded (not
+    // sourced from config.outerGround.*) because the faceted look is the
+    // direction's identity, not a per-theme color choice.
+    const deepColor = new THREE.Color(0x0d3556);
+    const lightColor = new THREE.Color(0x5093d0);
     this._waterMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         // For F we widen the discard radius slightly so wave crests can
         // never overshoot onto the island silhouette.
         uIslandRadius: { value: ARENA_RADIUS * (isFlatCylinder ? 1.04 : 1.02) },
-        uFoamWidth: { value: isFlatCylinder ? 1.5 : 1.2 },
-        uSeaColor: { value: seaCol },
-        uFoamColor: { value: foamCol },
-        uSunColor: { value: sunCol },
-        uSunDir: { value: new THREE.Vector2(0.6, 0.4).normalize() },
+        uDeepColor: { value: deepColor },
+        uLightColor: { value: lightColor },
+        // View-space light direction → contrast pattern stays stable as the
+        // panel's auto-orbit camera rotates (matches Vanta's behavior).
+        uLightDir: { value: new THREE.Vector3(0.4, 0.8, 0.5).normalize() },
+        uWaveAmp: { value: waveAmp },
+        uFreqX: { value: freqX },
+        uFreqY: { value: freqY },
+        // Companion fog is lighter than the in-game fog (the panel viewport
+        // is small and we want the water to read clearly in thumbnail). Near
+        // and far are tuned so the far edge of the plane fades into sky.
+        uFogColor: { value: new THREE.Color(0xBCD8DE) },
+        uFogNear: { value: 25.0 },
+        uFogFar: { value: 70.0 },
       },
       vertexShader: `
         uniform float uTime;
+        uniform float uWaveAmp;
+        uniform float uFreqX;
+        uniform float uFreqY;
         varying vec2 vWorldXZ;
-        varying float vWaveY;
+        varying vec3 vViewPosition;
+        varying float vViewDist;
         void main() {
+          // Vanta's wave formula, ported from vanta.waves.min.js (MIT).
+          // Plane is rotated -PI/2 around X by the host, so locally we work
+          // with (position.x, position.y) which become world (x, z).
           vec3 p = position;
-          // Two summed sin waves at different freq/dir for stylized chop
-          float w1 = sin(p.x * 0.35 + uTime * 1.2) * 0.18;
-          float w2 = sin(p.y * 0.28 - uTime * 0.9 + p.x * 0.1) * 0.13;
-          float wave = w1 + w2;
-          p.z += wave;
-          vWaveY = wave;
-          // PlaneGeometry is rotated to lie flat by the host; here we work in local XY.
+          float wsp = 1.0;                              // waveSpeed
+          float phase = sqrt(wsp) * cos(-p.x - 0.7 * p.y);
+          float o = sin(wsp * uTime * 0.02 * 60.0
+                      - wsp * p.x * uFreqX
+                      + wsp * p.y * uFreqY
+                      + phase);
+          // (uTime is in seconds; Vanta's t was a frame counter that
+          // incremented by ~1/frame at 60fps, so * 60 to match cadence.)
+          float n = pow(o + 1.0, 2.0) / 4.0;
+          // Amplitude scaled per ARENA_RADIUS so the per-triangle face
+          // normals vary enough for Lambert lighting to produce distinct
+          // dark/light facets (not one collapsed shade).
+          p.z += n * uWaveAmp;
           vWorldXZ = p.xy;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          vec4 mvPos = modelViewMatrix * vec4(p, 1.0);
+          // View-space position is what we differentiate in the fragment
+          // shader to recover the per-triangle face normal — the whole
+          // trick for Vanta's faceted look on a shared-vertex mesh.
+          vViewPosition = mvPos.xyz;
+          vViewDist = -mvPos.z;
+          gl_Position = projectionMatrix * mvPos;
         }
       `,
       fragmentShader: `
-        uniform float uTime;
         uniform float uIslandRadius;
-        uniform float uFoamWidth;
-        uniform vec3 uSeaColor;
-        uniform vec3 uFoamColor;
-        uniform vec3 uSunColor;
-        uniform vec2 uSunDir;
+        uniform vec3 uDeepColor;
+        uniform vec3 uLightColor;
+        uniform vec3 uLightDir;
+        uniform vec3 uFogColor;
+        uniform float uFogNear;
+        uniform float uFogFar;
         varying vec2 vWorldXZ;
-        varying float vWaveY;
+        varying vec3 vViewPosition;
+        varying float vViewDist;
         void main() {
           float dist = length(vWorldXZ);
-          // Discard pixels INSIDE the island radius — saves fillrate.
-          if (dist < uIslandRadius - 0.05) discard;
+          // HARD RULE: discard everything inside the island radius. No wave
+          // animation can ever bleed onto the playable area — pixels are
+          // killed before any blending can occur.
+          if (dist < uIslandRadius) discard;
 
-          // Base color depth-shaded by wave height (lighter at crests)
-          vec3 col = uSeaColor + vec3(0.18) * smoothstep(-0.1, 0.18, vWaveY);
+          // Per-FACE normal via screen-space derivatives of view-space pos.
+          // dFdx/dFdy are constant across a triangle, so this gives a single
+          // normal per triangle → flat-shaded facets even though the plane
+          // geometry has shared vertices. This is exactly Vanta's trick.
+          vec3 dx = dFdx(vViewPosition);
+          vec3 dy = dFdy(vViewPosition);
+          vec3 faceNormal = normalize(cross(dx, dy));
 
-          // Foam ring near the island — fade out across uFoamWidth units
-          float foamMask = 1.0 - smoothstep(uIslandRadius, uIslandRadius + uFoamWidth, dist);
-          // Animated foam strands
-          float foamNoise = sin(vWorldXZ.x * 1.6 + uTime * 2.4) * 0.5
-                          + sin(vWorldXZ.y * 1.3 - uTime * 1.7) * 0.5;
-          float foamStrand = smoothstep(0.3, 0.9, foamNoise);
-          float foam = foamMask * (0.7 + 0.3 * foamStrand);
-          col = mix(col, uFoamColor, foam);
+          // Lambert against a fixed view-space light. abs() so back-facing
+          // facets light up from the same source rather than going pure dark
+          // (matches Vanta — every triangle reads as a distinct shade, no
+          // pitch-black wedges).
+          float light = clamp(abs(dot(faceNormal, normalize(uLightDir))), 0.0, 1.0);
 
-          // Sparse sun-glitter stripes — scrolling along uSunDir
-          float glitProj = dot(vWorldXZ, uSunDir);
-          float glit = sin(glitProj * 1.2 + uTime * 1.6);
-          float glitMask = smoothstep(0.85, 1.0, glit) * smoothstep(0.05, 0.25, vWaveY);
-          col = mix(col, uSunColor, glitMask * 0.55);
+          // Remap Lambert through smoothstep so the bright/dark facet split
+          // is dramatic — adjacent facets read as clearly different shades,
+          // not a subtle gradient.
+          float t = smoothstep(0.55, 1.0, light);
+          vec3 col = mix(uDeepColor, uLightColor, t);
+
+          // Manual fog (ShaderMaterial doesn't auto-pick scene.fog).
+          float fogF = clamp((vViewDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+          col = mix(col, uFogColor, fogF);
 
           gl_FragColor = vec4(col, 1.0);
         }
