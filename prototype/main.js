@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import * as telemetry from "./telemetry.js";
 import { MultiplayerClient } from "./multiplayer.js";
 import { FACTION_COUNT, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
@@ -10,6 +11,10 @@ import {
   BOT_NAMES,
 } from "./sim/constants.js";
 import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./portals.js";
+
+// Self-hosted analytics — fires the initial pageview + (if applicable) a
+// portal_arrival event. Safe to call repeatedly; only the first call wins.
+telemetry.init();
 
 // Renderer-only tuning (client-side; not part of shared simulation)
 const CAMERA_HEIGHT = 34;
@@ -3401,6 +3406,9 @@ document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
   _onFirstGesture();
+  telemetry.setPlayerName(name);
+  telemetry.track("mode_pick", { mode: "solo" });
+  telemetry.gameStart("solo");
   game.startSolo(name);
 });
 
@@ -3408,6 +3416,9 @@ document.getElementById("online-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
   _onFirstGesture();
+  telemetry.setPlayerName(name);
+  telemetry.track("mode_pick", { mode: "online" });
+  telemetry.gameStart("online");
   game.startOnline(name);
 });
 
@@ -3428,6 +3439,7 @@ if (arrivedViaPortal) {
   const portalQS = new URLSearchParams(window.location.search);
   const portalName = (portalQS.get("username") || "Player").slice(0, 16);
   document.getElementById("name-entry").classList.add("hidden");
+  telemetry.setPlayerName(portalName);
   game.startSolo(portalName);
   // After Game.start() runs synchronously above, this.player exists. Move the
   // player to the start-portal location so the spawn matches the red portal.

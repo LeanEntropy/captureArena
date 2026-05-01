@@ -17,12 +17,17 @@
     "@colyseus/ws-transport": "^0.16.5",
     "@template/shared": "workspace:*",
     "@template/simulation": "workspace:*",
+    "basic-auth": "^2.0.1",
+    "better-sqlite3": "^12.0.0",
     "colyseus": "^0.16.5",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "maxmind": "^4.3.24"
   },
   "devDependencies": {
     "@colyseus/testing": "^0.16.3",
     "@colyseus/tools": "^0.16.20",
+    "@types/basic-auth": "^1.1.8",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

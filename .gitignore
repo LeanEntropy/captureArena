@@ -8,3 +8,9 @@ screenshots/
 
 # Generated: copied from prototype/sim/ by server/scripts/copy-sim.mjs
 server/src/sim/
+
+# Local SQLite analytics database (created at runtime; mount a volume in prod)
+server/data/
+
+# DB-IP geolocation database (downloaded during Docker build)
+*.mmdb

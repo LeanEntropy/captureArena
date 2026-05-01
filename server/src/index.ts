@@ -5,6 +5,10 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { trackHandler } from "./stats/ingest.js";
+import { statsAuth } from "./stats/auth.js";
+import { dashboardRouter } from "./stats/dashboard.js";
+import { startConcurrencySampler } from "./stats/concurrency.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +21,13 @@ const PROTOTYPE_DIR = path.resolve(__dirname, "../../prototype");
 const app = express();
 app.use(express.static(PROTOTYPE_DIR));
 app.get("/health", (_req, res) => { res.send("ok"); });
+
+// Self-hosted analytics — must come BEFORE the Colyseus mount and any catch-all.
+// `trust proxy` lets `req.ip` reflect X-Forwarded-For when running behind
+// Railway / a load balancer, so geo lookups work in production.
+app.set("trust proxy", true);
+app.use("/track", express.json({ limit: "16kb" }), trackHandler);
+app.use("/stats", statsAuth, dashboardRouter);
 
 // Colyseus Monitor — development only. Access at http://localhost:2567/colyseus
 // Gives a live web UI: active rooms, connected clients, full room state.
@@ -33,6 +44,10 @@ const gameServer = new Server({
 });
 
 gameServer.define("game", GameRoom);
+
+// Self-hosted analytics — start the 60s concurrent-online sampler.
+// Idempotent; reads currentRoom?.clients.length each tick and writes one row.
+startConcurrencySampler();
 
 const PORT = Number(process.env.PORT ?? 2567);
 httpServer.listen(PORT, () => {

@@ -4,6 +4,8 @@ import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameS
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
 import { BOT_NAMES } from "../sim/constants.js";
+import { setCurrentRoom } from "./registry.js";
+import { insertServerEvent } from "../stats/db.js";
 
 const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
@@ -40,9 +42,11 @@ export class GameRoom extends Room<GameStateSchema> {
   private prevPhase: string = "playing";
   private intermissionRemaining: number = 0;
   private playerScores = new Map<string, { cumulativeScore: number; lastSeenAt: number }>();
+  private matchStartTs: number = Date.now();
 
   onCreate() {
     this.setState(new GameStateSchema());
+    setCurrentRoom(this);
     // Align patch rate with sim tick rate. Colyseus default is 50ms (20Hz);
     // sim runs at 30Hz, so the default coalesces ~1.5 sim ticks per patch and
     // produces bursty client-side state arrival (measured: mean 50ms with
@@ -310,6 +314,7 @@ export class GameRoom extends Room<GameStateSchema> {
         // Reset transient state for the new round.
         this.prevPhase = "playing";
         this.state.phase = "playing";
+        this.matchStartTs = Date.now();
       }
       return; // don't tick simulation during intermission
     }
@@ -321,6 +326,7 @@ export class GameRoom extends Room<GameStateSchema> {
     const simPhase: string = this.sim.matchManager.phase;
     if (this.prevPhase === "playing" && simPhase === "ended") {
       this.accumulateScores();
+      this.emitMatchEnd();
       this.intermissionRemaining = INTERMISSION_SECONDS;
       this.state.phase = "intermission";
       this.state.intermissionRemaining = this.intermissionRemaining;
@@ -375,6 +381,41 @@ export class GameRoom extends Room<GameStateSchema> {
     }
   }
 
+  private emitMatchEnd() {
+    try {
+      const durationMs = Date.now() - this.matchStartTs;
+      const winner = this.sim.matchManager?.winner ?? null;
+      const factionWinner = winner?.name ?? null;
+      const players: Array<{
+        name: string;
+        kills: number;
+        captured: number;
+        score: number;
+        isHuman: boolean;
+        factionId: number;
+      }> = [];
+      for (const c of this.sim.characters as any[]) {
+        if (!c.isHuman) continue;
+        const sc = this.sim.scoreTracker?.getScore?.(c) ?? {};
+        players.push({
+          name: c.name ?? "",
+          kills: sc.kills ?? 0,
+          captured: sc.cellsCaptured ?? 0,
+          score: sc.total ?? 0,
+          isHuman: true,
+          factionId: c.factionId,
+        });
+      }
+      insertServerEvent(
+        "match_end",
+        { durationMs, factionWinner, players },
+        { mode: "online" },
+      );
+    } catch (err) {
+      console.error("[GameRoom] emitMatchEnd failed:", err);
+    }
+  }
+
   private accumulateScores() {
     for (const [, meta] of this.clientMeta) {
       if (meta.charId === null || !meta.playerToken) continue;
@@ -396,6 +437,10 @@ export class GameRoom extends Room<GameStateSchema> {
     const compressed = gzipSync(Buffer.from(this.sim.grid));
     client.send("gridSnapshot", { bytes: compressed.toString("base64") });
     console.log(`[GameRoom] join: ${client.sessionId} (snapshot ${compressed.length} bytes gzip)`);
+  }
+
+  onDispose() {
+    setCurrentRoom(null);
   }
 
   async onLeave(client: Client, consented: boolean) {
