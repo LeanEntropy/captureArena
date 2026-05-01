@@ -13,7 +13,8 @@ COPY packages/simulation/package.json ./packages/simulation/
 # Install all deps for the server's workspace tree
 RUN pnpm install --frozen-lockfile --filter "template-server..."
 
-# Copy source
+# Copy source + the base tsconfig that server/tsconfig.json extends
+COPY tsconfig.base.json ./
 COPY prototype ./prototype
 COPY server ./server
 COPY packages ./packages

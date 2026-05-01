@@ -22,6 +22,7 @@ tools/
 !pnpm-workspace.yaml
 !pnpm-lock.yaml
 !railway.toml
+!tsconfig.base.json
 !server/tsconfig.json
 !prototype/package.json
 !server/package.json
