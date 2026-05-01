@@ -1170,6 +1170,9 @@ class Game {
     // _cameraZoomTarget is what the user has dialled in via scroll wheel.
     this._cameraZoom = 1.0;
     this._cameraZoomTarget = 1.0;
+    // Respawn cinematic state. Non-null while the ~2s cinematic is playing.
+    // Fields: { startTime, savedZoom, oldCamX, oldCamZ, spawnX, spawnZ }
+    this._respawnCinematic = null;
     this.started = false;
     this.mode = "solo";
     this.playerName = "";
@@ -2066,34 +2069,51 @@ class Game {
     if (!this.started) return;
 
     // ---- Player input: collect WASD + mouse → player.targetDir in any mode. ----
+    // Frozen during the respawn cinematic — send zero dir so the player doesn't
+    // drift from stale keyboard/mouse input while the camera tween plays.
     if (this.player && this.player.alive && this.player.isPlayer) {
-      let kx = 0, kz = 0;
-      if (this.keysDown.has("w") || this.keysDown.has("arrowup")) kz -= 1;
-      if (this.keysDown.has("s") || this.keysDown.has("arrowdown")) kz += 1;
-      if (this.keysDown.has("a") || this.keysDown.has("arrowleft")) kx -= 1;
-      if (this.keysDown.has("d") || this.keysDown.has("arrowright")) kx += 1;
-      if (kx !== 0 || kz !== 0) {
-        this.player.targetDir.set(kx, 0, kz).normalize();
-      } else if (this.hasMouseInput) {
-        this.hasMouseInput = false;
-        this.raycaster.setFromCamera(this.mouseNDC, this.camera);
-        const hit = new THREE.Vector3();
-        if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
-          const dx = hit.x - this.player.pos.x;
-          const dz = hit.z - this.player.pos.z;
-          if (Math.abs(dx) > 0.5 || Math.abs(dz) > 0.5) {
-            this.player.targetDir.set(dx, 0, dz).normalize();
+      if (this._respawnCinematic) {
+        // Input frozen: zero the target direction so the sim doesn't move the
+        // player from whatever direction was held at the moment of respawn.
+        this.player.targetDir.set(0, 0, 0);
+        if (this.mode === "solo") {
+          this.sim.setTargetDir(this.player.simChar.id, 0, 0);
+        } else if (this.mode === "online" && this.mp) {
+          this._inputSendAccum += dt;
+          if (this._inputSendAccum >= this._inputSendInterval) {
+            this._inputSendAccum = 0;
+            this.mp.sendInput(0, 0);
           }
         }
-      }
-      if (this.mode === "solo") {
-        this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
-      } else if (this.mode === "online" && this.mp) {
-        // Throttle send to 20 Hz (server tick rate).
-        this._inputSendAccum += dt;
-        if (this._inputSendAccum >= this._inputSendInterval) {
-          this._inputSendAccum = 0;
-          this.mp.sendInput(this.player.targetDir.x, this.player.targetDir.z);
+      } else {
+        let kx = 0, kz = 0;
+        if (this.keysDown.has("w") || this.keysDown.has("arrowup")) kz -= 1;
+        if (this.keysDown.has("s") || this.keysDown.has("arrowdown")) kz += 1;
+        if (this.keysDown.has("a") || this.keysDown.has("arrowleft")) kx -= 1;
+        if (this.keysDown.has("d") || this.keysDown.has("arrowright")) kx += 1;
+        if (kx !== 0 || kz !== 0) {
+          this.player.targetDir.set(kx, 0, kz).normalize();
+        } else if (this.hasMouseInput) {
+          this.hasMouseInput = false;
+          this.raycaster.setFromCamera(this.mouseNDC, this.camera);
+          const hit = new THREE.Vector3();
+          if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
+            const dx = hit.x - this.player.pos.x;
+            const dz = hit.z - this.player.pos.z;
+            if (Math.abs(dx) > 0.5 || Math.abs(dz) > 0.5) {
+              this.player.targetDir.set(dx, 0, dz).normalize();
+            }
+          }
+        }
+        if (this.mode === "solo") {
+          this.sim.setTargetDir(this.player.simChar.id, this.player.targetDir.x, this.player.targetDir.z);
+        } else if (this.mode === "online" && this.mp) {
+          // Throttle send to 20 Hz (server tick rate).
+          this._inputSendAccum += dt;
+          if (this._inputSendAccum >= this._inputSendInterval) {
+            this._inputSendAccum = 0;
+            this.mp.sendInput(this.player.targetDir.x, this.player.targetDir.z);
+          }
         }
       }
     }
@@ -2167,11 +2187,20 @@ class Game {
         this.fx.triggerRespawn(c.group, baseY, c.simChar.pos.x, c.simChar.pos.z);
         if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
         if (c === this.player) this.hud.push("You spawned (invuln 2s)");
-        // Juice: punch-in then pull-back camera zoom on local player respawn.
+        // Juice: 2-second cinematic on local player respawn.
+        // Phase 1 [0–700ms]: camera moves to spawn + zooms in to 0.45.
+        // Phase 2 [700–1300ms]: hold (build-up FX plays).
+        // Phase 3 [1300–2000ms]: zoom back out + follow player normally.
+        // Input is frozen for the full duration (handled in the input block).
         if (c === this.player) {
-          const savedZoom = this._cameraZoomTarget;
-          this._cameraZoomTarget = 0.45;          // zoom in fast
-          setTimeout(() => { this._cameraZoomTarget = savedZoom; }, 450); // pull back to normal
+          this._respawnCinematic = {
+            startTime: performance.now(),
+            savedZoom: this._cameraZoomTarget,
+            oldCamX: this.camCurrent.x,
+            oldCamZ: this.camCurrent.z,
+            spawnX: c.simChar.pos.x,
+            spawnZ: c.simChar.pos.z,
+          };
         }
         dlog("RESPAWN", `${c.name} respawned`, { x: c.simChar.pos.x.toFixed(1), z: c.simChar.pos.z.toFixed(1) });
       }
@@ -2200,16 +2229,69 @@ class Game {
     this._maybeRebuildTerritory(dt);
 
     // ---- Camera ----
-    if (this.player && this.player.alive && this.player.isPlayer) {
-      this.camTarget.set(this.player.pos.x, TERRITORY_Y, this.player.pos.z);
+    if (this._respawnCinematic) {
+      // Respawn cinematic overrides normal camera follow.
+      // t: normalised progress [0..1] over the 2000ms window.
+      const cin = this._respawnCinematic;
+      const elapsed = performance.now() - cin.startTime;
+      const t = Math.min(elapsed / 2000, 1.0);
+
+      // Smoothstep helper for eased transitions.
+      const ss = x => x * x * (3 - 2 * x);
+
+      if (t < 0.35) {
+        // Phase 1: approach spawn + zoom in.
+        const p = ss(t / 0.35);
+        const camX = cin.oldCamX + (cin.spawnX - cin.oldCamX) * p;
+        const camZ = cin.oldCamZ + (cin.spawnZ - cin.oldCamZ) * p;
+        const zoomVal = cin.savedZoom + (0.45 - cin.savedZoom) * p;
+        this._cameraZoom = zoomVal;
+        this._cameraZoomTarget = zoomVal;
+        this.camCurrent.set(camX, 0, camZ);
+        this.camTarget.set(camX, 0, camZ);
+      } else if (t < 0.65) {
+        // Phase 2: hold at spawn zoomed in (build-up FX plays).
+        this._cameraZoom = 0.45;
+        this._cameraZoomTarget = 0.45;
+        this.camCurrent.set(cin.spawnX, 0, cin.spawnZ);
+        this.camTarget.set(cin.spawnX, 0, cin.spawnZ);
+      } else {
+        // Phase 3: zoom back out + follow player position.
+        const p = ss((t - 0.65) / 0.35);
+        const zoomVal = 0.45 + (cin.savedZoom - 0.45) * p;
+        this._cameraZoom = zoomVal;
+        this._cameraZoomTarget = zoomVal;
+        // Let camTarget track the player so the follow is live.
+        if (this.player && this.player.alive) {
+          this.camTarget.set(this.player.pos.x, TERRITORY_Y, this.player.pos.z);
+        }
+        const smooth3 = 1 - Math.pow(0.03, dt);
+        this.camCurrent.lerp(this.camTarget, smooth3);
+      }
+
+      if (t >= 1.0) {
+        // Cinematic complete — restore user's zoom target and resume normal follow.
+        this._cameraZoomTarget = cin.savedZoom;
+        this._respawnCinematic = null;
+        dlog("CINEMATIC", "respawn cinematic complete");
+      }
+
+      const zoom = this._cameraZoom;
+      this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
+      this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
+    } else {
+      // Normal camera follow.
+      if (this.player && this.player.alive && this.player.isPlayer) {
+        this.camTarget.set(this.player.pos.x, TERRITORY_Y, this.player.pos.z);
+      }
+      const smooth = 1 - Math.pow(0.03, dt);
+      this.camCurrent.lerp(this.camTarget, smooth);
+      // Smooth zoom: lerp the current zoom factor toward the user-requested target.
+      this._cameraZoom += (this._cameraZoomTarget - this._cameraZoom) * 0.15;
+      const zoom = this._cameraZoom;
+      this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
+      this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
     }
-    const smooth = 1 - Math.pow(0.03, dt);
-    this.camCurrent.lerp(this.camTarget, smooth);
-    // Smooth zoom: lerp the current zoom factor toward the user-requested target.
-    this._cameraZoom += (this._cameraZoomTarget - this._cameraZoom) * 0.15;
-    const zoom = this._cameraZoom;
-    this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
-    this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
 
     if (this.shadowLight) {
       this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);
