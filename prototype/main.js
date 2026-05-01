@@ -15,6 +15,26 @@ const CAMERA_HEIGHT = 34;
 const CAMERA_Z_OFFSET = 26;
 const TRAIL_WIDTH = 0.8;
 
+// ===== Theme F (Atoll Hybrid) — Y stratification =====
+// Director's HARD RULE from prior reverted Slice A: the floor of the island
+// must NOT share a Y plane with the territory mesh, and water animation must
+// stay outside ARENA_RADIUS.
+//
+// Layout (all measured from Y = 0):
+//   Water plane              Y = -2.0    (well below cylinder, outside arena)
+//   Cylinder bottom          Y = -3.0
+//   Cylinder TOP face        Y =  0.0
+//   Territory mesh           Y =  0.05   + polygonOffset (-1, -1) for safety
+//   Trail mesh               Y =  0.10
+//   Character group base     Y =  0.05   (matches territory; renderer adds body height)
+//   FX ring base (claim/etc) Y =  0.12
+const ISLAND_TOP_Y = 0.0;
+const ISLAND_HEIGHT = 3.0;
+const WATER_Y = -2.0;
+const TERRITORY_Y = 0.05;
+const TRAIL_Y = 0.10;
+const FX_RING_Y = 0.12;
+
 // ===================== DEBUG LOG =====================
 const DEBUG_LOG = [];
 const DEBUG_MAX = 2000;
@@ -451,6 +471,10 @@ class Character {
 
   _buildChar(color) {
     const g = new THREE.Group();
+    // Theme F: lift the entire character group onto the island top so feet
+    // sit on the territory surface (Y = TERRITORY_Y) rather than below it.
+    g.position.y = ISLAND_TOP_Y + 0.05;
+    this.baseY = ISLAND_TOP_Y + 0.05;   // used by FX (kill debris, respawn build-up)
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.0, 1.0, 1.0),
       new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
@@ -477,6 +501,22 @@ class Character {
       pup.position.set(s*0.18, 1.35, 0.42);
       g.add(pup);
     }
+    // Theme F sailor cap: faction-colored band + white top cube on the head.
+    // Lifted from companion mockup ("castaway" style) — pure boxes per ART_ETHOS.
+    const capBand = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.08, 0.78),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
+    );
+    capBand.position.y = 1.72;
+    capBand.castShadow = true;
+    g.add(capBand);
+    const capTop = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.18, 0.6),
+      new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.7 })
+    );
+    capTop.position.y = 1.85;
+    capTop.castShadow = true;
+    g.add(capTop);
     return g;
   }
 
@@ -551,8 +591,8 @@ class Character {
       const len = Math.sqrt(dx*dx + dz*dz) || 1;
       const nx = -dz/len, nz = dx/len;
       const o = i * 6;
-      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = 0.05; posArr[o + 2] = p.z + nz*hw;
-      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = 0.05; posArr[o + 5] = p.z - nz*hw;
+      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = TRAIL_Y; posArr[o + 2] = p.z + nz*hw;
+      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = TRAIL_Y; posArr[o + 5] = p.z - nz*hw;
     };
 
     // Rewrite the previous tail (its forward-neighbor changed) and write all
@@ -806,6 +846,294 @@ function makeOnlineCharProxy(schemaChar) {
   };
 }
 
+// ===================== JEN FX MANAGER (Theme F) =====================
+// Owns all per-event visual effects:
+//   * Claim   → wave-ripple (E source) — 3 concentric water rings + droplet cubes
+//   * Kill    → voxel debris (D source) — 12 bouncy 3D cube fragments with gravity
+//   * Respawn → build-up (D source)     — char rises from below + dust puffs
+//   * Win     → voxel rain (D source)   — 30 cubes drop from sky in winning color
+//
+// All meshes are tracked in this.particles[] and disposed when life >= maxLife,
+// so there are no leaks even at high event rates. Materials use shared geometries
+// where possible (cube debris) but the simpler-to-reason-about per-particle alloc
+// is kept since per-event volume is bounded (≤14 particles per kill, ≤30 for win).
+class JenFXManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.particles = [];   // {mesh, kind, life, maxLife, vel?, gravity?, ...}
+    this.shockwaves = [];  // expanding ring meshes
+  }
+
+  // ---- Claim: wave-ripple FX (E source) ----
+  // Spawns 3 concentric ring shockwaves at (x, z) plus 8 small light-blue
+  // cubes that pop up and outward like a water splash. Wave rings expand
+  // and fade over ~0.7s; droplets fall under gravity and dispose at maxLife.
+  triggerClaim(x, z) {
+    [0, 0.12, 0.24].forEach((delay, idx) => {
+      setTimeout(() => {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.3, 0.42, 32),
+          new THREE.MeshBasicMaterial({
+            color: 0xC8F0FF, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+          }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(x, FX_RING_Y + idx * 0.005, z);
+        this.scene.add(ring);
+        this.shockwaves.push({ mesh: ring, life: 0, maxLife: 0.7, scaleTo: 8 });
+      }, delay * 1000);
+    });
+    for (let i = 0; i < 8; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 1.2 + Math.random() * 1.4;
+      const droplet = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.12, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xCFEEFF, transparent: true, opacity: 0.95 }),
+      );
+      droplet.position.set(x, FX_RING_Y, z);
+      this.scene.add(droplet);
+      this.particles.push({
+        mesh: droplet, kind: "physics", life: 0, maxLife: 0.7,
+        vel: new THREE.Vector3(Math.cos(ang) * speed, 1.4 + Math.random() * 1.2, Math.sin(ang) * speed),
+        gravity: -5, floorY: FX_RING_Y, bounceY: 0.0,
+        rotVel: new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6),
+      });
+    }
+  }
+
+  // ---- Kill: voxel debris FX (D source) ----
+  // Spawns 12 cubes at the victim's chest (Y = baseY + 1) that fly outward
+  // with gravity, bounce once on the territory surface, then fade out.
+  // Cubes are tinted variants of the victim's faction color so the kill
+  // visually communicates which faction lost a unit.
+  triggerKill(x, z, baseY, victimColor) {
+    const chestY = baseY + 1.0;
+    for (let i = 0; i < 12; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2.0 + Math.random() * 2;
+      const upspeed = 2.5 + Math.random() * 1.5;
+      const sz = 0.2 + Math.random() * 0.14;
+      const variantColor = i % 3 === 0
+        ? new THREE.Color(victimColor).multiplyScalar(0.7).getHex()
+        : victimColor;
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(sz, sz, sz),
+        new THREE.MeshLambertMaterial({ color: variantColor, transparent: true, opacity: 1 }),
+      );
+      m.position.set(x, chestY, z);
+      m.castShadow = true;
+      this.scene.add(m);
+      this.particles.push({
+        mesh: m, kind: "physics", life: 0, maxLife: 1.2,
+        vel: new THREE.Vector3(Math.cos(angle) * speed, upspeed, Math.sin(angle) * speed),
+        rotVel: new THREE.Vector3((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14),
+        gravity: -10, floorY: TRAIL_Y, bounceY: 0.3, hasBounced: 0,
+      });
+    }
+  }
+
+  // ---- Respawn: build-up FX (D source) ----
+  // Animates the character group rising from `baseY - 1.5` to `baseY` over
+  // 0.5s while spawning 5 white dust puffs at ground level. The mesh visibility
+  // is owned by the caller (sim's onRespawnVisual), we just animate the Y.
+  triggerRespawn(charGroup, baseY, x, z) {
+    this.particles.push({
+      mesh: null, kind: "respawn-build",
+      respawnTarget: charGroup, life: 0, maxLife: 0.5,
+      startY: baseY - 1.5, endY: baseY,
+    });
+    // Snap to start position so the animation has somewhere to begin.
+    charGroup.position.y = baseY - 1.5;
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 1.2 + Math.random() * 1.2;
+      const puff = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.16, 0.16),
+        new THREE.MeshBasicMaterial({ color: 0xfffafa, transparent: true, opacity: 0.9 }),
+      );
+      puff.position.set(x, baseY + 0.1, z);
+      this.scene.add(puff);
+      this.particles.push({
+        mesh: puff, kind: "physics", life: 0, maxLife: 0.5,
+        vel: new THREE.Vector3(Math.cos(ang) * speed, 0.6, Math.sin(ang) * speed),
+        gravity: -3, floorY: baseY + 0.1, bounceY: 0.0,
+        rotVel: new THREE.Vector3((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5),
+      });
+    }
+  }
+
+  // ---- Win: voxel rain (D source) ----
+  // Drops 30 cubes from Y=8-12 over the playable area. Cubes hit the
+  // territory surface, bounce once, then fade out. Tinted in the winning
+  // faction's color (with some variant darker shades for visual interest).
+  triggerWin(winningColor) {
+    for (let i = 0; i < 30; i++) {
+      const cx = (Math.random() - 0.5) * ARENA_RADIUS * 1.5;
+      const cz = (Math.random() - 0.5) * ARENA_RADIUS * 1.5;
+      const sz = 0.4 + Math.random() * 0.5;
+      const variantColor = i % 4 === 0
+        ? new THREE.Color(winningColor).multiplyScalar(0.7).getHex()
+        : winningColor;
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(sz, sz, sz),
+        new THREE.MeshLambertMaterial({ color: variantColor, transparent: true, opacity: 1 }),
+      );
+      m.position.set(cx, ISLAND_TOP_Y + 8 + Math.random() * 4, cz);
+      m.castShadow = true;
+      this.scene.add(m);
+      const fallDelay = Math.random() * 0.8;
+      this.particles.push({
+        mesh: m, kind: "physics", life: -fallDelay, maxLife: 2.5,
+        vel: new THREE.Vector3(0, -3 - Math.random() * 2, 0),
+        rotVel: new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6),
+        gravity: -10, floorY: TRAIL_Y, bounceY: 0.3, hasBounced: 0,
+      });
+    }
+  }
+
+  // ---- Per-frame update ----
+  // Single update loop ticks both shockwaves and particles. Disposes any
+  // mesh whose life >= maxLife so memory is bounded by the worst-case
+  // active event count (≤30 for win, ≤14 for kill).
+  update(dt) {
+    // Shockwaves (expanding rings)
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const sw = this.shockwaves[i];
+      sw.life += dt;
+      const k = sw.life / sw.maxLife;
+      const scaleTo = sw.scaleTo || 6;
+      const s = 1 + k * scaleTo;
+      sw.mesh.scale.set(s, s, 1);
+      sw.mesh.material.opacity = 0.95 * (1 - k);
+      if (sw.life >= sw.maxLife) {
+        this.scene.remove(sw.mesh);
+        sw.mesh.geometry.dispose();
+        sw.mesh.material.dispose();
+        this.shockwaves.splice(i, 1);
+      }
+    }
+    // Particles
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life += dt;
+      // Delayed-spawn (used by win-rain).
+      if (p.life < 0) continue;
+      const k = p.life / p.maxLife;
+      if (p.kind === "respawn-build") {
+        // Animate the live character group upward from below ground.
+        p.respawnTarget.position.y = p.startY + (p.endY - p.startY) * Math.min(1, k);
+        if (p.life >= p.maxLife) {
+          p.respawnTarget.position.y = p.endY;
+          this.particles.splice(i, 1);
+        }
+        continue;
+      }
+      if (p.kind === "physics") {
+        p.vel.y += p.gravity * dt;
+        p.mesh.position.x += p.vel.x * dt;
+        p.mesh.position.y += p.vel.y * dt;
+        p.mesh.position.z += p.vel.z * dt;
+        if (p.mesh.position.y < p.floorY) {
+          p.mesh.position.y = p.floorY;
+          if (p.bounceY > 0) {
+            p.vel.y *= -p.bounceY;
+            p.vel.x *= 0.55; p.vel.z *= 0.55;
+            p.hasBounced = (p.hasBounced || 0) + 1;
+          } else {
+            p.vel.y = 0;
+          }
+        }
+        if (p.rotVel) {
+          p.mesh.rotation.x += p.rotVel.x * dt;
+          p.mesh.rotation.y += p.rotVel.y * dt;
+          p.mesh.rotation.z += p.rotVel.z * dt;
+        }
+        const fadeStart = p.maxLife * 0.55;
+        if (p.life > fadeStart) {
+          p.mesh.material.opacity = 1 - (p.life - fadeStart) / (p.maxLife - fadeStart);
+        }
+        if (p.life >= p.maxLife) {
+          this.scene.remove(p.mesh);
+          p.mesh.geometry.dispose();
+          p.mesh.material.dispose();
+          this.particles.splice(i, 1);
+        }
+      }
+    }
+  }
+}
+
+// ===================== JEN HUD MANAGER (Theme F) =====================
+// Theme F-specific HUD: notification toast stack (A's cream cards anchored
+// below the leaderboard), faction-state banner (D's wooden stamp), and a
+// last-9-second countdown intensification.
+//
+// The notification anchor (#jen-notif-stack) is positioned each frame just
+// below the leaderboard's actual bottom, so it never overlaps regardless of
+// how many entries the leaderboard renders.
+class JenHUDManager {
+  constructor() {
+    this.notifStack = document.getElementById("jen-notif-stack");
+    this.bannerEl = document.getElementById("jen-banner");
+    this.timerEl = document.getElementById("hud-tl");
+    this.leaderboardEl = document.getElementById("player-leaderboard");
+    this._lastBannerKey = "";
+  }
+
+  // Push a notification toast. Auto-dismisses after 3s. Cap at 4 visible.
+  push(text) {
+    if (!this.notifStack) return;
+    const el = document.createElement("div");
+    el.className = "jen-notif";
+    el.textContent = text;
+    this.notifStack.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("in"));
+    while (this.notifStack.children.length > 4) {
+      this.notifStack.removeChild(this.notifStack.firstChild);
+    }
+    setTimeout(() => {
+      el.classList.remove("in");
+      setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 200);
+    }, 3000);
+  }
+
+  // Show a center banner (D wooden stamp). `key` dedupes — calling repeatedly
+  // with the same key inside the duration window is a no-op so we don't
+  // re-pop the banner every frame the underlying state is true.
+  showBanner(text, key, durationMs = 2200) {
+    if (!this.bannerEl) return;
+    if (this._lastBannerKey === key) return;
+    this._lastBannerKey = key;
+    this.bannerEl.textContent = text;
+    this.bannerEl.classList.add("show");
+    if (this._bannerTimer) clearTimeout(this._bannerTimer);
+    this._bannerTimer = setTimeout(() => {
+      this.bannerEl.classList.remove("show");
+      // Allow the same key to re-trigger after dismissal so a faction can
+      // re-enter endangered status later in the match.
+      setTimeout(() => { this._lastBannerKey = ""; }, 400);
+    }, durationMs);
+  }
+
+  // Reposition the notification stack just below the leaderboard. Called
+  // each frame because the leaderboard height is dynamic (player count).
+  updateNotificationAnchor() {
+    if (!this.notifStack || !this.leaderboardEl) return;
+    const r = this.leaderboardEl.getBoundingClientRect();
+    if (r.bottom > 0) {
+      this.notifStack.style.top = (r.bottom + 8) + "px";
+    }
+  }
+
+  // Apply the "intense" countdown class when ≤ 9s remain. Toggling the
+  // class triggers the cd-pulse CSS animation defined in index.html.
+  setCountdownIntense(intense) {
+    if (!this.timerEl) return;
+    if (intense) this.timerEl.classList.add("intense");
+    else this.timerEl.classList.remove("intense");
+  }
+}
+
 // ===================== GAME =====================
 class Game {
   constructor() {
@@ -819,42 +1147,15 @@ class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(this.renderer.domElement);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.6);
-    dl.position.set(5, 15, 5);
-    dl.castShadow = true;
-    // Performance: 1024² shadow map is plenty for ~30 cube characters viewed
-    // from above. 2048² was 4× the GPU memory + fillrate per frame for no
-    // visible improvement on this art style.
-    dl.shadow.mapSize.width = 1024;
-    dl.shadow.mapSize.height = 1024;
-    dl.shadow.camera.near = 0.5;
-    dl.shadow.camera.far = 60;
-    dl.shadow.camera.left = -40;
-    dl.shadow.camera.right = 40;
-    dl.shadow.camera.top = 40;
-    dl.shadow.camera.bottom = -40;
-    dl.shadow.radius = 2;
-    this.scene.add(dl);
-    this.scene.add(dl.target);
-    this.shadowLight = dl;
-
-    // Ground
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(ARENA_RADIUS, 128),
-      new THREE.MeshLambertMaterial({ color: 0xffffff })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-    // Border
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(ARENA_RADIUS - 0.2, ARENA_RADIUS + 0.2, 128),
-      new THREE.MeshBasicMaterial({ color: 0xe0e0e0, side: THREE.DoubleSide })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.01;
-    this.scene.add(ring);
+    // ===== Theme F (Atoll Hybrid) scene setup =====
+    // Replaces the previous flat-ground-on-white look with:
+    //   * Sky-gradient background + sea fog
+    //   * Animated Vanta-style waves on a plane OUTSIDE ARENA_RADIUS (water Y=-2)
+    //   * Flat sand-cliff cylinder island (top face at Y=0 = ISLAND_TOP_Y)
+    //   * 14 cliff rocks around the rim (sit on island top)
+    //   * 3 distant atolls in the fog
+    //   * Warm-dawn lighting retune (ambient + directional + cool sea bounce)
+    this._buildThemeFScene();
 
     this.characters = [];
     this.player = null;
@@ -948,12 +1249,30 @@ class Game {
     this.deathMsg = document.getElementById("death-msg");
     this.deathTimer = document.getElementById("death-timer");
 
+    // ===== Theme F overlays =====
+    this.fx = new JenFXManager(this.scene);
+    this.hud = new JenHUDManager();
+    // Track per-faction state from previous frame so we only fire banners on
+    // transitions (endangered/eliminated/recovered), not every frame.
+    this._lastFactionState = new Map();
+    // Win FX one-shot guard.
+    this._winFXFired = false;
+
     // ===== Sim event hooks: bridge authoritative sim events to renderer state =====
     this.sim.onClaim = (charId, trailPoints, _factionId) => {
       this.territoryDirty = true;
       const simChar = this.sim.characters[charId];
       const r = this._charBySim.get(simChar);
       if (r) r._clearTrail();
+      // Theme F: wave-ripple FX at the claimer's current position.
+      const x = simChar.pos.x, z = simChar.pos.z;
+      this.fx.triggerClaim(x, z);
+      // Notification toast — only for the local player's claim.
+      if (r === this.player && this.factionManager) {
+        const faction = this.factionManager.getAllFactions().find(f => f.id === simChar.factionId);
+        const fname = faction ? faction.name : `F${simChar.factionId}`;
+        this.hud.push(`Claimed for ${fname}`);
+      }
       dlog("CLAIM", `${r ? r.name : "?"}: claimed (sim)`, { charId });
     };
     this.sim.onHeal = (changedCells) => {
@@ -972,11 +1291,21 @@ class Game {
       const killerSim = killerId !== null ? this.sim.characters[killerId] : null;
       const killerR = killerSim ? this._charBySim.get(killerSim) : null;
       if (victimR) {
+        // Theme F voxel-debris FX at the victim's position. Use the renderer
+        // character's baseY so debris spawns on the actual ground (island top).
+        this.fx.triggerKill(
+          victimSim.pos.x, victimSim.pos.z,
+          victimR.baseY != null ? victimR.baseY : ISLAND_TOP_Y,
+          victimR.color,
+        );
         victimR.onDieVisual();
         if (victimR === this.player) {
           this.killedBy = killerR ? killerR.name : "";
           this.deathMsg.textContent = killerR ? `Killed by ${killerR.name}` : "You died!";
           this.deathScreen.classList.add("visible");
+          this.hud.push(killerR ? `You died — killed by ${killerR.name}` : `You died`);
+        } else if (killerR === this.player) {
+          this.hud.push(`You killed ${victimR.name}`);
         }
         dlog("KILL", `${victimR.name} killed${killerR ? " by " + killerR.name : ""}`, {
           isPlayer: victimR.isPlayer
@@ -1392,7 +1721,7 @@ class Game {
       ? { x: this.player.simChar.pos.x, z: this.player.simChar.pos.z }
       : { x: 0, z: 0 };
     this.camera.position.set(spawn.x, CAMERA_HEIGHT, spawn.z + CAMERA_Z_OFFSET);
-    this.camera.lookAt(spawn.x, 0, spawn.z);
+    this.camera.lookAt(spawn.x, TERRITORY_Y, spawn.z);
     this.camCurrent.set(spawn.x, 0, spawn.z);
     this.camTarget.copy(this.camCurrent);
 
@@ -1607,7 +1936,7 @@ class Game {
 
     const playerSpawn = { x: playerSimChar.pos.x, z: playerSimChar.pos.z };
     this.camera.position.set(playerSpawn.x, CAMERA_HEIGHT, playerSpawn.z + CAMERA_Z_OFFSET);
-    this.camera.lookAt(playerSpawn.x, 0, playerSpawn.z);
+    this.camera.lookAt(playerSpawn.x, TERRITORY_Y, playerSpawn.z);
     this.camCurrent.set(playerSpawn.x, 0, playerSpawn.z);
     this.camTarget.copy(this.camCurrent);
 
@@ -1620,8 +1949,8 @@ class Game {
     initVibeJamPortals({
       scene: this.portalLayer,
       getPlayer: () => this.player?.group ?? null,
-      spawnPoint:   { x: -ARENA_RADIUS + 8, y: 1, z: 0 }, // start (red) — west edge
-      exitPosition: { x:  ARENA_RADIUS - 8, y: 1, z: 0 }, // exit (green) — east edge
+      spawnPoint:   { x: -ARENA_RADIUS + 1, y: 1, z: 0 }, // start (red) — west edge (very edge)
+      exitPosition: { x:  ARENA_RADIUS - 1, y: 1, z: 0 }, // exit (green) — east edge (very edge)
     });
   }
 
@@ -1679,12 +2008,25 @@ class Game {
       this._stepPrediction(dt);
     }
 
-    // Match ended: still update visuals/HUD then bail out.
+    // Match ended: still update visuals/HUD then bail out (but tick FX + water).
     if (this.matchManager && this.matchManager.phase === "ended") {
+      // Win FX (one-shot): fire voxel-rain in the winner's color.
+      if (!this._winFXFired) {
+        this._winFXFired = true;
+        const winner = this.matchManager.winner;
+        if (winner) {
+          this.fx.triggerWin(winner.color);
+          this.hud.showBanner(`${(winner.name || "WINNER").toUpperCase()} WINS`,
+                              `win-${winner.id}`, 3500);
+        }
+      }
       for (const c of this.characters) c.syncVisuals();
       this._updateLabels();
       if (this.uiManager) this.uiManager.update(dt);
       this._maybeRebuildTerritory(dt);
+      this.fx.update(dt);
+      if (this._waterMat) this._waterMat.uniforms.uTime.value += dt;
+      this.hud.updateNotificationAnchor();
       return;
     }
 
@@ -1708,7 +2050,11 @@ class Game {
           dlog("REASSIGN", `${c.name} reassigned to faction ${newFactionId}`);
         }
         c.onRespawnVisual();
+        // Theme F build-up FX: animate the character group up from below.
+        const baseY = c.baseY != null ? c.baseY : (ISLAND_TOP_Y + 0.05);
+        this.fx.triggerRespawn(c.group, baseY, c.simChar.pos.x, c.simChar.pos.z);
         if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
+        if (c === this.player) this.hud.push("You spawned (invuln 2s)");
         dlog("RESPAWN", `${c.name} respawned`, { x: c.simChar.pos.x.toFixed(1), z: c.simChar.pos.z.toFixed(1) });
       }
 
@@ -1737,12 +2083,12 @@ class Game {
 
     // ---- Camera ----
     if (this.player && this.player.alive && this.player.isPlayer) {
-      this.camTarget.set(this.player.pos.x, 0, this.player.pos.z);
+      this.camTarget.set(this.player.pos.x, TERRITORY_Y, this.player.pos.z);
     }
     const smooth = 1 - Math.pow(0.03, dt);
     this.camCurrent.lerp(this.camTarget, smooth);
     this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT, this.camCurrent.z + CAMERA_Z_OFFSET);
-    this.camera.lookAt(this.camCurrent.x, 0, this.camCurrent.z);
+    this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
 
     if (this.shadowLight) {
       this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);
@@ -1753,6 +2099,41 @@ class Game {
     // ---- Labels & UI ----
     this._updateLabels();
     if (this.uiManager) this.uiManager.update(dt);
+
+    // ---- Theme F overlays + water shader ----
+    this.fx.update(dt);
+    if (this._waterMat) this._waterMat.uniforms.uTime.value += dt;
+    this.hud.updateNotificationAnchor();
+    // Faction-state banners (D wooden stamp): poll once/frame, fire on transitions.
+    this._pollFactionBanners();
+    // Countdown intensification: D blocky-flip pulses last 9 seconds.
+    if (this.matchManager && this.matchManager.timeRemaining != null) {
+      this.hud.setCountdownIntense(this.matchManager.timeRemaining <= 9);
+    }
+  }
+
+  // Poll faction state each frame and fire D wooden-stamp banners on
+  // endangered/eliminated/recovered transitions. The banner manager dedupes
+  // by key so calling this every frame is cheap when nothing has changed.
+  _pollFactionBanners() {
+    if (!this.factionManager) return;
+    for (const f of this.factionManager.getAllFactions()) {
+      const state = !f.alive ? "eliminated"
+                  : f.endangered ? "endangered"
+                  : "alive";
+      const prev = this._lastFactionState.get(f.id);
+      if (prev != null && prev !== state) {
+        const fname = (f.name || `F${f.id}`).toUpperCase();
+        if (state === "endangered") {
+          this.hud.showBanner(`${fname} ENDANGERED`, `endangered-${f.id}`, 2000);
+        } else if (state === "eliminated") {
+          this.hud.showBanner(`${fname} ELIMINATED`, `eliminated-${f.id}`, 2800);
+        } else if (state === "alive" && prev === "endangered") {
+          this.hud.showBanner(`${fname} RECOVERED`, `recovered-${f.id}`, 2000);
+        }
+      }
+      this._lastFactionState.set(f.id, state);
+    }
   }
 
   _updateLabels() {
@@ -1808,6 +2189,232 @@ class Game {
     }
   }
 
+  // ===== Theme F scene builder =====
+  // Builds the entire static visual stack: sky+fog, lights, water shader,
+  // cylinder island, cliff rocks, distant atolls. Called once from the Game
+  // constructor (REPLACES the old flat ground+ring setup).
+  //
+  // Constraints (Director rules from prior reverted Slice A):
+  //   1. Cylinder TOP must be at a DIFFERENT Y than the territory mesh —
+  //      territory at Y=0.05, cylinder top at Y=0.0, with polygonOffset on
+  //      the territory material as a belt-and-suspenders against Z-fighting
+  //      at grazing angles.
+  //   2. Water animation must NEVER cross into the playable area. Two
+  //      mechanisms enforce this: (a) the water plane sits 2.0 units BELOW
+  //      the cylinder top, (b) the water shader DISCARDs all fragments
+  //      inside ARENA_RADIUS, so even at grazing angles no wave crests can
+  //      visually overlap the island.
+  //   3. Total cost ≤ 3ms/frame for all new visuals — measured via stats.js
+  //      MS panel (toggle with F key).
+  _buildThemeFScene() {
+    // ---- Sky gradient background + sea fog ----
+    this.scene.background = this._makeGradientBg(0xFFD9B8, 0x8FC8DA);
+    this.scene.fog = new THREE.Fog(0xBCD8DE, 80, 260);
+
+    // ---- Lights (warm dawn + cool sea bounce) ----
+    this.scene.add(new THREE.AmbientLight(0xfff0d8, 0.78));
+    const dl = new THREE.DirectionalLight(0xfff2c8, 0.7);
+    dl.position.set(5, 15, 5);
+    dl.castShadow = true;
+    // 1024² shadow map; ARENA_RADIUS=66.89 means cylinder spans 134 units.
+    // Shadow camera frustum needs to cover the playable area; clamp to a
+    // 90×90 box around the camera target each frame (tickShadow not done here,
+    // kept stationary at origin which is acceptable for this top-down camera).
+    dl.shadow.mapSize.width = 1024;
+    dl.shadow.mapSize.height = 1024;
+    dl.shadow.camera.near = 0.5;
+    dl.shadow.camera.far = 60;
+    dl.shadow.camera.left = -45;
+    dl.shadow.camera.right = 45;
+    dl.shadow.camera.top = 45;
+    dl.shadow.camera.bottom = -45;
+    dl.shadow.radius = 2;
+    this.scene.add(dl);
+    this.scene.add(dl.target);
+    this.shadowLight = dl;
+    // Cool sea-bounce fill from the opposite side (no shadows).
+    const fill = new THREE.DirectionalLight(0x88B8D0, 0.18);
+    fill.position.set(-3, 3, -3);
+    this.scene.add(fill);
+
+    // ---- Water (Vanta-style waves, GPU shader) ----
+    // Path B from Director's spec: extract Vanta's waves vertex displacement
+    // and adapt to a Three.js ShaderMaterial. The original Vanta runs the
+    // wave formula on the CPU each frame (animating the BufferGeometry's
+    // position attribute); we move the SAME formula to a vertex shader so
+    // it costs ~0.3ms instead of CPU-bound 1-2ms on a 1024-vert plane.
+    //
+    // Original formula (Vanta 0.5.x, vanta.waves.min.js, MIT):
+    //   const i = waveSpeed; (default 1)
+    //   const phase = sqrt(i) * cos(-x - 0.7 * z);
+    //   const o = sin(i * t * 0.02 - i * x * 0.025 + i * z * 0.015 + phase);
+    //   y = oy + pow(o + 1, 2) / 4 * waveHeight;  (waveHeight default 15)
+    //
+    // We've scaled wave amplitudes for our scale (Vanta default arena ~720
+    // units; our plane is 6× ARENA_RADIUS = ~400 units). Wave height 0.45
+    // gives crests visibly tall at the horizon but not so tall they'd ever
+    // peek over the island cylinder rim.
+    const waterSize = ARENA_RADIUS * 6;
+    const waterGeom = new THREE.PlaneGeometry(waterSize, waterSize, 80, 80);
+    const seaColor = new THREE.Color(0x1E6F7E);
+    const sunColor = new THREE.Color(0xFFE8B0);
+    this._waterMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uIslandRadius: { value: ARENA_RADIUS + 0.5 },
+        uSeaColor: { value: seaColor },
+        uSunColor: { value: sunColor },
+        uFogColor: { value: new THREE.Color(0xBCD8DE) },
+        uFogNear: { value: 80.0 },
+        uFogFar: { value: 260.0 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        varying float vViewDist;
+        void main() {
+          // Vanta's wave formula, ported from vanta.waves.min.js (MIT).
+          // Plane is rotated -PI/2 around X by the host, so locally we work
+          // with (position.x, position.y) which become world (x, z).
+          vec3 p = position;
+          float wsp = 1.0;                              // waveSpeed
+          float phase = sqrt(wsp) * cos(-p.x - 0.7 * p.y);
+          float o = sin(wsp * uTime * 0.02 * 60.0
+                      - wsp * p.x * 0.025
+                      + wsp * p.y * 0.015
+                      + phase);
+          // (uTime is in seconds; Vanta's t was a frame counter that
+          // incremented by ~1/frame at 60fps, so * 60 to match cadence.)
+          float n = pow(o + 1.0, 2.0) / 4.0;
+          p.z += n * 0.45;                              // waveHeight (scaled)
+          vWaveY = p.z;
+          vWorldXZ = p.xy;
+          vec4 mvPos = modelViewMatrix * vec4(p, 1.0);
+          vViewDist = -mvPos.z;
+          gl_Position = projectionMatrix * mvPos;
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uIslandRadius;
+        uniform vec3 uSeaColor;
+        uniform vec3 uSunColor;
+        uniform vec3 uFogColor;
+        uniform float uFogNear;
+        uniform float uFogFar;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        varying float vViewDist;
+        void main() {
+          float dist = length(vWorldXZ);
+          // HARD RULE: discard everything inside the island radius. No wave
+          // animation can ever bleed onto the playable area — pixels are
+          // killed before any blending can occur.
+          if (dist < uIslandRadius) discard;
+
+          // Base sea color, lightened at wave crests for "depth shaded by height".
+          vec3 col = uSeaColor + vec3(0.18) * smoothstep(-0.1, 0.4, vWaveY);
+
+          // Sparse sun-glitter stripes scrolling along a fixed direction.
+          // Only highlight on rising crests (vWaveY > 0.05) to keep glitter
+          // anchored to the moving water surface, not floating in flat patches.
+          vec2 sunDir = normalize(vec2(0.6, 0.4));
+          float glit = sin(dot(vWorldXZ, sunDir) * 1.2 + uTime * 1.6);
+          float glitMask = smoothstep(0.85, 1.0, glit) * smoothstep(0.05, 0.25, vWaveY);
+          col = mix(col, uSunColor, glitMask * 0.55);
+
+          // Manual fog (ShaderMaterial doesn't auto-pick up scene.fog).
+          float fogF = clamp((vViewDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+          col = mix(col, uFogColor, fogF);
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    const water = new THREE.Mesh(waterGeom, this._waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = WATER_Y;
+    this.scene.add(water);
+
+    // ---- Cylinder island (sand sides + grass top) ----
+    // Director rule: territory mesh and island top MUST NOT share a Y plane.
+    // We pick the alternative the Director called "structurally cleaner" —
+    // territory mesh at a small offset (+0.05) above cylinder top (Y=0).
+    // Belt-and-suspenders: territory material has polygonOffset enabled so
+    // the depth test always picks the territory at grazing camera angles.
+    const sideMat = new THREE.MeshStandardMaterial({ color: 0xC9B077, roughness: 0.95 });
+    const topMat = new THREE.MeshLambertMaterial({ color: 0x9CC15A });    // grass green
+    const bottomMat = new THREE.MeshStandardMaterial({ color: 0x8a7152, roughness: 1.0 });
+    const cyl = new THREE.Mesh(
+      new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS, ISLAND_HEIGHT, 64),
+      [sideMat, topMat, bottomMat],
+    );
+    cyl.position.y = ISLAND_TOP_Y - ISLAND_HEIGHT / 2;   // top face at Y = ISLAND_TOP_Y
+    cyl.receiveShadow = true;
+    cyl.castShadow = true;
+    this.scene.add(cyl);
+
+    // ---- Cliff rocks around the rim ----
+    // 14 chunky boxes scattered just inside the cylinder edge so they sit on
+    // the island top, not floating in the sea. Sized to read at game scale
+    // (cylinder radius 66.89) without dwarfing characters: rocks span 1.7-3.3
+    // units wide vs character body 1.0 — chunky-but-not-overwhelming silhouette.
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.95 });
+    const rockMatDark = new THREE.MeshStandardMaterial({ color: 0x6d6045, roughness: 0.95 });
+    const rockCount = 14;
+    for (let i = 0; i < rockCount; i++) {
+      const ang = (i / rockCount) * Math.PI * 2 + (Math.random() * 0.12);
+      const r = ARENA_RADIUS * 0.97 + Math.random() * 1.5;     // just inside the rim
+      const sz = 1.7 + Math.random() * 1.6;                    // 1.7 .. 3.3 units
+      const rock = new THREE.Mesh(
+        new THREE.BoxGeometry(sz, sz * 0.7, sz),
+        i % 3 === 0 ? rockMatDark : rockMat,
+      );
+      rock.position.set(Math.cos(ang) * r, ISLAND_TOP_Y + sz * 0.35, Math.sin(ang) * r);
+      rock.rotation.y = Math.random() * Math.PI;
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      this.scene.add(rock);
+    }
+
+    // ---- Distant atolls in the fog ----
+    // 3 small islands beyond the playable arena, base sitting on the water
+    // surface. They give a sense of place and scale; the fog hides their
+    // pop-in at the horizon.
+    for (let i = 0; i < 3; i++) {
+      const ang = -Math.PI / 2 + (i - 1) * 0.6 + (Math.random() - 0.5) * 0.2;
+      const r = ARENA_RADIUS * 2.6 + Math.random() * ARENA_RADIUS * 0.4;
+      const dwidth = 8 + Math.random() * 6;     // 8..14 units, reads at distance
+      const dheight = 3 + Math.random() * 2;    // low-profile atoll silhouette
+      const distantAtoll = new THREE.Mesh(
+        new THREE.BoxGeometry(dwidth, dheight, dwidth),
+        new THREE.MeshStandardMaterial({ color: 0x7a8b62, roughness: 1.0 }),
+      );
+      distantAtoll.position.set(
+        Math.cos(ang) * r,
+        WATER_Y + dheight / 2 + 0.05,
+        Math.sin(ang) * r,
+      );
+      this.scene.add(distantAtoll);
+    }
+  }
+
+  // Sky gradient: cheap top→bottom canvas-textured background.
+  _makeGradientBg(topHex, bottomHex) {
+    const cv = document.createElement("canvas");
+    cv.width = 4; cv.height = 256;
+    const ctx = cv.getContext("2d");
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, "#" + topHex.toString(16).padStart(6, "0"));
+    grad.addColorStop(1, "#" + bottomHex.toString(16).padStart(6, "0"));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 4, 256);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
   _createTerritoryTexture() {
     const texSize = GRID_SIZE;
     this._territoryCanvas = document.createElement("canvas");
@@ -1829,16 +2436,24 @@ class Game {
     // skips the alpha-blend pipeline — one of the biggest fillrate costs since
     // this plane covers most of the screen. Single-sided cuts shading cost in
     // half (we only ever view it from above).
+    //
+    // Theme F: polygonOffset pushes the territory mesh forward in z-buffer
+    // by a tiny amount so the depth test prefers it over the cylinder top
+    // face (Y=0 vs territory at Y=0.05) at all camera angles. Belt-and-
+    // suspenders against Z-fighting that broke prior Slice A.
     const mat = new THREE.MeshBasicMaterial({
       map: this.territoryTexture,
       transparent: false,
       alphaTest: 0.5,
       side: THREE.FrontSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
 
     this.territoryMesh = new THREE.Mesh(geom, mat);
     this.territoryMesh.rotation.x = -Math.PI / 2;
-    this.territoryMesh.position.y = 0.02;
+    this.territoryMesh.position.y = TERRITORY_Y;
     this.scene.add(this.territoryMesh);
   }
 
@@ -2009,6 +2624,6 @@ if (arrivedViaPortal) {
     game.camCurrent.set(startX, 0, startZ);
     game.camTarget.copy(game.camCurrent);
     game.camera.position.set(startX, CAMERA_HEIGHT, startZ + CAMERA_Z_OFFSET);
-    game.camera.lookAt(startX, 0, startZ);
+    game.camera.lookAt(startX, TERRITORY_Y, startZ);
   }
 }

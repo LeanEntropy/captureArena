@@ -4,13 +4,49 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Territory War</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Lilita+One&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #f0f0f0; font-family: 'Segoe UI', system-ui, sans-serif; }
     canvas#game-canvas { display: block; }
     #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
-    #hud-tl { position: absolute; top: 16px; left: 16px; color: #333; font-size: 16px; }
+    /* Theme F countdown — D's blocky-flip (dark wood block, yellow text) */
+    #hud-tl { position: absolute; top: 16px; left: 16px; color: #FFE140; font-size: 28px;
+              font-family: 'Lilita One', sans-serif; font-weight: 700; letter-spacing: 2px;
+              background: #3B2412; border: 2px solid #1a0f08; padding: 6px 14px; border-radius: 6px;
+              box-shadow: inset 0 -3px 0 rgba(0,0,0,0.4), 0 2px 0 rgba(0,0,0,0.5); }
+    #hud-tl.intense { animation: cd-pulse 0.6s ease-in-out infinite; color: #FF9A3F; }
+    @keyframes cd-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
     #hud-tr { position: absolute; top: 16px; right: 16px; color: #333; font-size: 14px; min-width: 200px; background: rgba(255,255,255,0.85); border-radius: 8px; padding: 8px 12px; }
+    /* Theme F notifications — A's sunset cream card. Anchored BELOW leaderboard (right side). */
+    #jen-notif-stack {
+      position: fixed; right: 16px;
+      /* Will be set dynamically per-frame to (leaderboard.bottom + 8). Initial fallback: 360px. */
+      top: 360px;
+      width: 220px; display: flex; flex-direction: column; gap: 6px;
+      pointer-events: none; z-index: 11;
+    }
+    .jen-notif {
+      font-family: 'Fredoka', system-ui, sans-serif; font-size: 12px; line-height: 1.3;
+      padding: 7px 11px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      background: rgba(255,246,232,0.95); color: #5a3a20; font-weight: 500;
+      border: 1px solid #d4a370; word-wrap: break-word;
+      opacity: 0; transform: translateX(20px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .jen-notif.in { opacity: 1; transform: translateX(0); }
+    /* Theme F faction banner — D's wooden stamp */
+    #jen-banner {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.6);
+      font-family: 'Lilita One', sans-serif; font-weight: 700; font-size: 22px; letter-spacing: 1px;
+      padding: 12px 26px; border-radius: 8px; color: #1a0f08;
+      background: #FFE140; border: 3px solid #1a0f08;
+      box-shadow: inset 0 -4px 0 rgba(0,0,0,0.25), 0 4px 0 rgba(0,0,0,0.4);
+      pointer-events: none; z-index: 12; opacity: 0;
+      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+      white-space: nowrap;
+    }
+    #jen-banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
     #player-leaderboard {
       position: absolute; right: 16px; color: #333; font-size: 13px;
       min-width: 200px; display: flex; flex-direction: column;
@@ -73,6 +109,11 @@
     <div id="hud-bottom"></div>
     <div id="minimap-container"><canvas id="minimap"></canvas></div>
   </div>
+  <!-- Theme F overlays: notification stack (cream cards) + center banner (wooden stamp).
+       Live OUTSIDE #ui so they don't inherit pointer-events:none and so their stacking
+       context is independent of the HUD. -->
+  <div id="jen-notif-stack"></div>
+  <div id="jen-banner"></div>
   <div id="death-screen">
     <div style="text-align:center; background:rgba(0,0,0,0.6); padding:32px 48px; border-radius:16px;">
       <p id="death-msg" style="font-size:28px; color:white; margin-bottom:8px;"></p>
