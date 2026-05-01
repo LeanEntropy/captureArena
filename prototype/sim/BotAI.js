@@ -20,12 +20,27 @@ export class BotAI {
       try {
         BotAI._planLoop(bot, sim);
       } catch (e) {
-        // Fallback: random short hop.
-        const angle = Math.random() * Math.PI * 2;
-        bot.botWaypoints = [{
-          x: bot.pos.x + Math.sin(angle) * 5,
-          z: bot.pos.z + Math.cos(angle) * 5,
-        }];
+        // Fallback: head toward the arena center. Any random hop relative to
+        // the bot's current pos can land outside the arena when the bot is
+        // already at the rim — and the boundary clamp in Simulation pins the
+        // bot at the wall, so the waypoint distance never drops below the
+        // 1.2-unit consume threshold and the queue never drains.
+        bot.botWaypoints = [{ x: 0, z: 0 }];
+      }
+    }
+
+    // Defensive clamp: if the next waypoint is outside the arena interior,
+    // pull it inward. This guards against any planner path that produces an
+    // unreachable waypoint (the bot would otherwise burn forever pushed into
+    // the wall by Simulation._stepCharacter's boundary clamp).
+    const SAFE_R = ARENA_RADIUS - 2;
+    const wp0 = bot.botWaypoints[0];
+    if (wp0) {
+      const wpR = Math.hypot(wp0.x, wp0.z);
+      if (wpR > SAFE_R) {
+        const inv = SAFE_R / wpR;
+        wp0.x *= inv;
+        wp0.z *= inv;
       }
     }
 

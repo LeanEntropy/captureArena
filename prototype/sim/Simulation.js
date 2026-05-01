@@ -64,12 +64,23 @@ export class Simulation {
   // Cached contour lookup. BotAI calls this many times per second across
   // many bots; the underlying extractContours is O(grid). The cache is keyed
   // on factionId and invalidated by claim() and _healUnclaimedCells().
+  //
+  // NOTE: Cache entries can be partially populated. getCachedCellCount creates
+  // an entry holding only cellCount (no contours), so checking truthiness of
+  // `entry` is not enough — we must check `entry.contours` specifically.
+  // Returning undefined from here used to throw inside BotAI._planLoop's
+  // `contours.length` access, which the BotAI catch handler converted into a
+  // random unclamped 5-unit hop — pinning bots to the arena wall forever.
   getCachedContours(factionId) {
     let entry = this._contourCache.get(factionId);
-    if (entry) return entry.contours;
+    if (entry && entry.contours) return entry.contours;
     const contours = extractContours(this.grid, factionId);
-    entry = { contours };
-    this._contourCache.set(factionId, entry);
+    if (entry) {
+      entry.contours = contours;
+    } else {
+      entry = { contours };
+      this._contourCache.set(factionId, entry);
+    }
     return contours;
   }
 
@@ -731,6 +742,31 @@ export class Simulation {
     // re-run the algorithm. Signature kept stable: (charId, factionId, cells, trailPoints).
     this.onClaimResult?.(char.id, factionId, changedCells, trailPointsFlat);
     this.onClaim?.(char.id, trailPointsFlat, factionId);
+
+    // Thin-line diagnostic — fires in BOTH browser (solo) and Node (server).
+    // In solo mode, persists to localStorage for offline analysis.
+    {
+      const trailLen = trail.length;
+      const ratio = trailLen > 0 ? cellsFlipped / trailLen : 0;
+      const suspicious = (cellsFlipped > 0 && ratio < 5) || (trailLen > 20 && ratio < 10);
+      if (suspicious) {
+        const ts = (typeof performance !== "undefined" ? performance.now() : Date.now()).toFixed(0);
+        const entry = { ts, charId: char.id, factionId, trailLen, cellsFlipped, ratio: +ratio.toFixed(2),
+                        trail: trailPointsFlat.slice(0, 200) };
+        // Console (browser DevTools or server stdout)
+        console.log(`[CLAIM_THIN ${ts}] char=${char.id} f=${factionId} trailLen=${trailLen} cells=${cellsFlipped} ratio=${ratio.toFixed(2)} trail=${JSON.stringify(entry.trail)}${trailPointsFlat.length > 200 ? `...(+${trailPointsFlat.length-200})` : ""}`);
+        // Browser-only persistence
+        if (typeof localStorage !== "undefined") {
+          try {
+            const key = "_claim_diag";
+            const arr = JSON.parse(localStorage.getItem(key) || "[]");
+            arr.push(entry);
+            while (arr.length > 50) arr.shift();
+            localStorage.setItem(key, JSON.stringify(arr));
+          } catch {}
+        }
+      }
+    }
 
     if (this.scoreTracker?.onCapture && cellsFlipped > 0) {
       this.scoreTracker.onCapture(char, cellsFlipped, this.factionManager);
