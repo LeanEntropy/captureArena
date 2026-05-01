@@ -4,9 +4,41 @@ _Installed: 2026-04-29_
 
 ## Current Phase
 
-Visual direction LOCKED to Direction E (Castaway Atoll). Trail outline (Tier 0 #4) dropped per Director. Execution plan ready (Section 18 of plan doc); awaiting Director slice-pick to begin execution.
+Slice A REVERTED (Z-fighting + waves overlapping playable area). Director requested **Direction F — Atoll Hybrid** as a mockup-only iteration (E base + D voxel kill/respawn/banner/countdown/win + A cream notifications anchored below the leaderboard). F mockup SHIPPED to companion 2026-04-30, `tools/companion/visual-direction.html` panel id `scene-F`. Awaiting Director approval before any game-side port.
 
 ## Active Threads
+
+- **Direction F — Atoll Hybrid mockup SHIPPED (2026-04-30)** — Director's hybrid request after Slice A revert. Built mockup-only (no game-side touch).
+  - `tools/companion/visual-direction.js`: added `DIRECTIONS.F` config (~50 lines), branched `_buildWaterAndIsland()` on new `outerGround.cylinder` flag → flat single CylinderGeometry (radius=ARENA_RADIUS, height=0.6) instead of E's sand+grass dome stack. Top face IS the grass surface (CylinderGeometry multi-material `[sandy_sides, grass_top, dark_base]`) — no separate plane, structurally cleanest possible.
+  - **3 distinct Y planes** (Director's hard rule from the failed Slice A): water at Y=−0.4, cylinder top at Y=+0.6, territory mesh at Y=+0.65 (territoryOffset bumped from 0.01→0.05 for F). Trail sits above territory at +0.07. FX rings at +0.07. Bounce floor `floorY = (_islandTopY || 0) + 0.1` so voxel debris bounces ON the cylinder top, not through it. Build-up respawn made baseY-aware so character rises from `baseY - 1.5` to `baseY`, not from Y=−1.5 to Y=0.
+  - **Water-overlap fix:** widened `uIslandRadius` from `ARENA_RADIUS * 1.02` → `1.04` and foam width from 1.2 → 1.5 so waves never visually creep onto playable area.
+  - **SceneOverlay `_buildLeaderboardGhost`:** new method renders 4 dashed placeholder rectangles (FACTIONS top-right / LEADERBOARD top-right under factions / MINIMAP bottom-left / PLAYER STATS bottom-center) when `config.showLeaderboardGhost === true`. Lets the Director visually verify the spatial constraint "notifications BELOW the leaderboard, not on top of any other UI element."
+  - **Notification anchor:** new `notificationAnchor: "below-leaderboard"` config key. `_build` reads it and positions the notif stack at `top:146px right:16px` (10px top + 32px factions + 8px gap + 88px leaderboard + 8px gap), width 200px to match a real-game leaderboard column.
+  - **FX dispatch in F:** claim=E's wave-ripple, kill=D's voxel-debris, respawn=D's build-up, notif=A's card-warm, banner=D's stamp, countdown=D's blocky-flip, win=D's voxel-rain. Sailor caps from E kept (Director said optional, Jen kept them — they stitch F to E and have zero perf cost).
+  - HTML: added F's panel as a full-width row below E (`grid-column: 1/-1`, height 520px). Updated FX matrix to 6 columns. Updated page intro + `<h2>` from "Four" to "Six". Updated `index.html` card text.
+  - Plan doc: appended Section 19 (~150 lines). 6 sub-sections: §19.1 geometry/Y planes, §19.2 per-feature spec, §19.3 config flags introduced, §19.4 game-side porting notes (speculative), §19.5 verification screenshots, §19.6 5 open questions for Director.
+  - **Verification:** Playwright pass at `http://127.0.0.1:7891/tools/companion/visual-direction.html` 1500×1100. Zero errors (only favicon 404). 5 screenshots saved at `docs/visual-direction-mockups/r3/`:
+    - `r3-f-baseline.png` — F at rest, all elements visible
+    - `r3-f-notif-anchored-below-leaderboard.png` — 3 cream cards below the leaderboard ghost
+    - `r3-f-voxel-rain-win.png` — D's voxel rain mid-fall, cubes bouncing on island top
+    - `r3-e-regression-after-f.png` — E unchanged
+    - `r3-fullpage-with-f.png` — all 6 panels
+  - **Perf:** within budget. Same +0.7ms as E (water shader is the long pole). F adds 4 dashed DIVs (negligible) + 1 flat CylinderGeometry (~64 verts, cheaper than E's two-cylinder stack).
+  - **Constraints respected:** game-side untouched. Only `tools/companion/`, `docs/visual-direction-plan.md`, `docs/visual-direction-mockups/r3/` written.
+  - 🟡 Director input needed on §19.6 questions (5 of them — most importantly: "is F locked as the future game-side direction?").
+
+- **Slice A SHIPPED — Direction E base look (2026-04-30)** [LATER REVERTED — Z-fighting + wave overlap, see F above] — Commit `b9e4c59` lands the Castaway Atoll visual identity in the actual game:
+  - `prototype/sim/faction.js`: `FACTION_COLORS` retuned to `[0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE]` (cooler desaturated Blue, boosted Yellow). Palette flows into mesh tint + minimap + HUD + territory texture via the single constant.
+  - `prototype/main.js`: replaced background/ground/lights with E stack — animated water shader (two summed sin waves + foam ring + scrolling sun-glitter), sand cylinder + grass top + 14 cliff-rocks rim + 3 distant atolls, warm-dawn ambient + golden-hour directional + cool sea-bounce fill, sky gradient + sea fog. Added `_islandTopY = 0.19` constant used by territory mesh, character group, trail mesh, and camera lookAt to keep everything on the grass top (not below the water). Added universal sailor cap (white top + faction-color band) to `Character._buildChar`. Wave/foam shader frequencies divided by ~6 vs mockup so wavelengths read at game scale (ARENA_RADIUS=66.89 vs mockup 10). Cliff-rock and atoll absolute dims multiplied ×6.689 so silhouettes read at distance. Foam-ring width bumped 1.2u → 5u for the same reason.
+  - **Verification:** Playwright pass at `http://localhost:2567/` with name "AtollTester". Game starts cleanly (only favicon 404 console error), all 30 chars spawn across 5 factions, water uniform ticks, player can move and chase, faction palette + caps + cliff rocks + sand + foam + sun-glitter + sky gradient all render. Overview screenshot from camera (40, 110, 100) → (0, 0, 0) saved as `jen-slice-a-overview.png` matches `docs/visual-direction-mockups/r3/r3-e-baseline-viewport.png` conceptually.
+  - **Tests:** all 41 still pass (`pnpm test`).
+  - **Perf delta:** within budget. Water shader is the long pole at ~0.4ms; everything else <0.1ms.
+  - **Constraints respected:** did NOT touch `prototype/sim/Simulation.js` (subagent has pending diagnostic logger work there). `Simulation.js` and `portals.js` had pre-existing unstaged modifications when I started — left them unstaged so the subagent's logger commit owns them. Renderer-only + 1-line palette change.
+  - **Open issues for Slice B–F awareness:**
+    - Territory texture has visible diagonal striping at oblique camera angles (NearestFilter rasterization). Pre-existing. Per plan §18.5 Q1, recommend keeping NearestFilter (chunky aesthetic fits cliff-rocks + caps); flagged for Director confirmation.
+    - Character mesh assumption for Slice C/B: `Character.group` Y is now baseY (=`_islandTopY`); body=0.5, head=1.3, cap-band=1.72, cap-top=1.85 are all relative to that. Slice C idle-bob and walk-wobble should write to `body.position.y` and `body.rotation.x/z` (NOT `group.position.y` — that's reserved for the island-lift).
+    - Slice B respawn FX: `wash-ashore` should set `group.position.y = baseY - 1.2` and tween up to `baseY` over 0.6s. baseY = `this.baseY` (Character field).
+    - Slice B claim/kill FX entry-point Y should be `this._islandTopY + 0.06` for the territory mesh surface (don't write Y=0).
 
 - **Visual Direction Plan — Round 4: Execution Plan (2026-04-30)** — Director picked E + dropped Trail outline. Built Section 18 in `docs/visual-direction-plan.md` (lines 663–920, +260 lines):
   - **18.1** — Tier 0–4 with #4 dropped (23 items remain, each with target file in `prototype/`, effort, perf cost, deps).

@@ -918,3 +918,119 @@ _Companion live mockup → `tools/companion/visual-direction.html` (E panel = pr
 _Source-of-truth FX code → `tools/companion/visual-direction.js` (line ranges per row in §18.2)._
 _Status: 🟢 Plan ready. Direction picked. Awaiting Director slice-pick to begin execution._
 
+---
+
+## Section 19 — Direction F: Atoll Hybrid (post-Slice-A revert)
+
+**Status:** mockup only (companion). NOT shipped to game-side.
+
+**Origin.** The previous Slice A landed Direction E in the actual game (`prototype/`) but had two visible breakages and was reverted:
+
+1. The dome island geometry overlapped the territory texture plane at the same Y, causing Z-fighting "blinking" at oblique camera angles.
+2. The water shader's wave animation crossed onto the playable area where the foam ring met the grass top.
+
+After the revert, the Director requested a hybrid that locks down both failure modes structurally and swaps several moment FX to the heavier-feeling D (Voxel Plate) language. Verbatim Director request, 2026-04-30:
+
+> I want to implement Theme E again but with the following changes:
+> 1. The island is a flat cylinder above the sea, not a dome shape.
+> 2. Make sure the floor of the island is not the same height as the base of the battlefield so not to have them intersecting.
+> 3. Use the Kill animation and the respawn animation of option D (voxel)
+> 4. Use the Notification styles of Theme A (sunset). Make sure they appear BELOW the leaderboard, not on top of any other UI element.
+> 5. Use the game win animation, Endangered, Eliminated, recovered and countdown animations from Theme D (voxel).
+
+### 19.1 — Geometry: three distinct Y planes
+
+| Y    | What                  | Geometry                                                                                                | Material                                            |
+| ---- | --------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| -0.4 | Sea surface           | `PlaneGeometry(ARENA_RADIUS*6, _, 80, 80)` rotated flat. Shader discards everything inside `r * 1.04`.  | `ShaderMaterial` (E's water shader, reused as-is).  |
+| 0.0  | Cylinder base         | `CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS, 0.6, 64)`                                                  | Multi-material: `[sandy sides, grass top, dark base]`. |
+| 0.6  | Cylinder TOP face     | (the top face of the cylinder above)                                                                    | grass `MeshLambertMaterial`                          |
+| 0.65 | Territory mesh        | `PlaneGeometry(ARENA_RADIUS*2, ARENA_RADIUS*2)` (alphaTest cutout, 64×64 NearestFilter)                 | Existing `MeshBasicMaterial` faction-tinted texture |
+| 0.67 | FX rings + trails     | Various `RingGeometry` for foam-rings, `BoxGeometry` voxel debris bouncing on `floorY = 0.7`            | Existing FX materials                                |
+
+**Hard rule (from Director):** the floor of the island and the base of the battlefield are NEVER at the same Y. F's `0.6` (cylinder top) vs `0.65` (territory) gives 0.05 units of clearance — enough that even at grazing camera angles the depth buffer can resolve the order without precision tearing. (Compare to E which uses `0.18` grass + `0.19` territory — only 0.01 of separation. E's transparent-mesh render order works around the issue, but F's geometry doesn't rely on render-order tricks; it's structurally separated.)
+
+**Water-overlap rule (from Director).** The water shader's `discard` happens when `length(vWorldXZ) < uIslandRadius - 0.05`. For F we widen `uIslandRadius` from `ARENA_RADIUS * 1.02` (E's value) to `ARENA_RADIUS * 1.04`, and widen the foam ring from `1.2` to `1.5` — so the foam line sits OUTSIDE the cylinder edge and waves can't visually creep onto the playable surface even when crests rise.
+
+### 19.2 — Per-feature spec
+
+| #  | Feature             | Source     | Companion impl                                                                                                                                | Notes                                                                                                  |
+| -- | ------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1  | Sky + sea           | E          | Reused. Dawn-peach gradient + animated teal water shader.                                                                                     | Mobile fallback path documented in §17 Q3 still applies.                                              |
+| 2  | Island              | NEW        | `_buildWaterAndIsland()` branches on `outerGround.cylinder` flag → flat `CylinderGeometry` instead of sand+grass dome stack.                  | Top face of cylinder IS the grass surface (no separate plane). Cleanest possible.                     |
+| 3  | Cliff rocks         | E          | Reused, 14 cubes around the rim. For F, base Y shifted from 0.05 → `_islandTopY` so they sit on the top edge.                                  | Read as a rocky lip on the cylinder edge.                                                              |
+| 4  | Distant atolls      | E          | Reused, 3 background cubes. Y baseline shifted to match water Y.                                                                              | Renders below fog line.                                                                                |
+| 5  | Sailor caps         | E          | Reused. `charStyle: "castaway"` adds white-cube top + faction-color band on each character's head.                                            | Optional per Director spec — kept because it sells the world.                                          |
+| 6  | Faction palette     | E          | Reused. `[E74A3F, 3D6CD0, 52B856, FFCF2A, A94BBE]` — Blue cooler/desat from sea, Yellow boosted vs teal reflections.                          | Locks faction-blue choice from §18.5.                                                                 |
+| 7  | Trail style         | E          | Reused. Smooth ribbon + darker outline. Trail Y now `_islandTopY + 0.07` (above territory mesh).                                              | Reads as a damp footprint trail.                                                                       |
+| 8  | Claim FX            | E          | Reused. `wave-ripple` — 3 concentric water rings + 8 droplet splatters.                                                                       | Sea-themed feedback fits the world.                                                                   |
+| 9  | Kill FX             | **D**      | Switched. `voxel-debris` — 12 bouncy cube fragments, gravity + rotation. **Bounce floor lifted to `_islandTopY + 0.1` so cubes bounce on the cylinder top, NOT through it.** | Critical fix vs leaving the legacy Y=0.1 floor — would have appeared to fall into the water.          |
+| 10 | Respawn FX          | **D**      | Switched. `build-up` — character rises from below + dust puffs. **Build-up startY/endY made baseY-aware** so the rise origin matches F's island top. | Without the baseY fix the character would have respawned at Y=0 (under the cylinder) and snapped to baseY visibly. |
+| 11 | Notification toast  | **A**      | Switched. `card-warm` — cream card, brown text, faction-color left border, Fredoka.                                                            | NEW `notificationAnchor: "below-leaderboard"` flag in config repositions the stack.                    |
+| 12 | Notification anchor | NEW        | `SceneOverlay._build` reads `config.notificationAnchor`. When `"below-leaderboard"` it positions the stack at `top:146px right:16px` (below a 88px leaderboard ghost rectangle). | Width 200px to match a real-game leaderboard column.                                                  |
+| 13 | HUD ghosts          | NEW        | `SceneOverlay._buildLeaderboardGhost` renders 4 dashed placeholder rectangles (FACTIONS / LEADERBOARD / MINIMAP / PLAYER STATS) so the spatial constraint can be verified visually. | Mockup-only. Real game's UI replaces these.                                                            |
+| 14 | Faction banner      | **D**      | Switched. `stamp` — wooden stamp, Lilita One block lettering, solid faction-color BG.                                                          | Used for ENDANGERED / ELIMINATED / RECOVERED.                                                         |
+| 15 | Countdown           | **D**      | Switched. `blocky-flip` — dark wood block, yellow Lilita One text, chunky shadow. Pulses when intense.                                         | Replaces E's sundial.                                                                                  |
+| 16 | Game-win FX         | **D**      | Switched. `voxel-rain` — 30 cubes rain down in winning color, bounce on island top.                                                            | The flag-rise from E is dropped (it's E-specific).                                                    |
+| 17 | Minimap             | E (planned)| Nautical chart placeholder spec carried forward.                                                                                              | Implementation not in mockup.                                                                          |
+| 18 | Motes               | E          | Sea-spray light blue (`0xe8f4ff`) instead of warm cream.                                                                                      | Cosmetic; auto-baseline-Y per island top.                                                              |
+
+### 19.3 — Configuration flags introduced for F
+
+Two new config keys + one new `outerGround` sub-flag, all backward-compatible:
+
+```js
+F: {
+  // ...
+  outerGround: {
+    water: true,
+    cylinder: true,        // NEW — switches builder to flat cylinder
+    color: 0x1E6F7E, foam: 0xFFFFFF, sun: 0xFFE8B0,
+  },
+  notificationAnchor: "below-leaderboard",  // NEW
+  showLeaderboardGhost: true,                // NEW (companion-only)
+}
+```
+
+The legacy E config still works (no `cylinder`, no `notificationAnchor`, no `showLeaderboardGhost`) — F is purely additive.
+
+### 19.4 — Game-side porting notes (when/if Slice A is retried with F)
+
+**This section is SPECULATIVE — it assumes the Director picks F as the future game-side direction. F is currently mockup-only.**
+
+Mapping for `prototype/` if F is later landed in the actual game:
+
+| Companion file/section                       | Game file                       | Notes                                                                                                                                  |
+| -------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `_buildWaterAndIsland()` flat-cylinder branch | `prototype/main.js`             | Replace E's sand+grass stack (lines added by commit b9e4c59) with a single CylinderGeometry. Set `_islandTopY = 0.6` at game scale (×6.689 if ARENA_RADIUS scaling kicks in — actually NO, cylinder dims tied to ARENA_RADIUS scale fine; only the height 0.6 may need a small bump for game-scale readability). |
+| Bounce-floor `floorY = (_islandTopY + 0.1)`   | `prototype/main.js` particle update | Current game has hardcoded `Y < 0.1` checks in kill-FX physics. Change to `Y < islandTopY + 0.1`.                                       |
+| `respawnStyle: "build-up"` baseY awareness    | `Character.respawn()`           | If respawn is implemented, it must use `Character.baseY = _islandTopY`, not Y=0.                                                       |
+| `notificationStyle: "card-warm"` + anchor     | `prototype/ui.js`                | Replace driftwood plank notif with cream card. Anchor below `#player-leaderboard` element using its actual rect (similar to ui.js line 269 `getBoundingClientRect`). Real game has dynamic leaderboard height — anchor must be relative to its bottom, not a fixed pixel offset. |
+| `bannerStyle: "stamp"`, `countdownStyle: "blocky-flip"`, `winStyle: "voxel-rain"` | new files / `prototype/ui.js` | Direct CSS port from §11/§12/§13 styles. |
+
+**Estimated effort for full F port to game-side:** ~2 days (~16h) — most savings vs E come from reusing E's water shader and palette. The structural cylinder change is ~2h. The bounce-floor + respawn baseY fix is ~1h. The DOM HUD swap (notif/banner/countdown/win) is ~6h. Verification + screenshots is ~3h. The remainder is buffer.
+
+### 19.5 — Verification screenshots
+
+All taken at `http://127.0.0.1:7891/tools/companion/visual-direction.html` with viewport 1500×1100, scrolled to F's panel:
+
+- `docs/visual-direction-mockups/r3/r3-f-baseline.png` — F at rest. Visible: flat cylinder, sandy cliff side, grass top with faction territory, cliff rocks on the rim, animated water outside, distant atoll, sailor-cap characters, all 4 HUD ghost rectangles, D's wood-block countdown.
+- `docs/visual-direction-mockups/r3/r3-f-notif-anchored-below-leaderboard.png` — three A-style cream cards visible directly below the LEADERBOARD ghost rectangle. Spatial constraint satisfied: notifs do not overlap factions, leaderboard, minimap, or player-stats.
+- `docs/visual-direction-mockups/r3/r3-f-voxel-rain-win.png` — D's voxel-rain mid-fall. Red cubes visible bouncing ON THE ISLAND TOP (no cubes falling into water), confirming the bounce-floor fix.
+- `docs/visual-direction-mockups/r3/r3-e-regression-after-f.png` — E in its original sundial-countdown, dome-island form. Confirms F's additions did not regress E.
+- `docs/visual-direction-mockups/r3/r3-fullpage-with-f.png` — full companion page with all 6 panels (REF / A / B / C / D / E / F).
+
+### 19.6 — Open questions for Director
+
+1. **Is F the future direction?** F is built mockup-only. The Director's request did not say "lock F as the new direction" — it said "implement Theme E again with the following changes." The mockup is one valid reading; another is "use the mockup to evaluate, then decide." Default assumption: mockup-only until explicitly approved.
+2. **Cylinder height 0.6 vs alternative.** F uses 0.6 in mockup (mockup ARENA_RADIUS=16); at game scale (ARENA_RADIUS=66.89) the same ratio gives ~2.5u of cliff height. Does the Director want the cliffs visually taller (~3-4u) or shorter (1-2u)? Affects how dramatic the sea→island transition reads.
+3. **Drop sailor caps?** The Director's request said "Optional — keep if it fits the cylinder vibe." Jen's call: keep them. They stitch F to E and add character at no perf cost. Confirm or override.
+4. **Drop the wave-ripple claim FX?** It's E's. The Director's request enumerated kill/respawn/notification/countdown/banner/win as switching to D — claim was not explicitly mentioned. Default: keep E's wave-ripple (sea-themed, fits the world). If the Director wants D's stamp-wave for tactile consistency with the kill+respawn, easy switch (one config key).
+5. **Real-game leaderboard anchor.** The mockup uses a fixed `top:146px` because the leaderboard ghost is fixed-height. Real game's `#player-leaderboard` has dynamic height (collapsed vs expanded with Tab). Notifications in the real game must anchor to `leaderboard.getBoundingClientRect().bottom + 8` so they always sit below regardless of state.
+
+---
+
+_F panel live mockup → `tools/companion/visual-direction.html` (panel id `scene-F`)._
+_F's FX dispatch → `tools/companion/visual-direction.js` `DIRECTIONS.F` config + `_buildWaterAndIsland()` cylinder branch + `_buildLeaderboardGhost()` HUD ghosts._
+_Status: 🟢 Mockup ready. Awaiting Director feedback on §19.6 questions before considering a game-side port._
+

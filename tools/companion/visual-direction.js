@@ -190,6 +190,59 @@ const DIRECTIONS = {
     countdownAccent: "#3B2412",
     winStyle: "voxel-rain",        // cubes rain down from sky in winning color
   },
+  F: {
+    // ATOLL HYBRID — E's island/water + D's voxel kill/respawn + A's cream notif
+    // Director request 2026-04-30: "Theme E with the following changes:
+    //   1. Flat cylinder island (not dome).
+    //   2. Island floor Y must be DISTINCT from battlefield Y (no Z-fighting).
+    //   3. Use D's kill + respawn animations.
+    //   4. Use A's cream notification style. Position BELOW the leaderboard.
+    //   5. Use D's countdown/banner/win animations."
+    // Construction: flat cylinder island at Y0; territory mesh sits on top at
+    // Y=0.65 (cylinder height = 0.6); water fills outside cylinder radius and
+    // sits at Y=-0.4 — three CLEARLY distinct Y planes, no overlap.
+    name: "Atoll Hybrid",
+    bg: 0xCDE5EE,
+    bgGradientTop: 0xFFD9B8,
+    bgGradientBottom: 0x8FC8DA,
+    backgroundType: "gradient",
+    fog: { color: 0xBCD8DE, near: 28, far: 90 },
+    groundColor: 0x9CC15A,
+    // outerGround: water=true triggers ocean shader; cylinder=true switches the
+    // island builder from sand+grass dome stack to a single flat cylinder.
+    outerGround: { water: true, cylinder: true, color: 0x1E6F7E, foam: 0xFFFFFF, sun: 0xFFE8B0 },
+    factionColors: [0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE],
+    ambient: { color: 0xfff0d8, intensity: 0.78 },
+    directional: { color: 0xfff2c8, intensity: 0.7 },
+    bounceLight: { color: 0x88B8D0, intensity: 0.18 },
+    charRoughness: 0.5,
+    charEmissive: 0,
+    charStyle: "castaway",            // sailor cap from E
+    trailWidth: 0.22,
+    trailDarkenOutline: true,
+    trailStyle: "ribbon",             // sea-themed ribbon from E
+    territoryDither: false,
+    minimapStyle: "nautical-chart",
+    // FX: E's claim (wave-ripple), D's kill (voxel debris), D's respawn (build-up).
+    claimFlashColor: 0xC8F0FF,
+    claimFlashStyle: "wave-ripple",   // from E — concentric water ripples
+    killBurstStyle: "voxel-debris",   // from D — bouncy cube fragments
+    respawnStyle: "build-up",         // from D — assemble from below
+    notificationFont: "Fredoka, system-ui",
+    // notificationStyle="card-warm" reuses A's cream card; the new
+    // notificationAnchor key tells SceneOverlay to position the stack
+    // BELOW a (mocked) leaderboard rectangle rather than at top-right.
+    notificationStyle: "card-warm",
+    notificationAnchor: "below-leaderboard",
+    // Banner (Endangered/Eliminated/Recovered) + countdown + win FX all from D.
+    bannerStyle: "stamp",             // from D — wooden stamp
+    countdownStyle: "blocky-flip",    // from D — voxel digit
+    countdownAccent: "#3B2412",
+    winStyle: "voxel-rain",           // from D — voxel cube rain
+    // Show a faint dashed "leaderboard ghost" in the panel so the Director can
+    // visually verify the notifications-below-leaderboard positioning rule.
+    showLeaderboardGhost: true,
+  },
   E: {
     // CASTAWAY ATOLL — island floating in animated water
     name: "Castaway Atoll",
@@ -257,19 +310,38 @@ class SceneOverlay {
       wrap.style.position = "relative";
     }
 
-    // Notification stack — top right of the canvas
+    // -- Mocked HUD elements (so the panel reads as a real game frame) ---
+    // Some directions (e.g. F — Atoll Hybrid) need a leaderboard placeholder
+    // so the Director can visually verify spatial constraints like
+    // "notifications must appear BELOW the leaderboard, not on top of it".
+    if (this.config.showLeaderboardGhost) {
+      this._buildLeaderboardGhost(wrap);
+    }
+
+    // Notification stack — anchor depends on direction.
+    //   default                       → top-right (legacy A/B/C/D/E behavior)
+    //   anchor="below-leaderboard"   → top-right but below the ghost rect.
+    //                                  Width ≈ 200px to match a real-game
+    //                                  leaderboard column. Constraint from
+    //                                  Director: must NOT overlap timer
+    //                                  (top-left), factions (top-right above
+    //                                  leaderboard), player stats (bottom-
+    //                                  center), minimap (bottom-left).
     this.notificationContainer = document.createElement("div");
     this.notificationContainer.className = `notif-stack notif-${this.config.notificationStyle}`;
+    const anchorBelow = this.config.notificationAnchor === "below-leaderboard";
     Object.assign(this.notificationContainer.style, {
       position: "absolute",
-      top: "10px",
-      right: "10px",
+      // 130px = 10px (top margin) + ~110px (mocked leaderboard) + 10px gap
+      top: anchorBelow ? "146px" : "10px",
+      right: anchorBelow ? "16px" : "10px",
       display: "flex",
       flexDirection: "column",
       gap: "6px",
       pointerEvents: "none",
       zIndex: "5",
-      maxWidth: "200px",
+      maxWidth: anchorBelow ? "200px" : "200px",
+      width: anchorBelow ? "200px" : "auto",
     });
     wrap.appendChild(this.notificationContainer);
 
@@ -310,6 +382,112 @@ class SceneOverlay {
       overflow: "hidden",
     });
     wrap.appendChild(this.winFXLayer);
+  }
+
+  // Mocked HUD anchors that surround the canvas in the real game. Renders only
+  // a leaderboard placeholder for now (other anchors are inferred via the labels)
+  // so the Director can confirm notification position relative to existing UI.
+  _buildLeaderboardGhost(wrap) {
+    // -- Top-right: factions strip (above the leaderboard) ----------------
+    const factions = document.createElement("div");
+    Object.assign(factions.style, {
+      position: "absolute",
+      top: "10px",
+      right: "16px",
+      width: "200px",
+      height: "32px",
+      background: "rgba(20,30,55,0.55)",
+      border: "1px dashed rgba(255,255,255,0.35)",
+      borderRadius: "4px",
+      pointerEvents: "none",
+      zIndex: "3",
+      color: "rgba(255,255,255,0.7)",
+      fontSize: "10px",
+      letterSpacing: "1px",
+      fontFamily: "system-ui, sans-serif",
+      textAlign: "center",
+      lineHeight: "32px",
+      fontWeight: "600",
+    });
+    factions.textContent = "FACTIONS  •  R B G Y P";
+    wrap.appendChild(factions);
+
+    // -- Top-right: leaderboard ghost (anchor for F's notifications) ------
+    const lb = document.createElement("div");
+    Object.assign(lb.style, {
+      position: "absolute",
+      top: "50px",   // 10 + 32 + 8 gap
+      right: "16px",
+      width: "200px",
+      height: "88px",
+      background: "rgba(20,30,55,0.55)",
+      border: "1px dashed rgba(255,255,255,0.35)",
+      borderRadius: "4px",
+      pointerEvents: "none",
+      zIndex: "3",
+      color: "rgba(255,255,255,0.7)",
+      fontSize: "10px",
+      letterSpacing: "1px",
+      fontFamily: "system-ui, sans-serif",
+      padding: "6px 10px",
+      boxSizing: "border-box",
+      fontWeight: "600",
+    });
+    lb.innerHTML =
+      "LEADERBOARD<br>" +
+      "<span style='opacity:0.55;font-weight:400;'>1. Cube Knight 12</span><br>" +
+      "<span style='opacity:0.55;font-weight:400;'>2. Boxley 9</span><br>" +
+      "<span style='opacity:0.55;font-weight:400;'>3. Pixel Pete 7</span>";
+    wrap.appendChild(lb);
+
+    // -- Bottom-left: minimap ghost (so we can see we're not overlapping) -
+    const mm = document.createElement("div");
+    Object.assign(mm.style, {
+      position: "absolute",
+      bottom: "10px",
+      left: "10px",
+      width: "120px",
+      height: "120px",
+      background: "rgba(20,30,55,0.45)",
+      border: "1px dashed rgba(255,255,255,0.3)",
+      borderRadius: "4px",
+      pointerEvents: "none",
+      zIndex: "3",
+      color: "rgba(255,255,255,0.55)",
+      fontSize: "10px",
+      letterSpacing: "1px",
+      fontFamily: "system-ui, sans-serif",
+      textAlign: "center",
+      lineHeight: "120px",
+      fontWeight: "600",
+    });
+    mm.textContent = "MINIMAP";
+    wrap.appendChild(mm);
+
+    // -- Bottom-center: player stats strip --------------------------------
+    const stats = document.createElement("div");
+    Object.assign(stats.style, {
+      position: "absolute",
+      bottom: "10px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      width: "300px",
+      height: "32px",
+      background: "rgba(20,30,55,0.5)",
+      border: "1px dashed rgba(255,255,255,0.3)",
+      borderRadius: "4px",
+      pointerEvents: "none",
+      zIndex: "3",
+      color: "rgba(255,255,255,0.65)",
+      fontSize: "10px",
+      letterSpacing: "1px",
+      fontFamily: "system-ui, sans-serif",
+      textAlign: "center",
+      lineHeight: "32px",
+      fontWeight: "600",
+    });
+    stats.textContent = "PLAYER STATS  •  HP  KILLS  TERRITORY";
+    wrap.appendChild(stats);
   }
 
   _styleCountdown(intense) {
@@ -901,8 +1079,21 @@ class DirectionScene {
   // that fits the box-y arcade direction. Total cost: <0.4ms/frame on 1920x1080.
   _buildWaterAndIsland() {
     const c = this.config;
+    // Two layouts share the water shader:
+    //   E (default)        — sand cylinder + grass top, two-tier dome.
+    //   F (cylinder=true)  — single FLAT cylinder; territory mesh sits on
+    //                        top at a CLEARLY distinct Y from the water.
+    //                        Director rule: "the floor of the island is not
+    //                        the same height as the base of the battlefield
+    //                        so not to have them intersecting." The water
+    //                        sits at Y=-0.4, cylinder top at Y=0.6, territory
+    //                        at Y=0.65 — three planes, no Z-fighting.
+    const isFlatCylinder = !!c.outerGround.cylinder;
 
     // 1) Animated water plane (radius ARENA_RADIUS * 4, square)
+    // For F we push the water LOWER and leave the cylinder edge as the only
+    // surface near the cliff line — so wave animation stays OUTSIDE the
+    // playable area as required.
     const waterGeom = new THREE.PlaneGeometry(ARENA_RADIUS * 6, ARENA_RADIUS * 6, 80, 80);
     const seaCol = new THREE.Color(c.outerGround.color);
     const foamCol = new THREE.Color(c.outerGround.foam);
@@ -910,8 +1101,10 @@ class DirectionScene {
     this._waterMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uIslandRadius: { value: ARENA_RADIUS * 1.02 },
-        uFoamWidth: { value: 1.2 },
+        // For F we widen the discard radius slightly so wave crests can
+        // never overshoot onto the island silhouette.
+        uIslandRadius: { value: ARENA_RADIUS * (isFlatCylinder ? 1.04 : 1.02) },
+        uFoamWidth: { value: isFlatCylinder ? 1.5 : 1.2 },
         uSeaColor: { value: seaCol },
         uFoamColor: { value: foamCol },
         uSunColor: { value: sunCol },
@@ -973,48 +1166,91 @@ class DirectionScene {
     });
     const water = new THREE.Mesh(waterGeom, this._waterMat);
     water.rotation.x = -Math.PI / 2;
-    water.position.y = -0.25; // slightly below island top, hides edge
+    // F sits the water lower (-0.4) so it can never share Y with the cylinder
+    // top (0.6). E keeps water slightly under the dome (-0.25) for a fuller
+    // beach-line look.
+    water.position.y = isFlatCylinder ? -0.4 : -0.25;
     this.scene.add(water);
     this._waterMesh = water;
 
-    // 2) Island stack — sand base + grass top — both raised slightly above water
-    // Sand cylinder (wider, darker, peeks under the grass like a beach)
-    const sandMat = new THREE.MeshStandardMaterial({
-      color: 0xE2C58A, roughness: 0.95,
-    });
-    const sand = new THREE.Mesh(
-      new THREE.CylinderGeometry(ARENA_RADIUS * 1.08, ARENA_RADIUS * 1.18, 0.45, 48),
-      sandMat,
-    );
-    sand.position.y = -0.05;
-    sand.receiveShadow = true;
-    this.scene.add(sand);
+    if (isFlatCylinder) {
+      // === F — Atoll Hybrid: single FLAT cylinder island =====================
+      // Director spec: "The island is a flat cylinder above the sea, not a
+      // dome shape. Make sure the floor of the island is not the same height
+      // as the base of the battlefield so not to have them intersecting."
+      //
+      // Y plan:
+      //   water         Y = -0.40   (well below cylinder top)
+      //   cylinder TOP  Y = +0.60   (height 0.60, base at 0.0)
+      //   territory     Y = +0.65   (cylinder top + 0.05 — Director rule)
+      //
+      // The grass color is painted ON THE CYLINDER TOP face via vertex
+      // material (not a separate plane) — fewer overlapping surfaces is
+      // structurally cleaner and rules out any Z-fighting between
+      // "island top" and "territory texture base".
+      const cylHeight = 0.6;
+      const sideMat = new THREE.MeshStandardMaterial({
+        color: 0xC9B077, roughness: 0.95,   // sandy cliff sides
+      });
+      const topMat = new THREE.MeshLambertMaterial({
+        color: c.groundColor,                // grass top
+      });
+      const bottomMat = new THREE.MeshStandardMaterial({
+        color: 0x8a7152, roughness: 1.0,     // dark base (rarely visible)
+      });
+      // CylinderGeometry materials: [side, top, bottom]
+      const cyl = new THREE.Mesh(
+        new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS, cylHeight, 64),
+        [sideMat, topMat, bottomMat],
+      );
+      cyl.position.y = cylHeight / 2;       // base at Y=0, top at Y=cylHeight
+      cyl.receiveShadow = true;
+      cyl.castShadow = true;
+      this.scene.add(cyl);
+      // Reference Y for everything that sits on the playable surface.
+      this._islandTopY = cylHeight;          // = 0.6
+      this._fxRingY = cylHeight + 0.07;      // sits above territory (which is +0.05)
+    } else {
+      // === E — Castaway Atoll: sand base + grass top dome ===================
+      const sandMat = new THREE.MeshStandardMaterial({
+        color: 0xE2C58A, roughness: 0.95,
+      });
+      const sand = new THREE.Mesh(
+        new THREE.CylinderGeometry(ARENA_RADIUS * 1.08, ARENA_RADIUS * 1.18, 0.45, 48),
+        sandMat,
+      );
+      sand.position.y = -0.05;
+      sand.receiveShadow = true;
+      this.scene.add(sand);
 
-    // Grass top — circle on top of the sand cylinder. Slightly inset.
-    const grass = new THREE.Mesh(
-      new THREE.CircleGeometry(ARENA_RADIUS, 64),
-      new THREE.MeshLambertMaterial({ color: c.groundColor }),
-    );
-    grass.rotation.x = -Math.PI / 2;
-    grass.position.y = 0.18;  // sits on top of sand cylinder
-    grass.receiveShadow = true;
-    this.scene.add(grass);
-    // Override the territory mesh Y in _buildTerritory by setting island top reference.
-    this._islandTopY = 0.19;
+      const grass = new THREE.Mesh(
+        new THREE.CircleGeometry(ARENA_RADIUS, 64),
+        new THREE.MeshLambertMaterial({ color: c.groundColor }),
+      );
+      grass.rotation.x = -Math.PI / 2;
+      grass.position.y = 0.18;
+      grass.receiveShadow = true;
+      this.scene.add(grass);
+      this._islandTopY = 0.19;
+      this._fxRingY = 0.25;                  // E's existing 0.19 + 0.06 baseline
+    }
 
     // 3) Cube cliff-rocks around the rim — 14 small chunky stones, varied color & size
+    // For F (flat cylinder) rocks sit ON the cylinder's top edge so they read
+    // as a rocky lip rather than floating in the sea.
     const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.95 });
     const rockMatDark = new THREE.MeshStandardMaterial({ color: 0x6d6045, roughness: 0.95 });
     const rockCount = 14;
+    const rockBaseY = isFlatCylinder ? this._islandTopY : 0.05;
     for (let i = 0; i < rockCount; i++) {
       const ang = (i / rockCount) * Math.PI * 2 + (Math.random() * 0.12);
-      const r = ARENA_RADIUS * 1.05 + Math.random() * 0.5;
+      const r = ARENA_RADIUS * (isFlatCylinder ? 0.97 : 1.05) + Math.random() * 0.5;
       const sz = 0.5 + Math.random() * 0.5;
       const rock = new THREE.Mesh(
         new THREE.BoxGeometry(sz, sz * 0.7, sz),
         i % 3 === 0 ? rockMatDark : rockMat,
       );
-      rock.position.set(Math.cos(ang) * r, 0.05 + sz * 0.35, Math.sin(ang) * r);
+      rock.position.set(Math.cos(ang) * r, rockBaseY + sz * 0.35, Math.sin(ang) * r);
       rock.rotation.y = Math.random() * Math.PI;
       rock.castShadow = true;
       rock.receiveShadow = true;
@@ -1022,6 +1258,9 @@ class DirectionScene {
     }
 
     // 4) Faraway distant atolls (background scenery, no shadows, behind fog)
+    // Their base sits roughly on the water plane so they read as small
+    // islands in the distance regardless of the main island's geometry.
+    const atollWaterY = isFlatCylinder ? -0.4 : -0.25;
     for (let i = 0; i < 3; i++) {
       const ang = -Math.PI / 2 + (i - 1) * 0.6 + (Math.random() - 0.5) * 0.2;
       const r = ARENA_RADIUS * 2.6 + Math.random() * ARENA_RADIUS * 0.4;
@@ -1031,7 +1270,11 @@ class DirectionScene {
         new THREE.BoxGeometry(dwidth, dheight, dwidth),
         new THREE.MeshStandardMaterial({ color: 0x7a8b62, roughness: 1.0 }),
       );
-      distantAtoll.position.set(Math.cos(ang) * r, dheight / 2 - 0.2, Math.sin(ang) * r);
+      distantAtoll.position.set(
+        Math.cos(ang) * r,
+        atollWaterY + dheight / 2 + 0.05,
+        Math.sin(ang) * r,
+      );
       this.scene.add(distantAtoll);
     }
   }
@@ -1078,7 +1321,14 @@ class DirectionScene {
     this.territoryMesh = new THREE.Mesh(geom, mat);
     this.territoryMesh.rotation.x = -Math.PI / 2;
     // Direction E lifts the playfield onto the island top.
-    this.territoryMesh.position.y = (this._islandTopY || 0) + 0.01;
+    // Direction F (flat cylinder) uses a larger offset (0.05) per Director rule:
+    // "the floor of the island is not the same height as the base of the
+    // battlefield so not to have them intersecting." This guarantees the
+    // territory texture cannot Z-fight with the cylinder top face even at
+    // grazing camera angles.
+    const isFlatCylinder = !!(this.config.outerGround && this.config.outerGround.cylinder);
+    const territoryOffset = isFlatCylinder ? 0.05 : 0.01;
+    this.territoryMesh.position.y = (this._islandTopY || 0) + territoryOffset;
     this.scene.add(this.territoryMesh);
   }
 
@@ -1281,7 +1531,11 @@ class DirectionScene {
     const dir = new THREE.Vector3(
       -Math.sin(char.group.rotation.y), 0, -Math.cos(char.group.rotation.y),
     );
-    const trailY = (this._islandTopY || 0) + 0.05;
+    // Trail must sit ABOVE the territory mesh (which itself sits above the
+    // island top). For F (flat cylinder) the territory offset is 0.05, so
+    // trail goes at +0.07; for E (dome) territory is +0.01, trail at +0.05.
+    const isFlatCyl = !!(this.config.outerGround && this.config.outerGround.cylinder);
+    const trailY = (this._islandTopY || 0) + (isFlatCyl ? 0.07 : 0.05);
     const pts = [];
     for (let i = 0; i < trailLen; i++) {
       pts.push(new THREE.Vector3(
@@ -1403,11 +1657,12 @@ class DirectionScene {
 
     const count = 40;
     const positions = new Float32Array(count * 3);
+    const moteBase = (this._islandTopY || 0) + 0.5;
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const r = Math.random() * ARENA_RADIUS * 0.95;
       positions[i * 3] = Math.cos(angle) * r;
-      positions[i * 3 + 1] = 0.5 + Math.random() * 4;
+      positions[i * 3 + 1] = moteBase + Math.random() * 4;
       positions[i * 3 + 2] = Math.sin(angle) * r;
     }
     const geom = new THREE.BufferGeometry();
@@ -1415,6 +1670,8 @@ class DirectionScene {
     const moteColor = c.name === "Neon Pulse" ? 0x88ccff
                     : c.name === "Painted Plains" ? 0xfff8c0
                     : c.name === "Voxel Plate" ? 0xffffff
+                    : c.name === "Castaway Atoll" ? 0xfff0c0
+                    : c.name === "Atoll Hybrid" ? 0xe8f4ff   // sea-spray motes
                     : 0xfff0c0;
     const mat = new THREE.PointsMaterial({
       color: moteColor, size: 0.18, transparent: true, opacity: 0.55, sizeAttenuation: true,
@@ -1510,7 +1767,7 @@ class DirectionScene {
         factionId, t: 0, duration: 0.55, style: "bloom",
         flashRGB: [fr, fg, fb],
       });
-      const ringY = (this._islandTopY || 0) + 0.06;
+      const ringY = this._fxRingY != null ? this._fxRingY : 0.06;
       [0, 0.12, 0.24].forEach((delay, idx) => {
         setTimeout(() => {
           if (this.disposed) return;
@@ -1587,7 +1844,11 @@ class DirectionScene {
     const c = this.config;
     const victim = this.characters[Math.floor(Math.random() * this.characters.length)];
     const pos = victim.group.position.clone();
-    pos.y = 1.0;
+    // Spawn FX at the body center, which is baseY + 1.0 (body Y = 0.5 + half cube).
+    // For F the island top sits at Y=0.6, so debris spawns at Y=1.6 (right at
+    // chest height) — much better than the legacy hardcoded Y=1.0 which would
+    // have spawned voxel debris INSIDE the cylinder.
+    pos.y = (victim.baseY || 0) + 1.0;
 
     const style = c.killBurstStyle || "scatter";
     const baseColor = victim.color;
@@ -1690,7 +1951,7 @@ class DirectionScene {
         });
       }
       // Two white foam-ring shockwaves on the island
-      const ringY = (this._islandTopY || 0) + 0.06;
+      const ringY = this._fxRingY != null ? this._fxRingY : 0.06;
       [0, 0.18].forEach((delay) => {
         setTimeout(() => {
           if (this.disposed) return;
@@ -1860,7 +2121,7 @@ class DirectionScene {
         startY: baseY - 1.2, endY: baseY,
       });
       // Two foam rings expanding outward at island top
-      const ringY = (this._islandTopY || 0) + 0.06;
+      const ringY = this._fxRingY != null ? this._fxRingY : 0.06;
       [0, 0.15].forEach((delay) => {
         setTimeout(() => {
           if (this.disposed) return;
@@ -1894,14 +2155,19 @@ class DirectionScene {
         });
       }
     } else if (style === "build-up") {
-      // D — Voxel: cubes assemble bottom-up, head appears last
+      // D / F — Voxel: cubes assemble bottom-up, head appears last.
+      // baseY may be ABOVE 0 when the arena sits on a raised island
+      // (Direction F = flat cylinder at Y=0.6). Compute everything relative
+      // to victim.baseY so the character snaps back to the correct surface.
+      const baseY = victim.baseY != null ? victim.baseY : 0;
       victim.group.scale.set(1, 1, 1);
-      victim.group.position.y = -1.5; // start below ground
+      victim.group.position.y = baseY - 1.5;
       this.particles.push({
         mesh: null, kind: "respawn-build", respawnTarget: victim, life: 0, maxLife: 0.5,
-        startY: -1.5, endY: 0,
+        startY: baseY - 1.5, endY: baseY,
       });
-      // Dust puffs at ground level
+      // Dust puffs at ground level (relative to island surface)
+      const puffY = baseY + 0.1;
       for (let i = 0; i < 5; i++) {
         const ang = Math.random() * Math.PI * 2;
         const speed = 1.2 + Math.random() * 1.2;
@@ -1909,7 +2175,7 @@ class DirectionScene {
           new THREE.BoxGeometry(0.12, 0.12, 0.12),
           new THREE.MeshBasicMaterial({ color: 0xfffafa, transparent: true, opacity: 0.9 }),
         );
-        puff.position.set(pos.x, 0.1, pos.z);
+        puff.position.set(pos.x, puffY, pos.z);
         this.scene.add(puff);
         this.particles.push({
           mesh: puff, kind: "puff", life: 0, maxLife: 0.5,
@@ -2036,7 +2302,7 @@ class DirectionScene {
         factionId: -1, t: 0, duration: 1.5, style: "all-bloom",
         flashRGB: [(winningColor >> 16) & 0xff, (winningColor >> 8) & 0xff, winningColor & 0xff],
       });
-      const ringY = (this._islandTopY || 0) + 0.06;
+      const ringY = this._fxRingY != null ? this._fxRingY : 0.06;
       [0, 0.35, 0.7].forEach((delay) => {
         setTimeout(() => {
           if (this.disposed) return;
@@ -2406,12 +2672,16 @@ class DirectionScene {
       }
 
       // Default physics-based particle (confetti, voxel, scatter, firework, win-rain)
+      // Bounce floor sits on the playable surface, which is the island top
+      // for water-based directions (E, F). For non-island directions it
+      // stays at Y=0.1 to preserve original A/B/C/D behavior.
       p.vel.y += p.gravity * dt;
       p.mesh.position.x += p.vel.x * dt;
       p.mesh.position.y += p.vel.y * dt;
       p.mesh.position.z += p.vel.z * dt;
-      if (p.mesh.position.y < 0.1) {
-        p.mesh.position.y = 0.1;
+      const floorY = (this._islandTopY || 0) + 0.1;
+      if (p.mesh.position.y < floorY) {
+        p.mesh.position.y = floorY;
         if (p.bounceY != null) {
           p.vel.y *= -p.bounceY;
           p.vel.x *= 0.55; p.vel.z *= 0.55;
@@ -2572,7 +2842,7 @@ function boot() {
   const refCanvas = document.getElementById("ref-current");
   if (refCanvas) new DirectionScene(refCanvas, DIRECTIONS.REF);
 
-  for (const dir of ["A", "B", "C", "D", "E"]) {
+  for (const dir of ["A", "B", "C", "D", "E", "F"]) {
     const canvas = document.getElementById("scene-" + dir);
     if (canvas) new DirectionScene(canvas, DIRECTIONS[dir]);
   }

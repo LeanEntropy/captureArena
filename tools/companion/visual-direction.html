@@ -284,6 +284,7 @@
     .fx-matrix .col-C { background: rgba(180,150,200,0.07); }
     .fx-matrix .col-D { background: rgba(120,180,90,0.07); }
     .fx-matrix .col-E { background: rgba(70,160,180,0.10); }
+    .fx-matrix .col-F { background: rgba(120,180,200,0.13); }
 
     /* Countdown pulse animation — used by the JS overlay */
     @keyframes cd-pulse {
@@ -299,10 +300,11 @@
   </nav>
 
   <main class="container">
-    <h1>Visual Direction Plan <span class="round-tag">Round 3</span></h1>
-    <p class="subtitle">Five art directions with per-direction FX, notifications, banners, countdown, and game-win moments. Round 3 adds <strong>E — Castaway Atoll</strong> (island in animated water) per Director request.</p>
+    <h1>Visual Direction Plan <span class="round-tag">Round 3 + F</span></h1>
+    <p class="subtitle">Six art directions with per-direction FX, notifications, banners, countdown, and game-win moments. <strong>New:</strong> F — Atoll Hybrid (E base + D moments + A notifications) per Director request after the previous Slice A revert.</p>
 
     <div class="intro">
+      <p><strong>What's new — Direction F.</strong> Director's hybrid: take E's island/water world, replace the dome with a <strong>flat cylinder</strong> at a Y clearly distinct from the territory plane (the dome+territory at-the-same-Y caused Z-fighting in the previous Slice A and was reverted), use D's voxel kill/respawn/countdown/banner/win FX for chunkier moment-to-moment feedback, and use A's cream notification card style — anchored <strong>below the leaderboard</strong> so it never overlaps the existing UI (timer top-left, factions top-right, leaderboard top-right under factions, minimap bottom-left, player stats bottom-center).</p>
       <p><strong>What's new in round 3.</strong> Director: "at least one suggestion should be of the background as water or sea and the arena as an island." Added Direction E — Castaway Atoll. Animated procedural water (vertex sin waves + foam ring + sun-glitter, ~0.4ms/frame), grass-on-sand cylindrical island with cube cliff-rocks rim, distant atolls in the haze, a sailor-cap on each character, sundial countdown, and a victory flag that rises on a wooden pole at game-end.</p>
       <p><strong>What's new in round 2 (kept).</strong> Director feedback: the four directions felt too similar — same trigger claim, only 2 distinct kill FX. Round 2 fixed that:</p>
       <p style="margin-left:18px;">
@@ -358,6 +360,7 @@
             <th class="col-C">C — Painted Plains</th>
             <th class="col-D">D — Voxel Plate</th>
             <th class="col-E">E — Castaway Atoll</th>
+            <th class="col-F">F — Atoll Hybrid</th>
           </tr>
         </thead>
         <tbody>
@@ -368,6 +371,7 @@
             <td class="col-C">Watercolor pastel sky, painted-sea border.</td>
             <td class="col-D">Light blue sky, dark wood tabletop plate.</td>
             <td class="col-E">Dawn-peach sky over animated teal sea + foam ring + distant atolls.</td>
+            <td class="col-F">Same as E (dawn sky + animated teal sea), but waves discarded inside `ARENA_RADIUS * 1.04`.</td>
           </tr>
           <tr>
             <td>Arena treatment</td>
@@ -376,6 +380,7 @@
             <td class="col-C">Parchment-grain ground.</td>
             <td class="col-D">Grass with faction dither.</td>
             <td class="col-E">Grass top on raised sand cylinder, cube cliff-rocks rim it.</td>
+            <td class="col-F"><strong>Single flat CylinderGeometry</strong>, height 0.6, sandy sides + grass top face. Cliff rocks on the rim. <strong>3 distinct Y planes</strong> (water -0.4 / island top 0.6 / territory 0.65) — no Z-fighting.</td>
           </tr>
           <tr>
             <td>Claim FX</td>
@@ -384,6 +389,7 @@
             <td class="col-C">Ink-bleed — slow watercolor bloom + 5 ink splotches near entry, 0.7s.</td>
             <td class="col-D">Stamp wave — wave radiates from entry across faction territory + dust puff, 0.45s.</td>
             <td class="col-E">Wave-ripple — 3 concentric water rings + 8 droplet splatters, 0.55s.</td>
+            <td class="col-F">Wave-ripple from E — 3 concentric water rings + 8 droplet splatters, 0.55s.</td>
           </tr>
           <tr>
             <td>Kill FX</td>
@@ -392,6 +398,7 @@
             <td class="col-C">Petals — 14 white squares float up with wobble, 1.6s.</td>
             <td class="col-D">Voxel debris — 12 cubes bounce on ground, gravity + rotation, 1.2s.</td>
             <td class="col-E">Splash — 14 light-blue droplets shoot up + 2 white foam rings expand, 1.1s.</td>
+            <td class="col-F"><strong>Voxel debris from D</strong> — 12 cubes bounce on the cylinder top, gravity + rotation, 1.2s.</td>
           </tr>
           <tr>
             <td>Respawn FX</td>
@@ -400,6 +407,7 @@
             <td class="col-C">Page-turn — ink drop spreads, character "blooms" with soft overshoot.</td>
             <td class="col-D">Build-up — character rises from below ground + white dust puffs.</td>
             <td class="col-E">Wash-ashore — character rises from below + 2 foam rings sweep + droplets.</td>
+            <td class="col-F"><strong>Build-up from D</strong> — character rises from below the island top + dust puffs at the surface.</td>
           </tr>
           <tr>
             <td>Notification toast</td>
@@ -408,6 +416,7 @@
             <td class="col-C">Parchment card, dashed faction-color border, Caveat Brush hand-letter.</td>
             <td class="col-D">Wooden tag — dark wood BG, cream text, faction stripe, Lilita One.</td>
             <td class="col-E">Driftwood plank — sun-bleached wood gradient, double-stripe faction edge.</td>
+            <td class="col-F"><strong>Cream card from A</strong>, faction-color left border, Fredoka font. <strong>Anchored BELOW the leaderboard ghost</strong> (top:146px, right:16px), width 200px.</td>
           </tr>
           <tr>
             <td>Faction banner</td>
@@ -416,6 +425,7 @@
             <td class="col-C">Rolled-scroll asymmetric border-radius, italic.</td>
             <td class="col-D">Wooden stamp — solid faction BG, dark border, Lilita One block lettering.</td>
             <td class="col-E">Sail banner — canvas gradient, faction-color top stripe, rope edge curl.</td>
+            <td class="col-F"><strong>Wooden stamp from D</strong> — solid faction BG, dark border, Lilita One block lettering.</td>
           </tr>
           <tr>
             <td>Countdown</td>
@@ -424,6 +434,7 @@
             <td class="col-C">Parchment, dashed border, hand-lettered, scale-up when intense.</td>
             <td class="col-D">Dark wood block, yellow text, Lilita One, chunky shadow.</td>
             <td class="col-E">Sundial — round sandy disc with brass accent, coral when critical.</td>
+            <td class="col-F"><strong>Blocky-flip from D</strong> — dark wood block, yellow text, Lilita One, chunky shadow.</td>
           </tr>
           <tr>
             <td>Game win FX</td>
@@ -432,6 +443,7 @@
             <td class="col-C">Arena-wide watercolor wash in winning color + DOM radial bloom.</td>
             <td class="col-D">30 voxel cubes rain down in winning color, bouncing.</td>
             <td class="col-E">Faction flag rises on a wooden pole at center + 3 foam-ring sweeps + 3 seagulls cross sky.</td>
+            <td class="col-F"><strong>Voxel rain from D</strong> — 30 cubes rain down in winning color, bounce on the island top.</td>
           </tr>
           <tr>
             <td>Character treatment</td>
@@ -440,6 +452,7 @@
             <td class="col-C">Ink outline (inverted-hull pass, 0x222 backside).</td>
             <td class="col-D">Voxel-cubed — darker rim feet block as faked AO.</td>
             <td class="col-E">Sailor cap — white-cube top + faction-color band on the head + dark feet block.</td>
+            <td class="col-F">Sailor cap from E — white-cube top + faction-color band + dark feet block.</td>
           </tr>
           <tr>
             <td>Trail style</td>
@@ -448,6 +461,7 @@
             <td class="col-C">Brush-stroke — wider, semi-transparent, darker edge.</td>
             <td class="col-D">Pixelated chevron segments — looks stamped on the grass.</td>
             <td class="col-E">Smooth ribbon, darker outline (read as a damp footprint trail on grass).</td>
+            <td class="col-F">Smooth ribbon from E (sea-themed footprint trail).</td>
           </tr>
           <tr>
             <td>Minimap (planned)</td>
@@ -456,6 +470,7 @@
             <td class="col-C">Parchment circle, hand-drawn dashed border.</td>
             <td class="col-D">Tabletop chip — wood-frame with rounded corners.</td>
             <td class="col-E">Nautical chart — parchment with compass rose, latitude/longitude grid, ink dots.</td>
+            <td class="col-F">Nautical chart from E (parchment + compass rose + ink dots).</td>
           </tr>
         </tbody>
       </table>
@@ -487,7 +502,7 @@
       </div>
     </div>
 
-    <h2>Four Art Directions — Live</h2>
+    <h2>Six Art Directions — Live</h2>
     <p style="color:#8888aa;margin-bottom:24px;font-size:14px;">
       Each direction now has 10 trigger buttons. Click <strong>Claim / Kill / Respawn</strong> for in-world FX.
       <strong>Notify</strong> shows 3 example side notifications. <strong>Endangered / Eliminated / Recovered</strong> show faction-state banners.
@@ -735,6 +750,68 @@
           </div>
           <p style="margin-top:10px;color:#a0a0c0;font-size:11px;line-height:1.5;">
             <strong>Faction-readability check:</strong> sea hue (#1E6F7E deep teal) is sufficiently distinct from Blue faction (#3D6CD0, desaturated/cooler-shifted from earlier rounds). Sand (#E2C58A) is non-faction. Yellow boosted to read against teal reflections at distance. The cliff-rocks rim helps visually separate "playable green island" from "sea" at the boundary.
+          </p>
+        </div>
+      </div>
+
+      <!-- Direction F: Atoll Hybrid (NEW — Director request, hybrid of E + D + A) -->
+      <div class="panel" style="grid-column: 1 / -1; border-color:#3F8DA0;">
+        <div class="panel-header" style="background:linear-gradient(180deg,#1f3142,#16213e);">
+          <div class="panel-title">F — Atoll Hybrid <span class="badge recommended" style="margin-left:8px; background:#3F8DA0;">Director hybrid (E base + D moments + A notif)</span></div>
+          <div class="panel-subtitle">Flat cylinder island over animated sea. Voxel kill/respawn. Cream notifications below the leaderboard. Wooden stamp banners. Voxel-rain win.</div>
+          <div class="badge-row">
+            <span class="badge">Effort: ~3 days (E base reused)</span>
+            <span class="badge">+0.7ms (water shader)</span>
+            <span class="badge">Hard rule: 3 distinct Y planes (water -0.4 / island top 0.6 / territory 0.65)</span>
+          </div>
+        </div>
+        <div class="scene-canvas-wrap" style="height:520px;"><canvas id="scene-F" class="scene-canvas"></canvas></div>
+        <div class="panel-controls">
+          <span class="ctrl-group-label">Per-direction FX</span>
+          <button class="ctrl-btn" data-scene="F" data-action="claim">Trigger Claim</button>
+          <button class="ctrl-btn warn" data-scene="F" data-action="kill">Trigger Kill</button>
+          <button class="ctrl-btn success" data-scene="F" data-action="respawn">Respawn</button>
+
+          <span class="ctrl-group-label">UI moments</span>
+          <button class="ctrl-btn" data-scene="F" data-action="notif">Notify (×3)</button>
+          <button class="ctrl-btn" data-scene="F" data-action="endangered">Endangered</button>
+          <button class="ctrl-btn" data-scene="F" data-action="eliminated">Eliminated</button>
+          <button class="ctrl-btn" data-scene="F" data-action="recovered">Recovered</button>
+          <button class="ctrl-btn" data-scene="F" data-action="countdown">Countdown</button>
+
+          <span class="ctrl-group-label">End-of-match</span>
+          <button class="ctrl-btn primary" data-scene="F" data-action="win">Game Win</button>
+          <button class="ctrl-btn" data-scene="F" data-action="reset">Reset</button>
+        </div>
+        <div class="panel-body">
+          <table>
+            <tr><td>Background:</td><td>Dawn-peach sky over animated teal sea (from E). Waves discarded inside cylinder radius — never overlap the island.</td></tr>
+            <tr><td>Island:</td><td><strong>Flat CylinderGeometry</strong> (radius=ARENA_RADIUS, height=0.6) at Y=0. Top face is the grass surface (vertex material). Cliff rocks sit on the rim. <strong>No dome stack.</strong></td></tr>
+            <tr><td>Y planes:</td><td>Water Y=−0.4 · Cylinder top Y=+0.6 · Territory mesh Y=+0.65. Three CLEARLY distinct Y's — eliminates the Z-fighting "blinking" the previous Slice A had.</td></tr>
+            <tr><td>Claim FX:</td><td>From E — 3 concentric water ripples + 8 droplet splashes</td></tr>
+            <tr><td>Kill FX:</td><td><strong>From D</strong> — 12 bouncy voxel cube fragments, gravity + rotation, bounce on the island top</td></tr>
+            <tr><td>Respawn:</td><td><strong>From D</strong> — character rises from below the island + dust puffs at the surface</td></tr>
+            <tr><td>Notification:</td><td><strong>From A</strong> — cream card, brown text, faction-color left border. <strong>Anchored BELOW the leaderboard ghost</strong> (top:146px right:16px), width 200px to match. Never overlaps timer / factions / minimap / player stats.</td></tr>
+            <tr><td>Banner:</td><td>From D — wooden stamp (Lilita One block lettering)</td></tr>
+            <tr><td>Countdown:</td><td>From D — blocky-flip dark wood block, yellow text</td></tr>
+            <tr><td>Win FX:</td><td>From D — 30 voxel cubes rain down in winning color, bounce on island top</td></tr>
+            <tr><td>Character:</td><td>Sailor cap from E (white cube + faction-color band) + dark feet block</td></tr>
+            <tr><td>HUD font:</td><td>Fredoka (notif) + Lilita One (banner/countdown) — mixed by source</td></tr>
+          </table>
+          <div class="palette-row">
+            <div class="swatch" style="background:#E74A3F;" title="Red"></div>
+            <div class="swatch" style="background:#3D6CD0;" title="Blue (cooler / desaturated, from E)"></div>
+            <div class="swatch" style="background:#52B856;" title="Green"></div>
+            <div class="swatch" style="background:#FFCF2A;" title="Yellow (boosted vs teal water)"></div>
+            <div class="swatch" style="background:#A94BBE;" title="Purple"></div>
+            <div class="swatch" style="background:#1E6F7E; border-color:#fff;" title="Sea (not faction)"></div>
+            <div class="swatch" style="background:#C9B077; border-color:#fff;" title="Cliff sand (not faction)"></div>
+          </div>
+          <p style="margin-top:10px;color:#a0a0c0;font-size:11px;line-height:1.5;">
+            <strong>Why a hybrid?</strong> The Director's previous Slice A (E shipped) had two visible breakages: (1) the island geometry overlapped the territory plane at the same Y, causing Z-fighting "blinking", and (2) water waves crossed onto the playable area. F resolves both by structural means: a single flat cylinder sets the island top to a fixed height, the territory plane sits 0.05u above it, and the water shader discards everything inside `ARENA_RADIUS * 1.04`. The kill/respawn/banner/countdown/win moments come from D (Voxel Plate) because the box-debris language reinforces the chunky island silhouette better than E's softer splash particles. Notifications come from A (cream cards) because the warm legibility wins over driftwood at small sizes — and the Director explicitly anchored them below the leaderboard so they read as a feed, not a stack.
+          </p>
+          <p style="margin-top:6px;color:#88a;font-size:11px;line-height:1.5;">
+            The dashed rectangles in the panel (FACTIONS / LEADERBOARD / MINIMAP / PLAYER STATS) are mock HUD anchors to verify the notifications-below-leaderboard rule visually. They are not real UI, just spatial guides.
           </p>
         </div>
       </div>
