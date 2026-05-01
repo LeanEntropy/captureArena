@@ -1620,14 +1620,20 @@ class Game {
     const game = this;
     this.factionManager = {
       getAllFactions() {
-        return Array.from(game.mp.room.state.factions).map(f => ({
-          id: f.id,
-          name: FACTION_NAMES[f.id - 1] ?? `F${f.id}`,
-          color: FACTION_COLORS[f.id - 1] ?? 0xffffff,
-          territoryPct: f.territoryPct,
-          alive: f.alive,
-          endangered: f.endangered,
-        }));
+        const allChars = Array.from(game.mp.room.state.characters);
+        return Array.from(game.mp.room.state.factions).map(f => {
+          const fChars = allChars.filter(c => c.factionId === f.id);
+          return {
+            id: f.id,
+            name: FACTION_NAMES[f.id - 1] ?? `F${f.id}`,
+            color: FACTION_COLORS[f.id - 1] ?? 0xffffff,
+            territoryPct: f.territoryPct,
+            alive: f.alive,
+            endangered: f.endangered,
+            aliveCount: fChars.filter(c => c.alive).length,
+            totalCount: fChars.length,
+          };
+        });
       },
     };
     this.matchManager = {

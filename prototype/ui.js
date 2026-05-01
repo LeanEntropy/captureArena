@@ -146,10 +146,15 @@ export class UIManager {
         isPlayer ? "font-weight:bold;" : "",
       ].filter(Boolean).join(";");
 
+      const countStr = (f.aliveCount != null && f.totalCount != null)
+        ? `${f.aliveCount}/${f.totalCount}`
+        : "";
+
       html +=
         `<div style="${rowStyle}">` +
         `<span style="display:inline-block;width:12px;height:12px;background:${hex};border-radius:2px;flex-shrink:0;"></span>` +
         `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</span>` +
+        (countStr ? `<span style="color:#aaa;font-size:11px;min-width:28px;text-align:right;">${countStr}</span>` : "") +
         `<span>${pct}%</span>` +
         tags +
         `</div>`;

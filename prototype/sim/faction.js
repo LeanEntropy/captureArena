@@ -300,10 +300,19 @@ export class FactionManager {
 
   /**
    * Return all factions as an array.
+   * Each entry includes aliveCount (living characters) and totalCount (all
+   * characters currently registered, alive or dead).
    * @returns {object[]}
    */
   getAllFactions() {
-    return [...this._factions.values()];
+    return [...this._factions.values()].map(f => {
+      const chars = [...f.characters];
+      return {
+        ...f,
+        aliveCount: chars.filter(c => c.alive).length,
+        totalCount: chars.length,
+      };
+    });
   }
 
   /**
