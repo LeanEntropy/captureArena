@@ -4,7 +4,9 @@
 // World coords: wx = worldMin + (gx + 0.5) * cellSize
 
 export const FACTION_COUNT = 5;
-export const CHARS_PER_FACTION = 6;
+// 10 per faction × 5 factions = 50 total character slots, so multiplayer
+// rooms can absorb humans well beyond 30 before hitting the cap.
+export const CHARS_PER_FACTION = 10;
 export const ENDANGERED_THRESHOLD = 10;   // territory % below which endangered triggers
 export const RECOVERY_THRESHOLD = 12;     // territory % at or above which recovery triggers
 

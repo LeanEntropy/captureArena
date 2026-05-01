@@ -3,7 +3,9 @@ import { FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 // Tuning constants (extracted from prototype/main.js for sharing with server-side simulation).
 
 // Arena / movement
-export const ARENA_RADIUS = 66.89;
+// 66.89 → 80.27 (+20%) so multiplayer rooms with more humans don't feel
+// cramped. Solo gets the same arena.
+export const ARENA_RADIUS = 80.27;
 export const MIN_POINT_DIST = 0.3;
 export const PLAYER_SPEED = 9.8;
 export const BOT_SPEED = 7.5;
