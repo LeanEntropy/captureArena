@@ -267,22 +267,56 @@
       padding-bottom: 1px;
     }
     #ts-byline a:hover { color: #FFE140; border-bottom-color: #FFE140; }
-    #ts-rules {
-      margin-top: 22px; max-width: 460px;
-      font-family: 'Fredoka', system-ui, sans-serif; font-size: 13px;
-      color: #fff; line-height: 1.5; text-align: left;
-      background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.3);
-      border-radius: 8px; padding: 12px 16px;
-      text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+    /* Info button next to music toggle */
+    #info-btn-title {
+      width: 44px; height: 44px;
+      padding: 0;
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      font-size: 22px;
+      font-family: 'Lilita One', sans-serif;
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 2px 2px 0 #000;
+      margin-left: 10px;
+      vertical-align: middle;
     }
-    #ts-rules .rules-title {
-      font-family: 'Lilita One', sans-serif; font-size: 16px; letter-spacing: 2px;
-      color: #FFE140; margin-bottom: 6px; text-align: center;
+    #info-btn-title:hover { background: rgba(255,255,255,0.3); }
+    /* Rules popup modal */
+    #rules-modal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6); z-index: 200;
     }
-    #ts-rules ul { list-style: none; padding-left: 0; margin: 0; }
-    #ts-rules li { padding: 2px 0; }
-    #ts-rules li::before { content: "▸ "; color: #FFE140; font-weight: bold; }
-    #ts-rules b { color: #FFE140; font-weight: 700; }
+    #rules-modal.visible { display: flex; }
+    #rules-modal .modal-card {
+      position: relative;
+      max-width: 520px; width: 90%;
+      background: #FFE140; border: 4px solid #1a0f08; border-radius: 14px;
+      box-shadow: inset 0 -6px 0 rgba(0,0,0,0.25), 0 8px 0 rgba(0,0,0,0.4);
+      padding: 24px 28px;
+      font-family: 'Fredoka', system-ui, sans-serif; color: #1a0f08;
+      font-size: 14px; line-height: 1.5;
+    }
+    #rules-modal .modal-title {
+      font-family: 'Lilita One', sans-serif; font-size: 24px; letter-spacing: 2px;
+      text-align: center; margin-bottom: 12px;
+    }
+    #rules-modal ul { list-style: none; padding-left: 0; margin: 0; }
+    #rules-modal li { padding: 4px 0; }
+    #rules-modal li::before { content: "▸ "; color: #c0392b; font-weight: bold; }
+    #rules-modal b { color: #c0392b; font-weight: 700; }
+    #rules-modal .modal-close {
+      position: absolute; top: 8px; right: 12px;
+      background: none; border: none; cursor: pointer;
+      font-family: 'Lilita One', sans-serif; font-size: 24px; color: #1a0f08;
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+    #rules-modal .modal-close:hover { background: rgba(0,0,0,0.1); }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -312,6 +346,22 @@
   <audio id="bgm" src="music/bgm.mp3" preload="auto"></audio>
   <div id="jen-notif-stack"></div>
   <div id="jen-banner"></div>
+  <div id="rules-modal">
+    <div class="modal-card">
+      <button class="modal-close" id="rules-close" title="Close">&times;</button>
+      <div class="modal-title">HOW TO PLAY</div>
+      <ul>
+        <li>Move with <b>WASD</b> / <b>arrow keys</b> or the <b>mouse</b>. <b>Mouse wheel</b> zooms.</li>
+        <li>Leave your territory to draw a trail. Close the loop back to your colour to <b>capture</b> the enclosed land.</li>
+        <li>If anyone <b>crosses your trail</b>, you die. Standing on enemy land while not trailing also kills you.</li>
+        <li>Die → <b>respawn 3s later</b> in your faction's territory.</li>
+        <li><b>Endangered:</b> faction below 10% territory — when one of its players dies, they get <b>reassigned to another team</b>.</li>
+        <li><b>Eliminated:</b> faction wiped out — its remaining players are reassigned to other factions.</li>
+        <li><b>Leaderboard</b> tracks <b>personal score</b> (kills + claims) — your score follows you across team changes.</li>
+        <li><b>15-min rounds.</b> Faction with most territory wins. Highest personal score wins bragging rights.</li>
+      </ul>
+    </div>
+  </div>
   <div id="death-screen">
     <p id="death-timer" style="display:none;"></p>
   </div>
@@ -338,19 +388,7 @@
       </div>
       <div id="ts-music-row">
         <button id="music-toggle-title" title="Toggle music">&#x1F50A;</button>
-      </div>
-      <div id="ts-rules">
-        <div class="rules-title">HOW TO PLAY</div>
-        <ul>
-          <li>Move with <b>WASD</b> / <b>arrow keys</b> or the <b>mouse</b>. <b>Mouse wheel</b> zooms.</li>
-          <li>Leave your territory to draw a trail. Close the loop back to your colour to <b>capture</b> the enclosed land.</li>
-          <li>If anyone <b>crosses your trail</b>, you die. Standing on enemy land while not trailing also kills you.</li>
-          <li>Die → <b>respawn 3s later</b> in your faction's territory.</li>
-          <li><b>Endangered:</b> faction below 10% territory — when one of its players dies, they get <b>reassigned to another team</b>.</li>
-          <li><b>Eliminated:</b> faction wiped out — its remaining players are reassigned to other factions.</li>
-          <li><b>Leaderboard</b> tracks <b>personal score</b> (kills + claims) — your score follows you across team changes.</li>
-          <li><b>15-min rounds.</b> Faction with most territory wins. Highest personal score wins bragging rights.</li>
-        </ul>
+        <button id="info-btn-title" title="How to play">i</button>
       </div>
       <div id="ts-byline">A GAME BY
         <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a>

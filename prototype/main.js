@@ -2941,6 +2941,25 @@ document.getElementById("music-toggle-hud").addEventListener("click", () => {
   _toggleMusic();
 });
 
+// Rules popup
+const _rulesModal = document.getElementById("rules-modal");
+const _rulesClose = document.getElementById("rules-close");
+const _rulesInfo = document.getElementById("info-btn-title");
+if (_rulesInfo) _rulesInfo.addEventListener("click", () => {
+  _rulesModal.classList.add("visible");
+});
+if (_rulesClose) _rulesClose.addEventListener("click", () => {
+  _rulesModal.classList.remove("visible");
+});
+if (_rulesModal) _rulesModal.addEventListener("click", (e) => {
+  if (e.target === _rulesModal) _rulesModal.classList.remove("visible"); // click outside card → close
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _rulesModal.classList.contains("visible")) {
+    _rulesModal.classList.remove("visible");
+  }
+});
+
 // Initialize button labels
 _updateMusicButtons();
 
