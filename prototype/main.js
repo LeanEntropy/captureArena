@@ -1957,6 +1957,21 @@ class Game {
       getPlayer: () => this.player?.group ?? null,
       spawnPoint:   { x: -ARENA_RADIUS + 1, y: 1, z: 0 }, // start (red) — west edge (very edge)
       exitPosition: { x:  ARENA_RADIUS - 1, y: 1, z: 0 }, // exit (green) — east edge (very edge)
+      // Player-state callbacks — supply live values so portals can forward
+      // username, faction color, speed, team, and hp in query params.
+      getUsername: () => this.playerName || null,
+      getColor: () => {
+        // Faction color as a THREE hex integer (e.g. 0xE74A3F).
+        // factionId is 1-based; FACTION_COLORS is 0-indexed.
+        const fid = this.player?.simChar?.factionId;
+        return (fid != null && fid > 0) ? (FACTION_COLORS[fid - 1] ?? null) : null;
+      },
+      getSpeed: () => PLAYER_SPEED,
+      getTeam: () => {
+        const fid = this.player?.simChar?.factionId;
+        return (fid != null && fid > 0) ? (FACTION_NAMES[fid - 1] ?? null) : null;
+      },
+      getHp: () => (this.player?.alive ? 100 : 1),
     });
   }
 

@@ -7,7 +7,8 @@
 // so it can integrate with this prototype's importmap-driven THREE.
 //
 //   import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./portals.js";
-//   initVibeJamPortals({ scene, getPlayer, spawnPoint, exitPosition });
+//   initVibeJamPortals({ scene, getPlayer, spawnPoint, exitPosition,
+//                        getUsername, getColor, getSpeed });
 //   // every frame:
 //   animateVibeJamPortals();
 //
@@ -18,6 +19,11 @@ import * as THREE from "three";
 
 const qs = new URLSearchParams(window.location.search);
 export const arrivedViaPortal = qs.get('portal') === 'true' || qs.get('portal') === '1';
+
+// Snapshot ALL query params at module-load time (before anything mutates the URL).
+// These are the params the incoming player brought from the previous game — we
+// must forward them all on the return journey.
+const ORIGINAL_PARAMS = new URLSearchParams(window.location.search);
 
 // Populated by initVibeJamPortals()
 let cfg = null;
@@ -122,8 +128,45 @@ function animateParticles(p) {
   p.attributes.position.needsUpdate = true;
 }
 
+// ── Convert a THREE hex color integer to a CSS hex string ──────
+// e.g. 0xE74A3F → "e74a3f"
+function hexIntToCssHex(hexInt) {
+  return hexInt.toString(16).padStart(6, '0');
+}
+
+// ── Collect live player state from the cfg callbacks ────────────
+function getPlayerParams() {
+  const params = {};
+  if (typeof cfg.getUsername === 'function') {
+    const u = cfg.getUsername();
+    if (u) params.username = String(u).slice(0, 32);
+  }
+  if (typeof cfg.getColor === 'function') {
+    const c = cfg.getColor();
+    // Accept either a numeric THREE hex color or a CSS string
+    if (c !== undefined && c !== null) {
+      params.color = typeof c === 'number' ? hexIntToCssHex(c) : String(c);
+    }
+  }
+  if (typeof cfg.getSpeed === 'function') {
+    const s = cfg.getSpeed();
+    if (s !== undefined && s !== null) params.speed = String(s);
+  }
+  if (typeof cfg.getHp === 'function') {
+    const hp = cfg.getHp();
+    if (hp !== undefined && hp !== null) params.hp = String(Math.round(Math.max(1, Math.min(100, hp))));
+  }
+  if (typeof cfg.getTeam === 'function') {
+    const t = cfg.getTeam();
+    if (t) params.team = String(t);
+  }
+  return params;
+}
+
 // Start portal: sends the player BACK to the game they came from.
 // Only active if the player arrived via ?portal=true&ref=<host>.
+// Forwards ALL original query params (the user's continuity) plus our
+// hostname as the new ref so the destination can bounce back here.
 function checkStartPortal() {
   if (!arrivedViaPortal || !startPortal) return;
   // Activation delay — so players aren't instantly bounced on spawn.
@@ -141,20 +184,35 @@ function checkStartPortal() {
   if (dist > 50) return;
   if (!playerBox.intersectsBox(startPortal.box)) return;
 
-  const params = new URLSearchParams(window.location.search);
-  const refUrl = params.get('ref');
+  const refUrl = ORIGINAL_PARAMS.get('ref');
   if (!refUrl) return;
 
   let url = refUrl;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  // Pass everything else back (minus ref, since it's now the base URL)
-  params.delete('ref');
+
+  // Start from the original incoming params so the user's username/color/etc
+  // are preserved. Then overlay our updated state and set ref=us so the
+  // destination can send the player back here.
+  const params = new URLSearchParams(ORIGINAL_PARAMS.toString());
+  params.delete('ref'); // ref goes in the base URL, not in query string
+
+  // Overlay live player state (our updated values take precedence over
+  // whatever was in the original params for these keys).
+  const live = getPlayerParams();
+  for (const [k, v] of Object.entries(live)) params.set(k, v);
+
+  // portal=true must be present so the destination knows to auto-start.
+  params.set('portal', 'true');
+  // Tell the destination how to bounce back to us.
+  params.set('ref', window.location.hostname);
+
   const s = params.toString();
   window.location.href = url + (s ? '?' + s : '');
 }
 
 // Exit portal: sends the player to vibej.am/portal/2026, which picks
 // a random 2026 game with a working portal and 302s them there.
+// Forwards player state and all original incoming params for continuity.
 function checkExitPortal() {
   if (!exitPortal) return;
 
@@ -169,26 +227,36 @@ function checkExitPortal() {
   if (!playerBox.intersectsBox(exitPortal.box)) return;
 
   // Build forwarded params.
-  // IMPORTANT: start from current URL params and use .set() so you don't
-  // accidentally produce duplicates like ?username=you&username=other.
-  const params = new URLSearchParams(window.location.search);
+  // IMPORTANT: start from ORIGINAL incoming params (not current URL, which
+  // hasn't changed) so we preserve the player's upstream continuity.
+  // Use .set() so you don't accidentally produce duplicates.
+  const params = new URLSearchParams(ORIGINAL_PARAMS.toString());
+
   params.set('portal', 'true');
   // This game is the new source — overwrite ref with our hostname
   params.set('ref', window.location.hostname);
 
-  // Optional player state — only set if your game defines them.
-  // Replace these with your own variable names.
-  if (typeof selfUsername !== 'undefined') params.set('username', String(selfUsername));
-  if (typeof currentSpeed !== 'undefined') params.set('speed', String(currentSpeed));
-  // Other supported keys (all optional):
-  //   color, avatar_url, team, hp,
-  //   speed_x, speed_y, speed_z,
-  //   rotation_x, rotation_y, rotation_z
+  // Overlay live player state from our game (username, color, speed, etc.)
+  const live = getPlayerParams();
+  for (const [k, v] of Object.entries(live)) params.set(k, v);
 
   window.location.href = 'https://vibej.am/portal/2026?' + params.toString();
 }
 
 // ── Public API ─────────────────────────────────────────────────
+//
+// Options:
+//   scene        — THREE.Scene or Group to add portals to (required)
+//   getPlayer    — () => THREE.Object3D | null  (required, the player mesh/group)
+//   spawnPoint   — { x, y, z }  position for the return (red) portal
+//   exitPosition — { x, y, z }  position for the exit (green) portal
+//   exitLabel    — string label above the exit portal (default 'VIBE JAM PORTAL')
+//   getUsername  — () => string   player's display name
+//   getColor     — () => number|string  faction color (THREE hex int or CSS string)
+//   getSpeed     — () => number   player speed in m/s
+//   getHp        — () => number   player HP 0-100
+//   getTeam      — () => string   team / faction name
+//
 export function initVibeJamPortals(options) {
   cfg = Object.assign({
     spawnPoint:   { x: 0, y: 0, z: 0 },
