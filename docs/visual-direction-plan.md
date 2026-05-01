@@ -1034,3 +1034,138 @@ _F panel live mockup → `tools/companion/visual-direction.html` (panel id `scen
 _F's FX dispatch → `tools/companion/visual-direction.js` `DIRECTIONS.F` config + `_buildWaterAndIsland()` cylinder branch + `_buildLeaderboardGhost()` HUD ghosts._
 _Status: 🟢 Mockup ready. Awaiting Director feedback on §19.6 questions before considering a game-side port._
 
+
+---
+
+## 20. Land Capture — Title-Screen Concepts (Round 1)
+
+> **Status:** 🟡 Mockup ready, awaiting Director pick (or hybrid). 5 designs delivered, 4 posters delivered. Companion page: `tools/companion/title-screens.html`.
+
+**Why this round.** Director request (verbatim, 2026-04-30): *"design a nice entrance page to the game, not just the white simple page we have now with user name + Solo / Online. I want a new page in the companion with about 5 web pages designs. the game is called Land Capture - generate a title and maybe add at the bottom a threeJS animation of an island and the water effect we just added? Generate some action-movie type posters using runcomfy and the characters and colors of the game."*
+
+The current entry screen at `prototype/index.html#name-entry` is a flat white card with the heading "Territory War", a 16-char name input, and two unstyled buttons (green Solo / blue Online). The game has been rebranded **Land Capture**; this round delivers five entrance-screen design directions plus four action-movie poster studies for Director review.
+
+**Constraint respected.** Mockup-only round. Zero changes to `prototype/`. New files live exclusively in `tools/companion/` and `docs/visual-direction-mockups/title-screens/`.
+
+### 20.1 — Five title-screen designs
+
+All five designs share the same primitive set so they compare apples to apples:
+
+- 16-char name input
+- "Solo" button (green/yellow per design)
+- "Online" button (blue/black per design)
+- "Land Capture" title (in-direction typography)
+- Some form of supporting tagline
+
+What varies is **everything else** — background, typography, palette source, layout, and animation cost.
+
+| # | Design | Background | Title font / size | Live? | Perf est. |
+|---|--------|-----------|-------------------|-------|-----------|
+| 1 | **Cinematic Poster** | Pre-rendered Theme F overview, vignetted, faction-stripe edges | Bebas Neue 124px, 6px tracking, white knockout | No | ~0.0 ms/frame |
+| 2 | **Live Atoll** | Live Three.js: Vanta water shader + cylinder island + cube character + 3 atolls + sky gradient | Lilita One 96px on cream "driftwood" card | **Yes** | ~0.5 ms/frame |
+| 3 | **Faction Stripes** | Five vertical color stripes (Red/Blue/Green/Yellow/Purple) + bottom shadow gradient | Bowlby One SC 132px, 8px tracking, white knockout | **Yes** (5 cube chars on a shared canvas) | ~0.3 ms/frame |
+| 4 | **Voxel Block Type** | Theme F sky gradient + procedural voxel-block letters in faction colors | Procedural — title IS the geometry (~330 BoxGeometry instances) | **Yes** | ~0.7 ms/frame |
+| 5 | **Minimal Arcade** | Cream paper + flat SVG island silhouette w/ 5 mini cube characters | Lilita One 168px, deep-brown ink, -2px tracking | No | ~0.0 ms/frame |
+
+Three of five include a live ThreeJS scene as the Director requested. The two static designs (Cinematic Poster, Minimal Arcade) are the lowest-cost-and-easiest-to-ship; the live ones are the most "this is what you'll get."
+
+### 20.2 — Per-design specs
+
+#### Design 1 — Cinematic Poster
+
+- **Background**: Theme F overview screenshot, brightness ×0.78, vignetted (radial gradient corners → black). Faction-stripe hairlines (6px) at top and bottom.
+- **Typography**: Bebas Neue 124px, white with 4px black drop-shadow stroke. Subtitle: Space Mono 18px, peach `#ffd29c`, 4px tracking.
+- **Palette source**: Theme F game palette + faction key. Yellow Solo button + blue Online button match in-game wooden-stamp banners.
+- **Layout**: Title + subtitle upper third, name input + buttons centered. Faction stripes top and bottom anchor the eye to the brand.
+- **Perf**: Static — single CSS background-image, no canvas, ~0.0ms/frame.
+- **When to ship this**: if the Director wants maximum drama at zero engineering cost. Drops in as a single CSS file on top of the existing `#name-entry` div.
+
+#### Design 2 — Live Atoll · ThreeJS background
+
+- **Background**: Live ThreeJS canvas reusing the EXACT Vanta water shader from `prototype/main.js` (vertex + fragment ported 1:1, MIT-attributed). Flat cylinder island (sand sides + grass top + dark base, multi-material), 6 cliff rocks scattered on the rim, 3 distant atolls fading into fog. Sky gradient (peach top → pale-teal bottom). Hero cube character standing on the island rim, idle-bobbing, cycling through faction colors every 4 seconds.
+- **Typography**: Lilita One 96px (matches Theme F banner exactly). Subtitle Fredoka 17px. Both in `#5a3a20` (sailor-card warm brown).
+- **Palette source**: Theme F notification palette (cream `#fff6e8`, warm-brown text `#5a3a20`, faction-color buttons). The cream card extends Theme F's notification system to the entry screen so the brand reads instantly.
+- **Layout**: Cream "driftwood" card centered horizontally, slightly above center vertically. The character is positioned to the LEFT of the card so it peeks out and signals "this is gameplay."
+- **Perf**: ~0.5 ms/frame on a typical laptop iGPU. Water shader alone is ~0.3ms (measured in the Theme F game ship). Plus character idle bob + 3 atolls + 6 cliff rocks. Capped at 60fps.
+- **When to ship this**: if the Director wants the entrance to feel cinematic AND continuous with gameplay (the same water you'll see in-game animates behind the menu). Highest fidelity to the request.
+
+#### Design 3 — Faction Stripes
+
+- **Background**: Five equal vertical stripes in the exact game faction colors. Bottom 50% has a subtle gradient (transparent → black 35%) to ground the eye and add depth. A small ThreeJS canvas overlays the bottom of the stripes hosting five rotating cube characters (one per faction stripe) with sailor caps.
+- **Typography**: Bowlby One SC 132px (a chunky SC-only display face), 8px tracking, knockout white with heavy 4px black drop-shadow. Subtitle Fredoka Bold 18px, white with 2px black shadow.
+- **Palette source**: Faction palette IS the design. Title white is the only neutral. Button: white "SOLO" + black "ONLINE" with a 3px white border for high contrast against any stripe.
+- **Layout**: Title spans all five stripes (the white knockout reads cleanly against any color). Form is centered in the lower-mid area, above the rotating chars.
+- **Perf**: ~0.3 ms/frame — five small cubes orbiting on a single shared canvas, no shaders, no shadows, transparent bg.
+- **When to ship this**: if the Director wants the strongest brand statement — "this is the faction war game." Reads from across the room. Fits the "blocky" north-star (Crossy Road, Paper.io 2). Carries the strongest faction-identity message.
+
+#### Design 4 — Voxel Block Type
+
+- **Background**: Sky gradient (peach `#FFD9AA` top → pale teal `#88B8D0` bottom) matching Theme F's sky.
+- **Typography**: PROCEDURAL. The title IS the geometry. Each letter is a 5×7 voxel grid extruded to depth 2, ~330 BoxGeometry instances total ("LAND CAPTURE" = 11 letters × ~30 cubes/letter on average). Each letter is colored with a different faction color (rotation through the palette). Letters wobble subtly (sin-wave on Y rotation + Y position) so the type breathes.
+- **Palette source**: Theme F sky + game faction palette literally on the title. Cream input + dark borders match the in-game wooden-stamp HUD.
+- **Layout**: Title fills upper 70% of frame. Lower 28% has a cream gradient backdrop so the form panel reads cleanly without fighting the voxel letters.
+- **Perf**: ~0.7 ms/frame. With InstancedMesh (one geometry, per-instance transforms) draw calls drop to 1 per material; without instancing it's ~330 draw calls but still under 1ms on integrated graphics.
+- **When to ship this**: if the Director wants the most "authored, this game has personality" entrance. Maximum expression of the BoxGeometry-only ART_ETHOS principle. Most expensive of the five but still under budget.
+
+#### Design 5 — Minimal Arcade
+
+- **Background**: Cream paper `#f6efde` (matches Theme F notification card). SVG island silhouette across the bottom 32%: flat-color faceted waves (two layers, the back layer 50% opacity for depth), sand cylinder with grass strip, 5 cliff rocks, 5 faction-colored cube characters with sailor caps lined up across the rim, 2 distant atolls on the horizon faded.
+- **Typography**: Lilita One 168px (matches Theme F banner exactly), -2px tracking, deep-brown ink `#1a0f08`. Subtitle Fredoka Bold 18px, 8px tracking, warm-brown.
+- **Palette source**: Theme F notification card + deep-brown ink + faction-color cube chars. Buttons echo the in-game wooden-stamp banner: yellow Solo + black Online with 3px black borders and 5px hard-shadow offset (arcade-button feel).
+- **Layout**: Title + subtitle upper-half. Form centered. Island silhouette anchors the bottom edge — the player can see at a glance "this is the world I'll play in."
+- **Perf**: ~0.0 ms/frame — pure SVG, no canvas, no shaders.
+- **When to ship this**: if the Director wants the entrance to be readable, accessible, mobile-friendly, and lowest-cost. Highest contrast of the five. The most "indie-arcade-cabinet" vibe.
+
+### 20.3 — Action-movie posters
+
+Four poster studies, each 1200×1500 (4:5 poster ratio), saved under `docs/visual-direction-mockups/title-screens/posters/`:
+
+| File | Title / Tagline | Visual hook |
+|------|----------------|-------------|
+| `poster_a_five_factions.png` | **LAND CAPTURE — Five Factions. One Island.** | Theme F overview wide shot, vignetted, cinema-color graded; faction-color hairline stripes top/bot; black slab tagline + 5-square faction key in the lower third. |
+| `poster_b_dominate_the_tide.png` | **DOMINATE THE TIDE — Land Capture** | Hero shot of a green character on the cylinder rim, teal+orange split-tone, diagonal green faction slash bar. Sequel-poster framing. |
+| `poster_c_last_one_standing.png` | **LAND CAPTURE — LAST ONE STANDING** | Lone-survivor framing, near-monochrome desaturated grade, blue faction slash up the left side. Horror-film tension. |
+| `poster_d_paint_the_world.png` | **LAND CAPTURE — PAINT THE WORLD** | Color-explosion starburst (alternating faction colors), inner cream disc with the title and 5 voxel-cube-with-sailor-cap avatars. Pure brand. |
+
+**Generation note.** The Director's request mentioned "runcomfy." `RUNCOMFY_TOKEN` was not set in `jen/.env` and the local ComfyUI on port 8000 was not reachable from this WSL session, so the AI-gen path was unavailable. Fallback path used: PIL composition of the existing Theme F game screenshots with vignettes, cinema color grades, faction-stripe motifs, and procedural typography. This produces ON-BRAND posters built from in-game art, which is arguably stronger for the brief than off-brand AI-gen anyway. If the Director wants AI-generated alternatives, set `RUNCOMFY_TOKEN` in `jen/.env` and re-run the pipeline (`jen/tools/artgen/`).
+
+Generator script: `jen/scripts/generate_title_posters.py`. Re-run anytime via `python3 jen/scripts/generate_title_posters.py` from the repo root.
+
+### 20.4 — Recommendation
+
+Jen's recommendation, in order of preference:
+
+1. **Design 2 (Live Atoll)** — best matches the Director's explicit request ("threeJS animation of an island and the water effect we just added"), highest fidelity to in-game look, ~0.5ms/frame is well under budget. The cream card on top is a small cost vs the brand continuity it earns.
+2. **Design 5 (Minimal Arcade)** — highest readability, mobile-friendly, lowest cost. Best fallback if the live scene causes any compatibility issues. Could also be the LOADING state that swaps to Design 2 once the WebGL is ready.
+3. **Design 4 (Voxel Block Type)** — strongest brand statement that's also the most "authored" feel. Aligns hardest with the BoxGeometry-only ART_ETHOS. Most expensive but still well under budget.
+
+If the Director wants a hybrid: **Design 2's live-atoll background + Design 5's huge Lilita One title + Design 4's faction-color cube avatars ON the island rim** would be a strong synthesis. (Adds ~0.1ms over Design 2 alone.)
+
+### 20.5 — Verification
+
+All taken at `http://127.0.0.1:7893/tools/companion/title-screens.html` with viewport 1440×900:
+
+- `docs/visual-direction-mockups/title-screens/screens/r1-fullpage.png` — full page with all 5 designs + posters strip
+- `docs/visual-direction-mockups/title-screens/screens/r1-design-1-cinematic.png` — Design 1 alone, 1280×720 mock
+- `docs/visual-direction-mockups/title-screens/screens/r1-design-2-atoll.png` — Design 2 alone (live water visible, sand cylinder visible right of card)
+- `docs/visual-direction-mockups/title-screens/screens/r1-design-3-stripes.png` — Design 3 alone (5 cube characters with sailor caps on each stripe)
+- `docs/visual-direction-mockups/title-screens/screens/r1-design-4-voxel.png` — Design 4 alone (LAND CAPTURE in voxel cubes, faction-color rotation)
+- `docs/visual-direction-mockups/title-screens/screens/r1-design-5-arcade.png` — Design 5 alone (cream paper, big bold title, SVG island)
+
+Console: 0 errors, 0 warnings (only the cosmetic favicon 404). All three live ThreeJS scenes render cleanly.
+
+### 20.6 — Open questions for Director
+
+1. **Design pick (or hybrid).** Pick a primary direction; Jen will then port it to `prototype/index.html` + a small CSS file.
+2. **Real water shader vs simplified.** Design 2 reuses the full Vanta shader from `main.js`. On low-end mobile the shader may be more than the entry screen needs. Should Jen prepare a "Design 2 mobile fallback" using a static gradient?
+3. **Animation lock vs polish loop.** When porting the chosen design, should the screen auto-fade to gameplay after a name is entered (smooth transition) or hard-cut (current behavior)? Recommend smooth fade — adds ~10 lines of CSS, sells the entrance.
+4. **AI-generated posters.** Should Jen retry the poster generation via RunComfy once a token is provided, or are the PIL-composed posters acceptable as-is? They're built from the actual game art so they're more "honest" than AI-gen would be.
+5. **Tagline lock.** The 5 designs use 4 different taglines: "FIVE FACTIONS · ONE ISLAND" (Designs 1, 4, 5), "Claim territory. Hold the line. Dominate." (Design 2), "CLAIM · HOLD · DOMINATE" (Design 3). Pick a primary; Jen will lock it across the chosen design.
+
+---
+
+_Title-screens live mockup → `tools/companion/title-screens.html`._
+_Logic + ThreeJS scenes → `tools/companion/title-screens.js`._
+_Posters → `docs/visual-direction-mockups/title-screens/posters/`._
+_Poster generator → `jen/scripts/generate_title_posters.py`._
+_Status: 🟡 Mockup ready. Awaiting Director pick before any `prototype/` port._

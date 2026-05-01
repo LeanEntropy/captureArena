@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Land Capture — Title Screen Concepts | my-game Companion</title>
+  <link rel="stylesheet" href="shared/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Bowlby+One+SC&family=Fredoka:wght@500;700&family=Lilita+One&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Page layout ───────────────────────────────────────────── */
+    .ts-intro {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .ts-intro h2 { color: #ffd700; margin-bottom: 8px; font-size: 18px; }
+    .ts-intro p { color: #c8c8d8; font-size: 14px; line-height: 1.5; }
+    .ts-intro p + p { margin-top: 8px; }
+    .ts-intro code {
+      background: #0a0f1f;
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: #e94560;
+      font-size: 13px;
+    }
+
+    /* Each design = a 16:9 mock at 1280x720, scaled responsively. */
+    .ts-design {
+      margin-bottom: 48px;
+    }
+    .ts-design h3 {
+      color: #ffd700;
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    .ts-design .ts-tagline {
+      color: #8888aa;
+      font-style: italic;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .ts-screen {
+      position: relative;
+      width: 100%;
+      max-width: 1280px;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    }
+    .ts-spec {
+      margin-top: 12px;
+      padding: 16px 20px;
+      background: #16213e;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #c8c8d8;
+      line-height: 1.55;
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 6px 20px;
+    }
+    .ts-spec dt { color: #ffd700; font-weight: 600; }
+    .ts-spec dd { margin: 0; }
+    .ts-perf {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 4px;
+      font-family: "Space Mono", monospace;
+      font-size: 11px;
+      background: #0a0f1f;
+      color: #6dd66f;
+      border: 1px solid #1c4e3a;
+    }
+    .ts-perf.warn { color: #e8b76d; border-color: #5a4220; }
+
+    /* ── Posters strip ───────────────────────────────────────── */
+    .ts-posters {
+      margin-top: 32px;
+    }
+    .poster-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .poster-card {
+      background: #0a0f1f;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #0f3460;
+      cursor: zoom-in;
+      transition: transform 0.18s ease;
+    }
+    .poster-card:hover { transform: translateY(-3px); }
+    .poster-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .poster-card .poster-meta {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #c8c8d8;
+    }
+    .poster-card .poster-meta strong { color: #ffd700; }
+    .poster-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      cursor: zoom-out;
+      padding: 32px;
+    }
+    .poster-modal.open { display: flex; }
+    .poster-modal img { max-width: 100%; max-height: 100%; }
+
+    /* ── Title screen mock content ──────────────────────────────
+       All five mocks share these primitives so the Director can
+       compare apples to apples. */
+    .mock-form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .mock-form input {
+      font-size: 18px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      outline: none;
+      text-align: center;
+      width: 280px;
+      pointer-events: auto;
+    }
+    .mock-form .btn-row {
+      display: flex;
+      gap: 12px;
+    }
+    .mock-form button {
+      font-size: 16px;
+      font-weight: 700;
+      padding: 12px 28px;
+      border-radius: 8px;
+      cursor: pointer;
+      pointer-events: auto;
+      border: none;
+      transition: transform 0.1s ease;
+    }
+    .mock-form button:active { transform: scale(0.96); }
+
+    .mock-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .mock-overlay > * { pointer-events: auto; }
+
+    .threejs-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Per-design typography ─────────────────────────────────
+       Each design overrides title font/size/color/effects so the
+       contrast between them is visible at a glance. */
+
+    /* Design 1 — Cinematic Poster */
+    .design-1 .ts-bg {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      filter: brightness(0.78) saturate(1.05);
+    }
+    .design-1 .ts-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.85) 100%);
+    }
+    .design-1 .ts-stripe {
+      position: absolute;
+      left: 0; right: 0;
+      height: 6px;
+      display: flex;
+    }
+    .design-1 .ts-stripe div { flex: 1 1 0; }
+    .design-1 .ts-stripe.top { top: 0; }
+    .design-1 .ts-stripe.bot { bottom: 0; }
+    .design-1 .ts-title {
+      font-family: "Bebas Neue", "Lilita One", sans-serif;
+      font-size: clamp(48px, 9vw, 124px);
+      letter-spacing: 6px;
+      color: #fff;
+      text-shadow:
+        0 0 12px rgba(0,0,0,0.9),
+        4px 4px 0 #1a0f08,
+        -2px -2px 0 #1a0f08;
+      margin-bottom: 4px;
+    }
+    .design-1 .ts-sub {
+      font-family: "Space Mono", monospace;
+      font-size: clamp(12px, 1.4vw, 18px);
+      color: #ffd29c;
+      letter-spacing: 4px;
+      margin-bottom: clamp(16px, 3vw, 32px);
+    }
+    .design-1 .mock-form input {
+      background: rgba(255,255,255,0.95);
+      border: 2px solid #1a0f08;
+      color: #1a0f08;
+    }
+    .design-1 .btn-solo {
+      background: #FFCF2A;
+      color: #1a0f08;
+      box-shadow: inset 0 -4px 0 rgba(0,0,0,0.25), 0 3px 0 #1a0f08;
+    }
+    .design-1 .btn-online {
+      background: #3D6CD0;
+      color: #fff;
+      box-shadow: inset 0 -4px 0 rgba(0,0,0,0.25), 0 3px 0 #1a0f08;
+    }
+
+    /* Design 2 — Live Atoll (ThreeJS bg) */
+    .design-2 .ts-card {
+      background: rgba(255, 246, 232, 0.92);
+      border: 2px solid #d4a370;
+      border-radius: 12px;
+      padding: 28px 36px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    .design-2 .ts-title {
+      font-family: "Lilita One", sans-serif;
+      font-size: clamp(48px, 8vw, 96px);
+      color: #5a3a20;
+      text-align: center;
+      letter-spacing: 2px;
+      line-height: 0.95;
+      margin-bottom: 4px;
+    }
+    .design-2 .ts-sub {
+      font-family: "Fredoka", sans-serif;
+      font-size: clamp(13px, 1.4vw, 17px);
+      color: #8a6240;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .design-2 .mock-form input {
+      background: #fff;
+      border: 2px solid #d4a370;
+      color: #5a3a20;
+    }
+    .design-2 .btn-solo {
+      background: #52B856;
+      color: #fff;
+      border: 2px solid #2a6c2c;
+    }
+    .design-2 .btn-online {
+      background: #3D6CD0;
+      color: #fff;
+      border: 2px solid #1a3870;
+    }
+
+    /* Design 3 — Faction Stripes */
+    .design-3 .ts-stripes {
+      position: absolute;
+      inset: 0;
+      display: flex;
+    }
+    .design-3 .ts-stripes > div {
+      flex: 1 1 0;
+      position: relative;
+      transition: flex 0.3s ease;
+    }
+    .design-3 .ts-stripes > div::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, transparent 0%, transparent 50%, rgba(0,0,0,0.35) 100%);
+    }
+    .design-3 .ts-title {
+      font-family: "Bowlby One SC", "Lilita One", sans-serif;
+      font-size: clamp(48px, 9vw, 132px);
+      color: #fff;
+      letter-spacing: 8px;
+      text-shadow: 4px 4px 0 #000, -2px -2px 0 #000, 0 0 24px rgba(0,0,0,0.5);
+      mix-blend-mode: normal;
+      line-height: 0.92;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .design-3 .ts-sub {
+      font-family: "Fredoka", sans-serif;
+      font-weight: 700;
+      font-size: clamp(13px, 1.4vw, 18px);
+      color: #fff;
+      letter-spacing: 5px;
+      margin-bottom: clamp(20px, 3vw, 36px);
+      text-shadow: 2px 2px 0 #000;
+    }
+    .design-3 .mock-form input {
+      background: rgba(0, 0, 0, 0.78);
+      border: 3px solid #fff;
+      color: #fff;
+      font-weight: 700;
+    }
+    .design-3 .mock-form input::placeholder { color: rgba(255,255,255,0.6); }
+    .design-3 .btn-solo {
+      background: #fff;
+      color: #1a0f08;
+      border: 3px solid #1a0f08;
+    }
+    .design-3 .btn-online {
+      background: #1a0f08;
+      color: #fff;
+      border: 3px solid #fff;
+    }
+
+    /* Design 4 — Voxel Block Type */
+    .design-4 .ts-bg {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, #FFD9AA 0%, #FFB888 35%, #88B8D0 75%, #5093d0 100%);
+    }
+    .design-4 .voxel-canvas {
+      position: absolute;
+      inset: 0;
+    }
+    .design-4 .ts-sub {
+      font-family: "Space Mono", monospace;
+      font-size: clamp(12px, 1.3vw, 16px);
+      color: #1a0f08;
+      letter-spacing: 6px;
+      text-align: center;
+      margin: -12px 0 16px 0;
+      background: rgba(255, 246, 232, 0.7);
+      padding: 4px 14px;
+      border-radius: 4px;
+    }
+    .design-4 .ts-form-bg {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 28%;
+      background: linear-gradient(to top, rgba(255, 246, 232, 0.95) 30%, rgba(255, 246, 232, 0));
+      pointer-events: none;
+    }
+    .design-4 .mock-form input {
+      background: #fff;
+      border: 3px solid #1a0f08;
+      color: #1a0f08;
+      box-shadow: 0 3px 0 #1a0f08;
+    }
+    .design-4 .btn-solo {
+      background: #52B856;
+      color: #fff;
+      border: 3px solid #1a0f08;
+      box-shadow: 0 4px 0 #1a0f08;
+    }
+    .design-4 .btn-online {
+      background: #3D6CD0;
+      color: #fff;
+      border: 3px solid #1a0f08;
+      box-shadow: 0 4px 0 #1a0f08;
+    }
+
+    /* Design 5 — Minimal Arcade */
+    .design-5 .ts-bg {
+      position: absolute;
+      inset: 0;
+      background: #f6efde;
+    }
+    .design-5 .ts-island-svg {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 32%;
+    }
+    .design-5 .ts-title {
+      font-family: "Lilita One", sans-serif;
+      font-size: clamp(48px, 12vw, 168px);
+      color: #1a0f08;
+      letter-spacing: -2px;
+      line-height: 0.85;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+    .design-5 .ts-sub {
+      font-family: "Fredoka", sans-serif;
+      font-weight: 700;
+      font-size: clamp(13px, 1.4vw, 18px);
+      color: #5a3a20;
+      letter-spacing: 8px;
+      margin-bottom: clamp(20px, 3vw, 32px);
+      text-align: center;
+    }
+    .design-5 .mock-form input {
+      background: #fff;
+      border: 3px solid #1a0f08;
+      color: #1a0f08;
+      box-shadow: 0 4px 0 #1a0f08;
+    }
+    .design-5 .btn-solo {
+      font-family: "Lilita One", sans-serif;
+      background: #FFCF2A;
+      color: #1a0f08;
+      border: 3px solid #1a0f08;
+      letter-spacing: 1px;
+      box-shadow: 0 5px 0 #1a0f08;
+    }
+    .design-5 .btn-online {
+      font-family: "Lilita One", sans-serif;
+      background: #1a0f08;
+      color: #FFCF2A;
+      border: 3px solid #1a0f08;
+      letter-spacing: 1px;
+      box-shadow: 0 5px 0 #1a0f08;
+    }
+
+    /* ── Byline ("A game by Civax") ──────────────────────────
+       Each design overrides position + color to fit its layout. */
+    .ts-byline {
+      font-size: clamp(11px, 1.05vw, 14px);
+      letter-spacing: 0.5px;
+    }
+    .ts-byline a {
+      color: #1DA1F2;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .ts-byline a:hover { text-decoration: underline; }
+
+    /* Design 1 — small bottom-right corner text, sits over the vignette */
+    .design-1 .ts-byline {
+      position: absolute;
+      right: 18px;
+      bottom: 16px;
+      color: #c8c8d8;
+      font-family: "Space Mono", monospace;
+      letter-spacing: 1.5px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.85);
+    }
+
+    /* Design 2 — inside the cream card, beneath the buttons */
+    .design-2 .ts-byline {
+      margin-top: 16px;
+      color: #8a6240;
+      font-family: "Fredoka", sans-serif;
+      text-align: center;
+    }
+
+    /* Design 3 — below the form, white on whichever stripe it lands over */
+    .design-3 .ts-byline {
+      margin-top: clamp(20px, 3vw, 36px);
+      color: #fff;
+      font-family: "Fredoka", sans-serif;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-shadow: 2px 2px 0 #000;
+    }
+
+    /* Design 4 — over the cream form-bg gradient, dark ink */
+    .design-4 .ts-byline {
+      margin-top: 14px;
+      color: #1a0f08;
+      font-family: "Space Mono", monospace;
+      letter-spacing: 1.5px;
+    }
+
+    /* Design 5 — generous breathing room beneath the form */
+    .design-5 .ts-byline {
+      margin-top: clamp(18px, 2.5vw, 28px);
+      color: #5a3a20;
+      font-family: "Fredoka", sans-serif;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-align: center;
+    }
+
+    /* "live" badge */
+    .live-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: rgba(231, 74, 63, 0.92);
+      color: #fff;
+      font-family: "Space Mono", monospace;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      letter-spacing: 1px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .live-badge::before {
+      content: "● ";
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <nav id="topnav">
+    <a href="index.html" class="nav-brand">my-game</a>
+    <div class="nav-links"></div>
+  </nav>
+
+  <main class="container">
+    <h1>Land Capture — Title Screen Concepts</h1>
+    <p class="subtitle">Five title-screen design directions for Director review. Each is a full 16:9 mock with the actual name/buttons primitives the game uses today, styled in-direction.</p>
+
+    <section class="ts-intro">
+      <h2>Brief</h2>
+      <p>Game is now branded <strong>"Land Capture"</strong>. The current entry screen is a flat-white card with the heading "Territory War" and two unstyled buttons — the Director wants something dramatic, with action-movie energy and (where possible) a live ThreeJS scene of the island + Vanta-style water already shipped in <code>prototype/main.js</code>.</p>
+      <p>Each mock below is a working design preview, not a thumbnail. Designs <strong>2</strong> and <strong>4</strong> include live ThreeJS canvases reusing the in-game water shader; the rest are CSS/SVG-only. Buttons are non-functional here — these are direction studies.</p>
+      <p>Mockup work only. No <code>prototype/</code> code is touched. <code>tools/companion/</code> + <code>docs/</code> only.</p>
+    </section>
+
+    <!-- ────────────────── Design 1 — Cinematic Poster ────────────────── -->
+    <section class="ts-design design-1" id="design-1">
+      <h3>1 · Cinematic Poster</h3>
+      <p class="ts-tagline">Static action-movie poster as the entire screen. Maximum drama, zero animation cost.</p>
+      <div class="ts-screen">
+        <div class="ts-bg" style="background-image:url('posters/poster_a_five_factions.png');"></div>
+        <div class="ts-vignette"></div>
+        <div class="ts-stripe top"><div style="background:#E74A3F;"></div><div style="background:#3D6CD0;"></div><div style="background:#52B856;"></div><div style="background:#FFCF2A;"></div><div style="background:#A94BBE;"></div></div>
+        <div class="ts-stripe bot"><div style="background:#E74A3F;"></div><div style="background:#3D6CD0;"></div><div style="background:#52B856;"></div><div style="background:#FFCF2A;"></div><div style="background:#A94BBE;"></div></div>
+        <div class="mock-overlay">
+          <div class="ts-title">LAND CAPTURE</div>
+          <div class="ts-sub">FIVE FACTIONS · ONE ISLAND</div>
+          <div class="mock-form">
+            <input type="text" placeholder="Enter your name" maxlength="16" />
+            <div class="btn-row">
+              <button class="btn-solo">SOLO</button>
+              <button class="btn-online">ONLINE</button>
+            </div>
+          </div>
+        </div>
+        <div class="ts-byline">A game by <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">Civax</a></div>
+      </div>
+      <dl class="ts-spec">
+        <dt>Background</dt><dd>Pre-rendered poster (Theme F overview) with vignette + faction-color hairline strips top &amp; bottom.</dd>
+        <dt>Typography</dt><dd>Bebas Neue 124px, 6px tracking, white with black 4px shadow stroke. Subtitle: Space Mono 18px, peach.</dd>
+        <dt>Palette</dt><dd>Faction stripes (5 colors). Title white. CTA: yellow Solo + blue Online (matches in-game banners).</dd>
+        <dt>Layout</dt><dd>Title + tagline upper third, name input + buttons centered.</dd>
+        <dt>Perf</dt><dd><span class="ts-perf">~0.0 ms/frame</span> static — single background-image, no canvas.</dd>
+      </dl>
+    </section>
+
+    <!-- ────────────────── Design 2 — Live Atoll ────────────────── -->
+    <section class="ts-design design-2" id="design-2">
+      <h3>2 · Live Atoll · ThreeJS background</h3>
+      <p class="ts-tagline">The actual game's water + island playing as the background. Highest fidelity to "what you'll get" — and the Director's request.</p>
+      <div class="ts-screen">
+        <canvas class="threejs-canvas" id="atoll-canvas"></canvas>
+        <div class="live-badge">LIVE THREE.JS</div>
+        <div class="mock-overlay">
+          <div class="ts-card">
+            <div class="ts-title">Land Capture</div>
+            <div class="ts-sub">Claim territory. Hold the line. Dominate.</div>
+            <div class="mock-form">
+              <input type="text" placeholder="Enter your name" maxlength="16" />
+              <div class="btn-row">
+                <button class="btn-solo">Solo</button>
+                <button class="btn-online">Online</button>
+              </div>
+            </div>
+            <div class="ts-byline">A game by <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">Civax</a></div>
+          </div>
+        </div>
+      </div>
+      <dl class="ts-spec">
+        <dt>Background</dt><dd>Vanta-style faceted water shader (ported 1:1 from <code>prototype/main.js</code>) + flat cylinder island + sailor-cap cube character idle on the rim + 3 distant atolls + sky gradient + fog.</dd>
+        <dt>Typography</dt><dd>Lilita One 96px (matches Theme F banner). Subtitle Fredoka 17px. Both in <code>#5a3a20</code> (sailor-card warm brown).</dd>
+        <dt>Palette</dt><dd>Cream notification card + warm-brown text — Theme F's notification system extended to the entry screen so the brand reads instantly.</dd>
+        <dt>Layout</dt><dd>Cream "driftwood" card centered over the live scene. Card never overlaps the cube character (camera framed so character sits to the right).</dd>
+        <dt>Perf</dt><dd><span class="ts-perf">~0.5 ms/frame</span> on a typical laptop iGPU — water shader alone is ~0.3ms (measured), plus character bob + 3 atolls. Cap at 60fps.</dd>
+      </dl>
+    </section>
+
+    <!-- ────────────────── Design 3 — Faction Stripes ────────────────── -->
+    <section class="ts-design design-3" id="design-3">
+      <h3>3 · Faction Stripes</h3>
+      <p class="ts-tagline">Five vertical color stripes — instant brand recognition. The whole game in one frame.</p>
+      <div class="ts-screen">
+        <div class="ts-stripes">
+          <div style="background:#E74A3F;"></div>
+          <div style="background:#3D6CD0;"></div>
+          <div style="background:#52B856;"></div>
+          <div style="background:#FFCF2A;"></div>
+          <div style="background:#A94BBE;"></div>
+        </div>
+        <canvas class="threejs-canvas" id="stripes-canvas"></canvas>
+        <div class="live-badge">LIVE THREE.JS</div>
+        <div class="mock-overlay">
+          <div class="ts-title">LAND<br/>CAPTURE</div>
+          <div class="ts-sub">CLAIM · HOLD · DOMINATE</div>
+          <div class="mock-form">
+            <input type="text" placeholder="ENTER NAME" maxlength="16" />
+            <div class="btn-row">
+              <button class="btn-solo">SOLO</button>
+              <button class="btn-online">ONLINE</button>
+            </div>
+          </div>
+          <div class="ts-byline">A GAME BY <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a></div>
+        </div>
+      </div>
+      <dl class="ts-spec">
+        <dt>Background</dt><dd>Five equal vertical stripes in the exact game faction colors. Subtle bottom gradient adds depth. One small ThreeJS canvas tiles five rotating cube characters across the stripes (one per faction).</dd>
+        <dt>Typography</dt><dd>Bowlby One SC 132px, 8px tracking, white with heavy black drop-shadow stamp. Subtitle Fredoka Bold 18px, 5px tracking.</dd>
+        <dt>Palette</dt><dd>Faction palette IS the design. Title is the only neutral.</dd>
+        <dt>Layout</dt><dd>Title spans all five stripes (mix-blend reads consistently against any color). Form centered in lower-half.</dd>
+        <dt>Perf</dt><dd><span class="ts-perf">~0.3 ms/frame</span> — five small cubes orbiting on a single shared canvas, no shaders, no shadows.</dd>
+      </dl>
+    </section>
+
+    <!-- ────────────────── Design 4 — Voxel Block Type ────────────────── -->
+    <section class="ts-design design-4" id="design-4">
+      <h3>4 · Voxel Block Type</h3>
+      <p class="ts-tagline">"LAND CAPTURE" rendered as 3D voxel blocks — each letter is a stack of cubes. Maximum expression of the BoxGeometry-only ART_ETHOS.</p>
+      <div class="ts-screen">
+        <div class="ts-bg"></div>
+        <canvas class="threejs-canvas voxel-canvas" id="voxel-canvas"></canvas>
+        <div class="ts-form-bg"></div>
+        <div class="live-badge">LIVE THREE.JS</div>
+        <div class="mock-overlay">
+          <div style="height:70%"></div>
+          <div class="ts-sub">FIVE FACTIONS · ONE ISLAND</div>
+          <div class="mock-form">
+            <input type="text" placeholder="enter your name" maxlength="16" />
+            <div class="btn-row">
+              <button class="btn-solo">SOLO</button>
+              <button class="btn-online">ONLINE</button>
+            </div>
+          </div>
+          <div class="ts-byline">A GAME BY <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a></div>
+        </div>
+      </div>
+      <dl class="ts-spec">
+        <dt>Background</dt><dd>Sky gradient (peach-dawn → pale teal) matching Theme F's sky. Letters built from BoxGeometry primitives — every glyph is a 5×7 voxel grid extruded to depth 1, lightly rotated, rim-lit. A thin water strip animates at the bottom.</dd>
+        <dt>Typography</dt><dd>Procedural — the title IS the geometry. Character coloring rotates through faction palette per frame (each letter is one faction color).</dd>
+        <dt>Palette</dt><dd>Theme F sky + faction colors on letters. Cream input + dark borders to match the in-game wooden-stamp HUD.</dd>
+        <dt>Layout</dt><dd>Title fills upper 2/3 of frame. Form occupies lower third on the cream form card.</dd>
+        <dt>Perf</dt><dd><span class="ts-perf">~0.7 ms/frame</span> — ~330 BoxGeometry instances (5 letters × 5 wide × 7 tall × 2 deep ≈ 350 cubes) shared geometry + InstancedMesh keeps draw calls at 1.</dd>
+      </dl>
+    </section>
+
+    <!-- ────────────────── Design 5 — Minimal Arcade ────────────────── -->
+    <section class="ts-design design-5" id="design-5">
+      <h3>5 · Minimal Arcade</h3>
+      <p class="ts-tagline">Cream paper + huge bold title + flat island silhouette + chunky arcade buttons. Highest readability, lowest cost.</p>
+      <div class="ts-screen">
+        <div class="ts-bg"></div>
+        <svg class="ts-island-svg" viewBox="0 0 1280 240" preserveAspectRatio="none">
+          <!-- Sea wave (faceted, three layers) -->
+          <polygon fill="#3D6CD0" points="0,80 110,60 240,72 360,52 500,68 640,48 780,66 920,46 1080,62 1280,50 1280,240 0,240" />
+          <polygon fill="#1a3870" opacity="0.5" points="0,120 80,108 200,118 340,98 480,116 620,96 780,114 920,98 1080,112 1280,98 1280,240 0,240" />
+          <!-- Sand cylinder bar -->
+          <rect x="280" y="140" width="720" height="42" fill="#C9B077" />
+          <!-- Grass top -->
+          <rect x="280" y="138" width="720" height="6" fill="#9CC15A" />
+          <!-- Cliff rocks -->
+          <rect x="305" y="120" width="22" height="22" fill="#8a7d5c" />
+          <rect x="380" y="118" width="28" height="24" fill="#6d6045" />
+          <rect x="600" y="120" width="24" height="22" fill="#8a7d5c" />
+          <rect x="820" y="118" width="30" height="26" fill="#6d6045" />
+          <rect x="940" y="122" width="22" height="20" fill="#8a7d5c" />
+          <!-- Five tiny faction characters silhouetted on the island -->
+          <g>
+            <rect x="380" y="100" width="24" height="22" fill="#E74A3F" stroke="#1a0f08" stroke-width="2"/>
+            <rect x="385" y="92" width="14" height="8" fill="#fff" stroke="#1a0f08" stroke-width="1.5"/>
+            <rect x="500" y="100" width="24" height="22" fill="#3D6CD0" stroke="#1a0f08" stroke-width="2"/>
+            <rect x="505" y="92" width="14" height="8" fill="#fff" stroke="#1a0f08" stroke-width="1.5"/>
+            <rect x="620" y="100" width="24" height="22" fill="#52B856" stroke="#1a0f08" stroke-width="2"/>
+            <rect x="625" y="92" width="14" height="8" fill="#fff" stroke="#1a0f08" stroke-width="1.5"/>
+            <rect x="740" y="100" width="24" height="22" fill="#FFCF2A" stroke="#1a0f08" stroke-width="2"/>
+            <rect x="745" y="92" width="14" height="8" fill="#fff" stroke="#1a0f08" stroke-width="1.5"/>
+            <rect x="860" y="100" width="24" height="22" fill="#A94BBE" stroke="#1a0f08" stroke-width="2"/>
+            <rect x="865" y="92" width="14" height="8" fill="#fff" stroke="#1a0f08" stroke-width="1.5"/>
+          </g>
+          <!-- Distant atolls -->
+          <rect x="40" y="90" width="60" height="14" fill="#7a8b62" opacity="0.6"/>
+          <rect x="1180" y="92" width="60" height="14" fill="#7a8b62" opacity="0.6"/>
+        </svg>
+        <div class="mock-overlay" style="justify-content:flex-start; padding-top:8%;">
+          <div class="ts-title">LAND<br/>CAPTURE</div>
+          <div class="ts-sub">FIVE · FACTIONS · ONE · ISLAND</div>
+          <div class="mock-form">
+            <input type="text" placeholder="Enter your name" maxlength="16" />
+            <div class="btn-row">
+              <button class="btn-solo">SOLO</button>
+              <button class="btn-online">ONLINE</button>
+            </div>
+          </div>
+          <div class="ts-byline">A GAME BY <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a></div>
+        </div>
+      </div>
+      <dl class="ts-spec">
+        <dt>Background</dt><dd>Cream paper. SVG island silhouette across the bottom 32% — flat-color faceted waves, sand cylinder, grass top, 5 faction-colored cube characters with sailor caps lined up across the rim.</dd>
+        <dt>Typography</dt><dd>Lilita One 168px (matches Theme F banner exactly), -2px tracking, deep brown <code>#1a0f08</code>. Subtitle Fredoka Bold 18px, 8px tracking.</dd>
+        <dt>Palette</dt><dd>Cream paper + deep brown ink + faction-color buttons. Same family as the in-game HUD.</dd>
+        <dt>Layout</dt><dd>Title + subtitle upper-half. Form centered. Island silhouette anchors the bottom edge.</dd>
+        <dt>Perf</dt><dd><span class="ts-perf">~0.0 ms/frame</span> static SVG — no canvas, no shaders.</dd>
+      </dl>
+    </section>
+
+    <!-- ────────────────── Posters strip ────────────────── -->
+    <section class="ts-posters">
+      <h2 style="color:#fff; font-size:24px; margin-bottom:8px;">Action-Movie Posters</h2>
+      <p class="subtitle" style="margin-bottom:16px;">Four poster studies — taglines + framing + faction-color treatment. Click to enlarge.</p>
+      <p class="subtitle" style="font-size:13px; margin-bottom:24px;">
+        <strong style="color:#e8b76d;">Generation note:</strong>
+        These four posters are PIL composites built from the existing Theme F game screenshots — vignettes, color grades, faction-stripe motifs, procedural typography. On-brand from in-game art.
+        Jen also has the <code>artgen</code> pipeline (RunComfy / Flux text-to-image) wired up, but it needs a <code>RUNCOMFY_TOKEN</code> in <code>jen/.env</code> (currently unset) to swap these for AI-generated alternatives. Director: drop the token in and Jen will re-run.
+      </p>
+      <div class="poster-grid">
+        <div class="poster-card" data-src="posters/poster_a_five_factions.png">
+          <img src="posters/poster_a_five_factions.png" alt="Poster A — Five Factions, One Island" />
+          <div class="poster-meta"><strong>A · FIVE FACTIONS. ONE ISLAND.</strong><br/>Theme F overview + faction stripe key. Wide-shot ensemble framing.</div>
+        </div>
+        <div class="poster-card" data-src="posters/poster_b_dominate_the_tide.png">
+          <img src="posters/poster_b_dominate_the_tide.png" alt="Poster B — Dominate the Tide" />
+          <div class="poster-meta"><strong>B · DOMINATE THE TIDE</strong><br/>Hero-shot character + diagonal green slash. Sequel-poster framing.</div>
+        </div>
+        <div class="poster-card" data-src="posters/poster_c_last_one_standing.png">
+          <img src="posters/poster_c_last_one_standing.png" alt="Poster C — Last One Standing" />
+          <div class="poster-meta"><strong>C · LAST ONE STANDING</strong><br/>Lone-survivor framing, desaturated grade, blue faction slash. Horror-film tension.</div>
+        </div>
+        <div class="poster-card" data-src="posters/poster_d_paint_the_world.png">
+          <img src="posters/poster_d_paint_the_world.png" alt="Poster D — Paint the World" />
+          <div class="poster-meta"><strong>D · PAINT THE WORLD</strong><br/>Color-explosion starburst + voxel cube avatars w/ sailor caps. Pure brand.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="poster-modal" id="poster-modal"><img id="poster-modal-img" src="" alt=""/></div>
+  </main>
+
+  <footer>
+    <p>my-game Art Direction Companion — Jen (Art Director) + Dev</p>
+  </footer>
+
+  <script src="shared/nav.js"></script>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+  <script type="module" src="title-screens.js"></script>
+  <script>
+    // Poster zoom modal
+    document.addEventListener("DOMContentLoaded", () => {
+      const modal = document.getElementById("poster-modal");
+      const mimg = document.getElementById("poster-modal-img");
+      document.querySelectorAll(".poster-card").forEach(c => {
+        c.addEventListener("click", () => {
+          mimg.src = c.dataset.src;
+          modal.classList.add("open");
+        });
+      });
+      modal.addEventListener("click", () => modal.classList.remove("open"));
+    });
+  </script>
+</body>
+</html>
