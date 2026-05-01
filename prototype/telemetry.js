@@ -20,6 +20,23 @@ let playerToken = null;
 let playerName = null;
 let flushTimer = null;
 let _gameStartTs = 0;
+// Captured ONCE at init from document.referrer (the actual external page the
+// user came from). The Referer HTTP header on /track requests is our own
+// domain — useless for upstream-source attribution. We pin this for the
+// session and ship it with every event so the server uses it for
+// referrer_host/source.
+let referrerHost = null;
+let referrerHref = null;
+
+function _parseHost(href) {
+  if (!href) return null;
+  try {
+    const h = new URL(href).hostname.toLowerCase();
+    return h || null;
+  } catch {
+    return null;
+  }
+}
 
 function _getSessionId() {
   try {
@@ -97,6 +114,10 @@ export function track(event, detail) {
   } else if (playerName) {
     entry.detail = { playerName };
   }
+  // Ship the captured external referrer host with every event. The server
+  // prefers this over the request's Referer header (which is our own URL).
+  if (referrerHost) entry.referrer_host = referrerHost;
+  if (referrerHref) entry.referrer = referrerHref;
   queue.push(entry);
 }
 
@@ -122,6 +143,13 @@ export function init() {
   const portalQS = new URLSearchParams(window.location.search).get("portal");
   const arrivedViaPortal = !!portalQS && portalQS !== "false" && portalQS !== "0";
   const referrer = document.referrer || null;
+  // Pin the captured upstream referrer for the whole session so every event
+  // can ship it. Skip self-referrals (in-app navigation).
+  referrerHref = referrer;
+  const parsedHost = _parseHost(referrer);
+  if (parsedHost && parsedHost !== window.location.hostname.toLowerCase()) {
+    referrerHost = parsedHost;
+  }
 
   // Initial pageview — every visit gets one.
   const pvDetail = { path: window.location.pathname };

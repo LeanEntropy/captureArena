@@ -91,6 +91,11 @@ type ClientEvent = {
   path?: string | null;
   mode?: string | null;
   detail?: Record<string, unknown> | null;
+  // Client-supplied upstream referrer. The HTTP Referer header on /track
+  // POSTs is our own URL, so we depend on the client snapshotting
+  // document.referrer at page load and shipping it here.
+  referrer_host?: string | null;
+  referrer?: string | null;
 };
 
 function validateEntry(raw: unknown): ClientEvent | null {
@@ -118,6 +123,14 @@ function validateEntry(raw: unknown): ClientEvent | null {
     if (typeof e.detail !== "object" || Array.isArray(e.detail)) return null;
     out.detail = e.detail as Record<string, unknown>;
   }
+  if (e.referrer_host !== undefined && e.referrer_host !== null) {
+    if (!isString(e.referrer_host) || e.referrer_host.length > 256) return null;
+    out.referrer_host = e.referrer_host.toLowerCase();
+  }
+  if (e.referrer !== undefined && e.referrer !== null) {
+    if (!isString(e.referrer) || e.referrer.length > 1024) return null;
+    out.referrer = e.referrer;
+  }
   return out;
 }
 
@@ -138,7 +151,10 @@ export function trackHandler(req: Request, res: Response): void {
   }
 
   const ts = Date.now();
-  const referrerHost = parseReferrerHost(
+  // Header-based referrer is our own URL on every /track POST (the page
+  // making the fetch). Keep it only as a fallback for clients that haven't
+  // snapshotted document.referrer yet — the per-event referrer_host wins.
+  const headerReferrerHost = parseReferrerHost(
     typeof req.headers["referer"] === "string" ? req.headers["referer"] : undefined
   );
   const country = lookupCountry(req.ip);
@@ -151,6 +167,11 @@ export function trackHandler(req: Request, res: Response): void {
     if (!v) continue;
     const portalFlag =
       !!v.detail && (v.detail as Record<string, unknown>).portal === true;
+    // Prefer the client-supplied referrer (captured from document.referrer
+    // at page load — the actual upstream page). Fall back to the request
+    // header only if absent. The client also strips self-referrals before
+    // sending.
+    const referrerHost = v.referrer_host ?? headerReferrerHost;
     const source = deriveSource(referrerHost, portalFlag);
     // mode is best-effort: prefer top-level field, fall back to detail.mode.
     const detailMode =
