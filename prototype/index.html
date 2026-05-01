@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Territory War</title>
+  <title>Land Capture</title>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Lilita+One&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -123,16 +123,17 @@
     #music-toggle-title {
       width: 44px; height: 44px;
       padding: 0;
-      background: transparent;
-      color: #888;
-      border: 1px solid #ccc;
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 2px solid #fff;
       border-radius: 50%;
       font-size: 20px;
       line-height: 1;
       cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 2px 2px 0 #000;
     }
-    #music-toggle-title:hover { color: #333; border-color: #888; }
+    #music-toggle-title:hover { background: rgba(255,255,255,0.3); }
     #death-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       display: none; align-items: center; justify-content: center; z-index: 50; pointer-events: none;
@@ -146,12 +147,126 @@
     #match-end-screen .end-content {
       background: rgba(0,0,0,0.85); color: white; padding: 32px 48px; border-radius: 16px; text-align: center; min-width: 350px;
     }
+    /* ============ Title screen — Design 3: Faction Stripes ============ */
     #name-entry {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       display: flex; align-items: center; justify-content: center;
-      background: rgba(255,255,255,0.9); z-index: 100; pointer-events: auto;
+      z-index: 100; pointer-events: auto;
+      /* 5 faction stripes (Red / Blue / Green / Yellow / Purple). Order MUST match
+         FACTION_COLORS in prototype/sim/faction.js. */
+      background: linear-gradient(to right,
+        #E74A3F 0% 20%,
+        #3D6CD0 20% 40%,
+        #52B856 40% 60%,
+        #FFCF2A 60% 80%,
+        #A94BBE 80% 100%);
+      overflow: hidden;
     }
     #name-entry.hidden { display: none; }
+    /* Subtle bottom darken so the character cubes ground visually + improves form readability */
+    #ts-vignette {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom, transparent 0%, transparent 45%, rgba(0,0,0,0.35) 100%);
+      pointer-events: none;
+    }
+    /* ThreeJS canvas hosting the 5 rotating cube characters */
+    #ts-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+    /* Foreground content — title + form + byline */
+    #ts-content {
+      position: relative; z-index: 2;
+      text-align: center;
+      pointer-events: auto;
+      padding: 0 24px;
+    }
+    #ts-title {
+      font-family: 'Lilita One', sans-serif;
+      font-size: clamp(56px, 11vw, 144px);
+      color: #fff;
+      letter-spacing: 8px;
+      line-height: 0.92;
+      margin-bottom: 6px;
+      /* Heavy black drop-shadow stamp so the title reads on every stripe colour. */
+      text-shadow:
+        4px 4px 0 #000,
+        -2px -2px 0 #000,
+        2px -2px 0 #000,
+        -2px 2px 0 #000,
+        0 0 28px rgba(0,0,0,0.55);
+      user-select: none;
+    }
+    #ts-sub {
+      font-family: 'Fredoka', system-ui, sans-serif;
+      font-weight: 700;
+      font-size: clamp(13px, 1.4vw, 18px);
+      color: #fff;
+      letter-spacing: 5px;
+      margin-bottom: clamp(20px, 3vw, 36px);
+      text-shadow: 2px 2px 0 #000;
+      user-select: none;
+    }
+    #name-input {
+      font-family: 'Fredoka', system-ui, sans-serif;
+      font-size: 20px; padding: 12px 24px;
+      background: rgba(0,0,0,0.78);
+      border: 3px solid #fff;
+      color: #fff;
+      font-weight: 700;
+      border-radius: 8px;
+      outline: none;
+      text-align: center;
+      width: 280px;
+      letter-spacing: 1px;
+      box-shadow: 4px 4px 0 #000;
+    }
+    #name-input::placeholder { color: rgba(255,255,255,0.6); font-weight: 500; }
+    #ts-button-row {
+      margin-top: 18px;
+      display: flex; gap: 14px; justify-content: center;
+    }
+    #solo-btn, #online-btn {
+      font-family: 'Lilita One', sans-serif;
+      font-size: 22px; letter-spacing: 2px;
+      padding: 12px 36px;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 #000;
+      transition: transform 0.08s ease, box-shadow 0.08s ease;
+    }
+    #solo-btn {
+      background: #fff; color: #1a0f08;
+      border: 3px solid #1a0f08;
+    }
+    #online-btn {
+      background: #1a0f08; color: #fff;
+      border: 3px solid #fff;
+    }
+    #solo-btn:hover, #online-btn:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 #000;
+    }
+    #ts-music-row { margin-top: 18px; }
+    #ts-byline {
+      margin-top: 28px;
+      font-family: 'Fredoka', system-ui, sans-serif;
+      font-size: 14px;
+      color: #fff;
+      letter-spacing: 2px;
+      font-weight: 500;
+      text-shadow: 2px 2px 0 rgba(0,0,0,0.6);
+      user-select: none;
+    }
+    #ts-byline a {
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      border-bottom: 2px solid #fff;
+      padding-bottom: 1px;
+    }
+    #ts-byline a:hover { color: #FFE140; border-bottom-color: #FFE140; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -189,30 +304,30 @@
   <div id="match-end-screen">
     <div class="end-content"></div>
   </div>
+  <!-- Title screen — Design 3: Faction Stripes.
+       Layered front-to-back:
+         1. CSS linear-gradient background (5 faction stripes) on #name-entry itself
+         2. <canvas id="ts-canvas">  — ThreeJS scene with 5 rotating sailor-cap cubes
+         3. #ts-vignette              — soft bottom darken for form contrast
+         4. #ts-content              — title + subtitle + form + music + byline
+       The render loop is wired in main.js and stops when #name-entry gets .hidden. -->
   <div id="name-entry">
-    <div style="text-align:center;">
-      <h1 style="font-size:48px; margin-bottom:8px; color:#333;">Territory War</h1>
-      <p style="color:#666; margin-bottom:24px;">Claim territory. Fight for your faction. Dominate.</p>
-      <input id="name-input" type="text" placeholder="Enter your name" maxlength="16"
-        style="font-size:20px; padding:12px 24px; border:2px solid #ccc; border-radius:8px; outline:none; text-align:center; width:280px;" />
-      <br/>
-      <div style="margin-top:16px; display:flex; gap:12px; justify-content:center;">
-        <button id="solo-btn"
-          style="font-size:18px; padding:12px 32px; background:#4CAF50; color:white; border:none; border-radius:8px; cursor:pointer;">
-          Solo
-        </button>
-        <button id="online-btn"
-          style="font-size:18px; padding:12px 32px; background:#2196F3; color:white; border:none; border-radius:8px; cursor:pointer;">
-          Online
-        </button>
+    <canvas id="ts-canvas"></canvas>
+    <div id="ts-vignette"></div>
+    <div id="ts-content">
+      <div id="ts-title">LAND CAPTURE</div>
+      <div id="ts-sub">CLAIM &middot; HOLD &middot; DOMINATE</div>
+      <input id="name-input" type="text" placeholder="ENTER NAME" maxlength="16" />
+      <div id="ts-button-row">
+        <button id="solo-btn">SOLO</button>
+        <button id="online-btn">ONLINE</button>
       </div>
-      <div style="margin-top:14px;">
+      <div id="ts-music-row">
         <button id="music-toggle-title" title="Toggle music">&#x1F50A;</button>
       </div>
-      <p style="margin-top:32px; color:#888; font-size:14px;">A game by
-        <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer"
-           style="color:#1DA1F2; text-decoration:none; font-weight:600;">Civax</a>
-      </p>
+      <div id="ts-byline">A GAME BY
+        <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a>
+      </div>
     </div>
   </div>
   <script type="module" src="main.js"></script>

@@ -2637,6 +2637,141 @@ function _initStats() {
   return s;
 }
 
+// ===================== TITLE SCREEN — Design 3 Faction Stripes =====================
+// Five rotating sailor-cap cube characters across the bottom of the title screen,
+// one per faction. Reuses the in-game Character cube proportions (Theme F sailor cap).
+// Render loop pauses automatically when #name-entry gets the .hidden class
+// (set by Solo/Online click handlers) so the GPU is freed for actual gameplay.
+function _initTitleScreen() {
+  const canvas = document.getElementById("ts-canvas");
+  const nameEntry = document.getElementById("name-entry");
+  if (!canvas || !nameEntry) return null;
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+  renderer.setClearColor(0x000000, 0);  // transparent — CSS stripes show through
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(35, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+  camera.position.set(0, 1.6, 13);
+  camera.lookAt(0, 0.4, 0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.55);
+  dl.position.set(2, 6, 4);
+  scene.add(dl);
+
+  // Build a sailor-cap cube character matching the in-game Character mesh
+  // (Theme F: faction-colored body + head + faction-band cap + white cap top + eyes).
+  function buildTitleCharacter(color) {
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 1.0), bodyMat);
+    body.position.y = 0.5;
+    g.add(body);
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.75, 0.75, 0.75),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
+    );
+    head.position.y = 1.3;
+    g.add(head);
+    const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const pupBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    for (const s of [-1, 1]) {
+      const e = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), eyeWhite);
+      e.position.set(s * 0.18, 1.35, 0.36);
+      g.add(e);
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), pupBlack);
+      p.position.set(s * 0.18, 1.35, 0.42);
+      g.add(p);
+    }
+    const capBand = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.08, 0.78),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
+    );
+    capBand.position.y = 1.72;
+    g.add(capBand);
+    const capTop = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.18, 0.6),
+      new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.7 })
+    );
+    capTop.position.y = 1.85;
+    g.add(capTop);
+    return g;
+  }
+
+  // 5 chars across the bottom — one per faction stripe.
+  // CSS stripes are 20% wide each, so in NDC they sit at x = -0.8, -0.4, 0, 0.4, 0.8.
+  // We position the chars in world-space so they line up under each stripe at the
+  // chosen camera FOV. spacing tuned by eye to match the 20% stripe width.
+  const chars = [];
+  const spacing = 3.6;
+  for (let i = 0; i < FACTION_COLORS.length; i++) {
+    const g = new THREE.Group();
+    const x = (i - 2) * spacing;
+    g.position.set(x, -2.4, 0);
+    g.scale.setScalar(0.95);
+    const c = buildTitleCharacter(FACTION_COLORS[i]);
+    g.add(c);
+    scene.add(g);
+    chars.push(g);
+  }
+
+  // Render loop with automatic resize. Stops when nameEntry is hidden, restarts if
+  // unhidden (e.g. dev hot-reload or future "back to menu" flow).
+  const clock = new THREE.Clock();
+  let raf = 0;
+  let running = false;
+
+  function tick() {
+    if (!running) return;
+    // Resize handling — title-screen canvas is fullscreen, browser may resize.
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const px = renderer.getPixelRatio();
+    if (canvas.width !== Math.round(w * px) || canvas.height !== Math.round(h * px)) {
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    const t = clock.getElapsedTime();
+    chars.forEach((g, i) => {
+      g.rotation.y = t * 0.45 + i * 0.6;
+      // Idle bob — characters lift their bodies up and down on a per-faction phase.
+      g.children[0].children[0].position.y = 0.5 + Math.sin(t * 2 + i * 0.7) * 0.08;
+    });
+    renderer.render(scene, camera);
+    raf = requestAnimationFrame(tick);
+  }
+  function start() { if (!running) { running = true; tick(); } }
+  function stop()  { running = false; cancelAnimationFrame(raf); raf = 0; }
+
+  // Watch #name-entry for .hidden class toggling — pauses the render loop when
+  // the title screen disappears (game starts), restarts if it comes back.
+  const obs = new MutationObserver(() => {
+    if (nameEntry.classList.contains("hidden")) stop(); else start();
+  });
+  obs.observe(nameEntry, { attributes: true, attributeFilter: ["class"] });
+
+  // Also pause on tab-hidden so a backgrounded title screen doesn't burn battery.
+  document.addEventListener("visibilitychange", () => {
+    if (nameEntry.classList.contains("hidden")) return;
+    if (document.hidden) stop(); else start();
+  });
+
+  // Window resize → trigger immediate re-evaluation (also handled per-frame above
+  // but this avoids a 1-frame wrong-aspect flash on resize).
+  window.addEventListener("resize", () => {
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    camera.updateProjectionMatrix();
+  });
+
+  start();
+  return { start, stop };
+}
+const _titleScreen = _initTitleScreen();
+
 // ===================== MAIN =====================
 const game = new Game();
 window.game = game; // debug hook
