@@ -2123,7 +2123,10 @@ class Game {
     }
     const smooth = 1 - Math.pow(0.03, dt);
     this.camCurrent.lerp(this.camTarget, smooth);
-    this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT, this.camCurrent.z + CAMERA_Z_OFFSET);
+    // Smooth zoom: lerp the current zoom factor toward the user-requested target.
+    this._cameraZoom += (this._cameraZoomTarget - this._cameraZoom) * 0.15;
+    const zoom = this._cameraZoom;
+    this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
     this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
 
     if (this.shadowLight) {
@@ -2666,6 +2669,10 @@ document.getElementById("online-btn").addEventListener("click", () => {
 
 document.getElementById("name-input").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("solo-btn").click();
+});
+
+document.getElementById("return-to-menu").addEventListener("click", () => {
+  location.reload();
 });
 
 // Vibe Jam 2026 — instant load when arriving through the webring.
