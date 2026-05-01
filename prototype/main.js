@@ -2243,33 +2243,44 @@ class Game {
     fill.position.set(-3, 3, -3);
     this.scene.add(fill);
 
-    // ---- Water (Vanta-style waves, GPU shader) ----
-    // Path B from Director's spec: extract Vanta's waves vertex displacement
-    // and adapt to a Three.js ShaderMaterial. The original Vanta runs the
-    // wave formula on the CPU each frame (animating the BufferGeometry's
-    // position attribute); we move the SAME formula to a vertex shader so
-    // it costs ~0.3ms instead of CPU-bound 1-2ms on a 1024-vert plane.
+    // ---- Water (Vanta-style faceted waves, GPU shader) ----
+    // Vertex displacement: Vanta's exact wave formula (extracted from
+    // vanta.waves.min.js, MIT) ported to a vertex shader so it runs on GPU
+    // instead of CPU (~0.3ms vs CPU-bound 1-2ms on a 1024-vert plane).
     //
-    // Original formula (Vanta 0.5.x, vanta.waves.min.js, MIT):
     //   const i = waveSpeed; (default 1)
     //   const phase = sqrt(i) * cos(-x - 0.7 * z);
     //   const o = sin(i * t * 0.02 - i * x * 0.025 + i * z * 0.015 + phase);
     //   y = oy + pow(o + 1, 2) / 4 * waveHeight;  (waveHeight default 15)
     //
-    // We've scaled wave amplitudes for our scale (Vanta default arena ~720
-    // units; our plane is 6× ARENA_RADIUS = ~400 units). Wave height 0.45
-    // gives crests visibly tall at the horizon but not so tall they'd ever
-    // peek over the island cylinder rim.
+    // Wave amplitude scaled UP (1.6 vs Vanta default 15) to give the 80×80
+    // plane enough per-triangle slope variance for the faceted lighting to
+    // read as distinct dark/light facets — see vertex-shader comment.
+    //
+    // Lighting: FLAT-SHADED PER TRIANGLE. The plane has shared vertices, but
+    // we recover a per-face normal in the fragment shader via dFdx/dFdy on
+    // view-space position. This is Vanta's faceted low-poly trick — each
+    // triangle gets one uniform color from a 2-tone Lambert mix (deep blue
+    // → light blue), producing the hard-edged "crystal facet" water look.
+    // No glitter, no scrolling stripes, no smooth normal interpolation.
     const waterSize = ARENA_RADIUS * 6;
     const waterGeom = new THREE.PlaneGeometry(waterSize, waterSize, 80, 80);
-    const seaColor = new THREE.Color(0x1E6F7E);
-    const sunColor = new THREE.Color(0xFFE8B0);
+    // Faceted low-poly Vanta look: deep + light blue, hard-edged Lambert per
+    // triangle. Colors picked from Vanta default waves preset (#0d3556 → #5093d0)
+    // with contrast nudged up so each facet reads at full game scale.
+    const deepColor = new THREE.Color(0x0d3556);
+    const lightColor = new THREE.Color(0x5093d0);
     this._waterMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uIslandRadius: { value: ARENA_RADIUS + 0.5 },
-        uSeaColor: { value: seaColor },
-        uSunColor: { value: sunColor },
+        uDeepColor: { value: deepColor },
+        uLightColor: { value: lightColor },
+        // Fixed light direction in view space — chosen so facets show clear
+        // bright/dark contrast across the plane regardless of camera orbit.
+        // (Using view-space dir means contrast pattern stays stable as camera
+        // rotates, which matches Vanta's behavior.)
+        uLightDir: { value: new THREE.Vector3(0.4, 0.8, 0.5).normalize() },
         uFogColor: { value: new THREE.Color(0xBCD8DE) },
         uFogNear: { value: 80.0 },
         uFogFar: { value: 260.0 },
@@ -2277,7 +2288,7 @@ class Game {
       vertexShader: `
         uniform float uTime;
         varying vec2 vWorldXZ;
-        varying float vWaveY;
+        varying vec3 vViewPosition;
         varying float vViewDist;
         void main() {
           // Vanta's wave formula, ported from vanta.waves.min.js (MIT).
@@ -2293,24 +2304,34 @@ class Game {
           // (uTime is in seconds; Vanta's t was a frame counter that
           // incremented by ~1/frame at 60fps, so * 60 to match cadence.)
           float n = pow(o + 1.0, 2.0) / 4.0;
-          p.z += n * 0.45;                              // waveHeight (scaled)
-          vWaveY = p.z;
+          // Wave amplitude: scaled UP from Vanta default (0.45 → 1.6) because
+          // our 80×80 plane covers 6×ARENA_RADIUS (~400u) so each grid cell is
+          // ~5u wide; without enough vertical displacement the per-triangle
+          // face normals are nearly all upward and Lambert lighting collapses
+          // to one uniform shade. Higher amplitude → steeper triangle slopes
+          // → distinct dark/light facets like the reference image.
+          p.z += n * 1.6;
           vWorldXZ = p.xy;
           vec4 mvPos = modelViewMatrix * vec4(p, 1.0);
+          // View-space position is what we differentiate in the fragment
+          // shader to recover the per-triangle face normal (dFdx/dFdy on a
+          // per-vertex-shared mesh gives the FLAT face normal — that's the
+          // whole trick for Vanta's faceted look without duplicating verts).
+          vViewPosition = mvPos.xyz;
           vViewDist = -mvPos.z;
           gl_Position = projectionMatrix * mvPos;
         }
       `,
       fragmentShader: `
-        uniform float uTime;
         uniform float uIslandRadius;
-        uniform vec3 uSeaColor;
-        uniform vec3 uSunColor;
+        uniform vec3 uDeepColor;
+        uniform vec3 uLightColor;
+        uniform vec3 uLightDir;
         uniform vec3 uFogColor;
         uniform float uFogNear;
         uniform float uFogFar;
         varying vec2 vWorldXZ;
-        varying float vWaveY;
+        varying vec3 vViewPosition;
         varying float vViewDist;
         void main() {
           float dist = length(vWorldXZ);
@@ -2319,16 +2340,26 @@ class Game {
           // killed before any blending can occur.
           if (dist < uIslandRadius) discard;
 
-          // Base sea color, lightened at wave crests for "depth shaded by height".
-          vec3 col = uSeaColor + vec3(0.18) * smoothstep(-0.1, 0.4, vWaveY);
+          // Per-FACE normal via screen-space derivatives of view-space pos.
+          // Because dFdx/dFdy are constant across a triangle, this gives a
+          // single normal per triangle → flat-shaded facets even though the
+          // plane geometry has shared vertices. This is exactly Vanta's trick.
+          vec3 dx = dFdx(vViewPosition);
+          vec3 dy = dFdy(vViewPosition);
+          vec3 faceNormal = normalize(cross(dx, dy));
 
-          // Sparse sun-glitter stripes scrolling along a fixed direction.
-          // Only highlight on rising crests (vWaveY > 0.05) to keep glitter
-          // anchored to the moving water surface, not floating in flat patches.
-          vec2 sunDir = normalize(vec2(0.6, 0.4));
-          float glit = sin(dot(vWorldXZ, sunDir) * 1.2 + uTime * 1.6);
-          float glitMask = smoothstep(0.85, 1.0, glit) * smoothstep(0.05, 0.25, vWaveY);
-          col = mix(col, uSunColor, glitMask * 0.55);
+          // Lambert against a fixed view-space light. abs() so back-facing
+          // facets light up from the same source rather than going pure dark
+          // (matches Vanta — every triangle reads as a distinct shade, no
+          // pitch-black wedges).
+          float light = clamp(abs(dot(faceNormal, normalize(uLightDir))), 0.0, 1.0);
+
+          // Remap Lambert from [0,1] to a wider value range and apply a
+          // gamma-style curve so the bright-vs-dark facet split is dramatic
+          // (matches reference screenshot where adjacent facets read as
+          // clearly different shades, not subtle gradient).
+          float t = smoothstep(0.55, 1.0, light);
+          vec3 col = mix(uDeepColor, uLightColor, t);
 
           // Manual fog (ShaderMaterial doesn't auto-pick up scene.fog).
           float fogF = clamp((vViewDist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
