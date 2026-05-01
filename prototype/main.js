@@ -2664,11 +2664,11 @@ let _musicStarted = false; // tracks whether audio has been started at least onc
 let _musicLoopTimer = null;
 
 function _updateMusicButtons() {
-  const label = _musicEnabled ? "🔊 Music On" : "🔇 Music Off";
+  const icon = _musicEnabled ? "🔊" : "🔇";
   const titleBtn = document.getElementById("music-toggle-title");
   const hudBtn = document.getElementById("music-toggle-hud");
-  if (titleBtn) titleBtn.textContent = label;
-  if (hudBtn) hudBtn.textContent = label;
+  if (titleBtn) titleBtn.textContent = icon;
+  if (hudBtn) hudBtn.textContent = icon;
 }
 
 function _startMusic() {
