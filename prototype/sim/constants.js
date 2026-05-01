@@ -5,8 +5,8 @@ import { FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 // Arena / movement
 export const ARENA_RADIUS = 66.89;
 export const MIN_POINT_DIST = 0.3;
-export const PLAYER_SPEED = 8;
-export const BOT_SPEED = 6;
+export const PLAYER_SPEED = 9.6;  // +20% from baseline 8
+export const BOT_SPEED = 7.2;     // +20% from baseline 6
 export const TURN_SPEED = 5;
 
 // Trail
