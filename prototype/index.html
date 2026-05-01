@@ -35,6 +35,13 @@
       transition: opacity 0.2s ease, transform 0.2s ease;
     }
     .jen-notif.in { opacity: 1; transform: translateX(0); }
+    @keyframes notif-flash {
+      0%   { transform: translateX(0) scale(1);    filter: brightness(1); }
+      30%  { transform: translateX(0) scale(1.08); filter: brightness(1.6); }
+      65%  { transform: translateX(0) scale(1.02); filter: brightness(1.2); }
+      100% { transform: translateX(0) scale(1);    filter: brightness(1); }
+    }
+    .jen-notif.flash { animation: notif-flash 0.5s ease-out forwards; }
     /* Theme F faction banner — D's wooden stamp */
     #jen-banner {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.6);
@@ -118,7 +125,6 @@
   <div id="jen-banner"></div>
   <div id="death-screen">
     <div style="text-align:center; background:rgba(0,0,0,0.6); padding:32px 48px; border-radius:16px;">
-      <p id="death-msg" style="font-size:28px; color:white; margin-bottom:8px;"></p>
       <p id="death-timer" style="font-size:20px; color:#ccc;"></p>
     </div>
   </div>

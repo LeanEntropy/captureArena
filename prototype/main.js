@@ -1087,7 +1087,12 @@ class JenHUDManager {
     el.className = "jen-notif";
     el.textContent = text;
     this.notifStack.appendChild(el);
-    requestAnimationFrame(() => el.classList.add("in"));
+    requestAnimationFrame(() => {
+      el.classList.add("in");
+      // Brief flash to draw the eye — scale + brightness pulse over 0.5s.
+      el.classList.add("flash");
+      el.addEventListener("animationend", () => el.classList.remove("flash"), { once: true });
+    });
     while (this.notifStack.children.length > 4) {
       this.notifStack.removeChild(this.notifStack.firstChild);
     }
@@ -1161,6 +1166,10 @@ class Game {
     this.player = null;
     this.camTarget = new THREE.Vector3();
     this.camCurrent = new THREE.Vector3();
+    // Mouse-wheel zoom state. _cameraZoom is the smoothed (rendered) value;
+    // _cameraZoomTarget is what the user has dialled in via scroll wheel.
+    this._cameraZoom = 1.0;
+    this._cameraZoomTarget = 1.0;
     this.started = false;
     this.mode = "solo";
     this.playerName = "";
@@ -1236,6 +1245,14 @@ class Game {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
     });
+    // Mouse-wheel zoom: scroll up → zoom in, scroll down → zoom out.
+    // Clamped to [0.5, 2.5] so the camera can never clip the ground or fly
+    // too far away. The factor is smoothed each frame via lerp (see tick()).
+    this.renderer.domElement.addEventListener("wheel", e => {
+      e.preventDefault();
+      this._cameraZoomTarget += e.deltaY * 0.001;
+      this._cameraZoomTarget = Math.max(0.5, Math.min(2.5, this._cameraZoomTarget));
+    }, { passive: false });
 
     // Labels
     this.labels = new Map();
@@ -1246,7 +1263,6 @@ class Game {
     this.hudTL = document.getElementById("hud-tl");
     this.hudTR = document.getElementById("hud-tr");
     this.deathScreen = document.getElementById("death-screen");
-    this.deathMsg = document.getElementById("death-msg");
     this.deathTimer = document.getElementById("death-timer");
 
     // ===== Theme F overlays =====
@@ -1301,9 +1317,8 @@ class Game {
         victimR.onDieVisual();
         if (victimR === this.player) {
           this.killedBy = killerR ? killerR.name : "";
-          this.deathMsg.textContent = killerR ? `Killed by ${killerR.name}` : "You died!";
           this.deathScreen.classList.add("visible");
-          this.hud.push(killerR ? `You died — killed by ${killerR.name}` : `You died`);
+          this.hud.push(killerR ? `Killed by ${killerR.name}` : `Cut off`);
         } else if (killerR === this.player) {
           this.hud.push(`You killed ${victimR.name}`);
         }
