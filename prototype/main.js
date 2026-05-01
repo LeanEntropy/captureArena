@@ -2654,16 +2654,97 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
+// ===================== MUSIC =====================
+const _bgm = document.getElementById("bgm");
+let _musicEnabled = (() => {
+  try { const v = localStorage.getItem("musicEnabled"); return v === null ? true : v === "true"; }
+  catch(e) { return true; }
+})();
+let _musicStarted = false; // tracks whether audio has been started at least once (user gesture)
+let _musicLoopTimer = null;
+
+function _updateMusicButtons() {
+  const label = _musicEnabled ? "🔊 Music On" : "🔇 Music Off";
+  const titleBtn = document.getElementById("music-toggle-title");
+  const hudBtn = document.getElementById("music-toggle-hud");
+  if (titleBtn) titleBtn.textContent = label;
+  if (hudBtn) hudBtn.textContent = label;
+}
+
+function _startMusic() {
+  if (!_musicEnabled) return;
+  if (_musicLoopTimer) { clearTimeout(_musicLoopTimer); _musicLoopTimer = null; }
+  _bgm.currentTime = 0;
+  _bgm.play().catch(() => {}); // swallow autoplay policy errors
+  _musicStarted = true;
+}
+
+function _resumeMusic() {
+  if (!_musicEnabled) return;
+  _bgm.play().catch(() => {});
+}
+
+function _pauseMusic() {
+  if (_musicLoopTimer) { clearTimeout(_musicLoopTimer); _musicLoopTimer = null; }
+  _bgm.pause();
+}
+
+// 2-second gap loop: when song ends, wait 2s then restart (if still enabled)
+_bgm.addEventListener("ended", () => {
+  if (!_musicEnabled) return;
+  _musicLoopTimer = setTimeout(() => {
+    _musicLoopTimer = null;
+    if (_musicEnabled) {
+      _bgm.currentTime = 0;
+      _bgm.play().catch(() => {});
+    }
+  }, 2000);
+});
+
+function _toggleMusic() {
+  _musicEnabled = !_musicEnabled;
+  try { localStorage.setItem("musicEnabled", String(_musicEnabled)); } catch(e) {}
+  _updateMusicButtons();
+  if (_musicEnabled) {
+    if (!_musicStarted) {
+      _startMusic();
+    } else {
+      _resumeMusic();
+    }
+  } else {
+    _pauseMusic();
+  }
+}
+
+// Attempt to start music on first user gesture (if enabled)
+function _onFirstGesture() {
+  if (_musicEnabled && !_musicStarted) {
+    _startMusic();
+  }
+}
+
+document.getElementById("music-toggle-title").addEventListener("click", () => {
+  _toggleMusic();
+});
+document.getElementById("music-toggle-hud").addEventListener("click", () => {
+  _toggleMusic();
+});
+
+// Initialize button labels
+_updateMusicButtons();
+
 // Name entry
 document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
+  _onFirstGesture();
   game.startSolo(name);
 });
 
 document.getElementById("online-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
+  _onFirstGesture();
   game.startOnline(name);
 });
 
