@@ -26,10 +26,11 @@ let exitPortal = null;
 let startPortalActivateAt = 0;
 
 // ── Portal factory ──────────────────────────────────────────────
-function makePortal({ color, position, rotationX = 0.35, label = '' }) {
+function makePortal({ color, position, rotationX = 0, label = '', scale = 0.10 }) {
   const group = new THREE.Group();
   group.position.set(position.x, position.y, position.z);
   group.rotation.x = rotationX;
+  group.scale.setScalar(scale);
 
   // Torus ring
   group.add(new THREE.Mesh(

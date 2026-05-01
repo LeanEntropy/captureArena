@@ -77,6 +77,17 @@ export class GameRoom extends Room<GameStateSchema> {
       if (ms > 10) {
         console.log(`[claim slow] charId=${charId} faction=${factionId} cells=${changedCells.length} ms=${ms.toFixed(1)}`);
       }
+      // Thin-line diagnostic: capture suspicious claims for analysis.
+      const trailLen = _trailPoints.length / 2;
+      const cellsFlipped = changedCells.length;
+      const ratio = trailLen > 0 ? cellsFlipped / trailLen : 0;
+      // Catch: short trails with no fill (ratio<5 + ANY length)
+      // OR long trails with low fill (trailLen>20 + ratio<10) — the real "I drew a shape and it didn't fill" case
+      const suspicious = (cellsFlipped > 0 && ratio < 5) || (trailLen > 20 && ratio < 10);
+      if (suspicious) {
+        const ts = new Date().toISOString().substring(11, 19);
+        console.log(`[CLAIM_THIN ${ts}] char=${charId} faction=${factionId} trailLen=${trailLen} cellsFlipped=${cellsFlipped} ratio=${ratio.toFixed(2)} trail=${JSON.stringify(_trailPoints.slice(0, 200))}${_trailPoints.length > 200 ? `...(${_trailPoints.length-200} more)` : ""}`);
+      }
       if (changedCells.length === 0) return;
       if (changedCells.length <= CLAIM_DIFF_MAX_CELLS) {
         // Plain number[] — Colyseus encodes via msgpack. For ~200-cell claims
