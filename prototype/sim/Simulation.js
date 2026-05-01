@@ -312,6 +312,10 @@ export class Simulation {
         this.scoreTracker.onKill(killer, this.factionManager);
       }
     }
+    // Death penalty: victim loses 4% of their accumulated score.
+    if (this.scoreTracker?.onDeath) {
+      this.scoreTracker.onDeath(victim);
+    }
     this.onKill?.(killer ? killer.id : null, victim.id);
   }
 

@@ -68,6 +68,16 @@ export class ScoreTracker {
   }
 
   /**
+   * Apply a 4% score penalty when a character dies.
+   * @param {object} char - The victim
+   */
+  onDeath(char) {
+    const entry = this.scores.get(char);
+    if (!entry) return;
+    entry.total = Math.max(0, Math.floor(entry.total * 0.96));
+  }
+
+  /**
    * Award points for claiming a cell.
    * @param {object} char
    * @param {object} factionManager
