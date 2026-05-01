@@ -399,7 +399,7 @@ function simplifyContour(points, epsilon) {
 // Character). Each frame, Game.tick syncs pos/dir from simChar to this.pos/dir.
 // Player/bot input writes to this.targetDir, Game forwards it to sim.
 class Character {
-  constructor(scene, simChar, color, isPlayer) {
+  constructor(scene, simChar, color, isPlayer, baseY = 0) {
     this.scene = scene;
     this.simChar = simChar;          // authoritative sim state (Simulation/Character.js)
     this.pos = new THREE.Vector3(simChar.pos.x, 0, simChar.pos.z);
@@ -412,6 +412,12 @@ class Character {
     this.factionId = simChar.factionId;   // mirror; updated on faction reassign
     this.trailVerts = [];                 // Vector3[]; populated via sim.onTrailVertex hook
     this.trailMesh = null;
+    // Direction E: characters stand on the grass island top, not at world Y=0
+    // (which is below the water). baseY is the canonical "island-top Y" passed
+    // by Game; we apply it once here and re-assert it in syncVisuals so any
+    // later position writes don't accidentally drop the character below the
+    // water surface.
+    this.baseY = baseY;
     // Online prediction hook: when set, syncVisuals reads from this object's
     // {posX, posZ, dirX, dirZ} instead of simChar. Used for the local player
     // in online mode to eliminate input-roundtrip lag.
@@ -427,6 +433,7 @@ class Character {
     this._lastSchemaPosX = null;   // last sampled schema posX (for change detection)
     this._lastSchemaPosZ = null;
     this.group = this._buildChar(color);
+    this.group.position.y = this.baseY;
     scene.add(this.group);
   }
 
@@ -477,6 +484,20 @@ class Character {
       pup.position.set(s*0.18, 1.35, 0.42);
       g.add(pup);
     }
+    // Direction E — sailor cap on the head: stacked white top + faction-color
+    // band cube. Universal cap (per Section 17 Q6 default), faction identity
+    // is carried by the band color so silhouette still reads at game scale.
+    // Ported from tools/companion/visual-direction.js (charStyle "castaway").
+    const capRingMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+    const capWhiteMat = new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.7 });
+    const capBase = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.78), capRingMat);
+    capBase.position.y = 1.72;
+    capBase.castShadow = true;
+    g.add(capBase);
+    const capTop = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.6), capWhiteMat);
+    capTop.position.y = 1.85;
+    capTop.castShadow = true;
+    g.add(capTop);
     return g;
   }
 
@@ -535,6 +556,11 @@ class Character {
     const posArr = posAttr.array;
     const idxArr = idxAttr.array;
 
+    // Direction E: trail Y rides on the grass island top, not at world Y=0.05
+    // (which would put trails under the water plane). baseY is the canonical
+    // "island-top Y" set by Game; +0.05 keeps trails just above the territory
+    // mesh to avoid Z-fighting.
+    const trailY = this.baseY + 0.05;
     const writePoint = (i) => {
       const p = verts[i];
       let dx, dz;
@@ -551,8 +577,8 @@ class Character {
       const len = Math.sqrt(dx*dx + dz*dz) || 1;
       const nx = -dz/len, nz = dx/len;
       const o = i * 6;
-      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = 0.05; posArr[o + 2] = p.z + nz*hw;
-      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = 0.05; posArr[o + 5] = p.z - nz*hw;
+      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = trailY; posArr[o + 2] = p.z + nz*hw;
+      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = trailY; posArr[o + 5] = p.z - nz*hw;
     };
 
     // Rewrite the previous tail (its forward-neighbor changed) and write all
@@ -726,6 +752,7 @@ class Character {
 
     if (snap) {
       this.group.position.x = tgtX;
+      this.group.position.y = this.baseY;   // Direction E: keep on island top
       this.group.position.z = tgtZ;
       this.group.rotation.y = Math.atan2(tgtDirX, tgtDirZ);
     } else if (this.predicted) {
@@ -810,8 +837,14 @@ function makeOnlineCharProxy(schemaChar) {
 class Game {
   constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf0f0f0);
-    this.camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 300);
+    // Direction E — Castaway Atoll. Sky-gradient background + sea fog so the
+    // distant atolls fade into the horizon believably. Fog 'far' bumped vs the
+    // 10u-radius mockup since ARENA_RADIUS=66.89 here — camera is ~34u up and
+    // ~26u back, so fog near=80 / far=260 keeps the island fully clear and
+    // softens the distant atolls / sea horizon.
+    this.scene.background = this._makeSkyGradientTexture(0xCFE3D9, 0xFAE6C6);
+    this.scene.fog = new THREE.Fog(0xBCD8DE, 80, 260);
+    this.camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 600);
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
@@ -819,8 +852,10 @@ class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(this.renderer.domElement);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.6);
+    // Direction E lighting: warm dawn ambient + golden-hour directional + a
+    // cool soft sea-bounce fill. Tuned in tools/companion/visual-direction.js.
+    this.scene.add(new THREE.AmbientLight(0xfff0d8, 0.78));
+    const dl = new THREE.DirectionalLight(0xfff2c8, 0.7);
     dl.position.set(5, 15, 5);
     dl.castShadow = true;
     // Performance: 1024² shadow map is plenty for ~30 cube characters viewed
@@ -838,23 +873,17 @@ class Game {
     this.scene.add(dl);
     this.scene.add(dl.target);
     this.shadowLight = dl;
+    // Cool soft sea-bounce fill (no shadows; just brings up shadow-side pixels).
+    const bounce = new THREE.DirectionalLight(0x88B8D0, 0.18);
+    bounce.position.set(-3, 3, -3);
+    this.scene.add(bounce);
 
-    // Ground
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(ARENA_RADIUS, 128),
-      new THREE.MeshLambertMaterial({ color: 0xffffff })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-    // Border
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(ARENA_RADIUS - 0.2, ARENA_RADIUS + 0.2, 128),
-      new THREE.MeshBasicMaterial({ color: 0xe0e0e0, side: THREE.DoubleSide })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.01;
-    this.scene.add(ring);
+    // Direction E ground stack — animated water + sand cylinder + grass top +
+    // cliff-rocks rim + distant atolls. _islandTopY is the canonical Y for
+    // anything that should render "on the island" (territory mesh, characters,
+    // trails, FX). See docs/visual-direction-plan.md §18 (Slice A).
+    this._islandTopY = 0;
+    this._buildEWaterAndIsland();
 
     this.characters = [];
     this.player = null;
@@ -1363,7 +1392,7 @@ class Game {
       const proxy = makeOnlineCharProxy(schemaChar);
       const color = FACTION_COLORS[schemaChar.factionId - 1] ?? 0x808080;
       // No human player yet (Task 17); mark all as non-player so input ignores them.
-      const r = new Character(this.scene, proxy, color, false);
+      const r = new Character(this.scene, proxy, color, false, this._islandTopY || 0);
       this.characters.push(r);
       this._charBySim.set(proxy, r);
     }
@@ -1585,7 +1614,7 @@ class Game {
     for (const sc of this.sim.characters) {
       const isPlayer = (sc === playerSimChar);
       const color = FACTION_COLORS[sc.factionId - 1];
-      const r = new Character(this.scene, sc, color, isPlayer);
+      const r = new Character(this.scene, sc, color, isPlayer, this._islandTopY || 0);
       this.characters.push(r);
       this._charBySim.set(sc, r);
       if (isPlayer) {
@@ -1620,13 +1649,19 @@ class Game {
     initVibeJamPortals({
       scene: this.portalLayer,
       getPlayer: () => this.player?.group ?? null,
-      spawnPoint:   { x: -ARENA_RADIUS + 8, y: 1, z: 0 }, // start (red) — west edge
-      exitPosition: { x:  ARENA_RADIUS - 8, y: 1, z: 0 }, // exit (green) — east edge
+      spawnPoint:   { x: -ARENA_RADIUS + 1, y: 1, z: 0 }, // start (red) — west edge (very edge)
+      exitPosition: { x:  ARENA_RADIUS - 1, y: 1, z: 0 }, // exit (green) — east edge (very edge)
     });
   }
 
   tick(dt) {
     if (!this.started) return;
+
+    // Direction E water shader — advance the wave/foam/glitter time uniform.
+    // ~0.4ms total water cost; uniform write is free.
+    if (this._waterMat) {
+      this._waterMat.uniforms.uTime.value = performance.now() * 0.001;
+    }
 
     // ---- Player input: collect WASD + mouse → player.targetDir in any mode. ----
     if (this.player && this.player.alive && this.player.isPlayer) {
@@ -1741,12 +1776,12 @@ class Game {
     }
     const smooth = 1 - Math.pow(0.03, dt);
     this.camCurrent.lerp(this.camTarget, smooth);
-    this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT, this.camCurrent.z + CAMERA_Z_OFFSET);
-    this.camera.lookAt(this.camCurrent.x, 0, this.camCurrent.z);
+    this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT + this._islandTopY, this.camCurrent.z + CAMERA_Z_OFFSET);
+    this.camera.lookAt(this.camCurrent.x, this._islandTopY, this.camCurrent.z);
 
     if (this.shadowLight) {
-      this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);
-      this.shadowLight.target.position.set(this.camCurrent.x, 0, this.camCurrent.z);
+      this.shadowLight.position.set(this.camCurrent.x + 5, 15 + this._islandTopY, this.camCurrent.z + 5);
+      this.shadowLight.target.position.set(this.camCurrent.x, this._islandTopY, this.camCurrent.z);
       this.shadowLight.target.updateMatrixWorld();
     }
 
@@ -1838,8 +1873,189 @@ class Game {
 
     this.territoryMesh = new THREE.Mesh(geom, mat);
     this.territoryMesh.rotation.x = -Math.PI / 2;
-    this.territoryMesh.position.y = 0.02;
+    // Direction E: territory mesh sits on top of the grass island, not at world
+    // Y=0 (which would be below the sand cylinder + under the water plane).
+    // _islandTopY is the canonical "stand on the island" Y; +0.01 keeps the
+    // mesh just above the grass to avoid Z-fighting with the grass disc.
+    this.territoryMesh.position.y = (this._islandTopY || 0) + 0.01;
     this.scene.add(this.territoryMesh);
+  }
+
+  // -- Direction E: sky gradient + water + island --------------------------
+  // Builds a vertical gradient CanvasTexture (1×256). Used as scene.background
+  // so the horizon fades from sky-cool at the bottom to peach-warm at the top.
+  _makeSkyGradientTexture(topHex, bottomHex) {
+    const cv = document.createElement("canvas");
+    cv.width = 4; cv.height = 256;
+    const ctx = cv.getContext("2d");
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, "#" + topHex.toString(16).padStart(6, "0"));
+    grad.addColorStop(1, "#" + bottomHex.toString(16).padStart(6, "0"));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 4, 256);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  // Animated water + sand cylinder + grass top + cliff-rocks rim + distant
+  // atolls. Ported from tools/companion/visual-direction.js _buildWaterAndIsland
+  // (Direction E mockup). Re-scaled for game's ARENA_RADIUS=66.89 (mockup=10):
+  //   * Geometry that uses ARENA_RADIUS multipliers ports verbatim.
+  //   * Cliff-rocks: bumped from 0.5–1.0u (mockup) to 3.3–6.7u (×6.689) so they
+  //     read as actual cliff-rocks at game scale rather than pebbles.
+  //   * Distant atolls: bumped to 10–18u and pushed out further (radius 3× the
+  //     arena) so they sit at the fog edge as silhouetted background scenery.
+  // Performance budget: water shader ~0.4ms; rest <0.1ms. Total +0.5ms.
+  _buildEWaterAndIsland() {
+    // 1) Animated water plane. ShaderMaterial: two summed sin waves in vertex
+    // stage, deep-teal base + foam ring + scrolling sun-glitter in fragment
+    // stage. Pixels INSIDE the island radius are discarded to save fillrate.
+    const seaCol = new THREE.Color(0x1E6F7E);   // deep teal — chosen for distance from faction Blue
+    const foamCol = new THREE.Color(0xFFFFFF);
+    const sunCol = new THREE.Color(0xFFE8B0);
+    this._waterMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uIslandRadius: { value: ARENA_RADIUS * 1.02 },
+        // Foam ring width — bumped from 1.2u (mockup) to ~5u for game scale,
+        // so the foam strand visibly hugs the island instead of being a thin
+        // hairline at this camera distance.
+        uFoamWidth: { value: 5.0 },
+        uSeaColor: { value: seaCol },
+        uFoamColor: { value: foamCol },
+        uSunColor: { value: sunCol },
+        uSunDir: { value: new THREE.Vector2(0.6, 0.4).normalize() },
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        void main() {
+          vec3 p = position;
+          // Two summed sin waves at different freq/dir for stylized chop.
+          // Frequencies divided by ~6 vs mockup so wavelengths scale with the
+          // larger arena (otherwise waves look like noise at game distance).
+          float w1 = sin(p.x * 0.06 + uTime * 1.2) * 1.0;
+          float w2 = sin(p.y * 0.05 - uTime * 0.9 + p.x * 0.018) * 0.7;
+          float wave = w1 + w2;
+          p.z += wave;
+          vWaveY = wave;
+          vWorldXZ = p.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uIslandRadius;
+        uniform float uFoamWidth;
+        uniform vec3 uSeaColor;
+        uniform vec3 uFoamColor;
+        uniform vec3 uSunColor;
+        uniform vec2 uSunDir;
+        varying vec2 vWorldXZ;
+        varying float vWaveY;
+        void main() {
+          float dist = length(vWorldXZ);
+          // Discard pixels INSIDE the island radius — saves fillrate.
+          if (dist < uIslandRadius - 0.05) discard;
+
+          // Base color depth-shaded by wave height (lighter at crests).
+          vec3 col = uSeaColor + vec3(0.18) * smoothstep(-0.6, 1.0, vWaveY);
+
+          // Foam ring near the island — fade out across uFoamWidth units.
+          float foamMask = 1.0 - smoothstep(uIslandRadius, uIslandRadius + uFoamWidth, dist);
+          // Animated foam strands — frequencies scaled for arena size.
+          float foamNoise = sin(vWorldXZ.x * 0.28 + uTime * 2.4) * 0.5
+                          + sin(vWorldXZ.y * 0.23 - uTime * 1.7) * 0.5;
+          float foamStrand = smoothstep(0.3, 0.9, foamNoise);
+          float foam = foamMask * (0.7 + 0.3 * foamStrand);
+          col = mix(col, uFoamColor, foam);
+
+          // Sparse sun-glitter stripes scrolling along uSunDir.
+          float glitProj = dot(vWorldXZ, uSunDir);
+          float glit = sin(glitProj * 0.2 + uTime * 1.6);
+          float glitMask = smoothstep(0.85, 1.0, glit) * smoothstep(0.3, 1.4, vWaveY);
+          col = mix(col, uSunColor, glitMask * 0.55);
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+      fog: false,    // procedural color already handles depth via fog-color glitter
+    });
+    const waterGeom = new THREE.PlaneGeometry(ARENA_RADIUS * 6, ARENA_RADIUS * 6, 80, 80);
+    const water = new THREE.Mesh(waterGeom, this._waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = -0.25; // slightly below island top, hides edge
+    this.scene.add(water);
+    this._waterMesh = water;
+
+    // 2) Island stack — sand base + grass top — both raised slightly above
+    // water. Sand cylinder hangs below the grass like a beach.
+    const sandMat = new THREE.MeshStandardMaterial({
+      color: 0xE2C58A, roughness: 0.95,
+    });
+    // Cylinder height bumped from 0.45u (mockup) to 1.5u for game scale —
+    // otherwise the beach silhouette is invisible against the water at the
+    // camera's distance. Y placement keeps grass top close to world Y=0.
+    const sand = new THREE.Mesh(
+      new THREE.CylinderGeometry(ARENA_RADIUS * 1.08, ARENA_RADIUS * 1.18, 1.5, 48),
+      sandMat,
+    );
+    sand.position.y = -0.55;
+    sand.receiveShadow = true;
+    this.scene.add(sand);
+
+    // Grass top — circle on top of the sand cylinder. This is the actual
+    // gameplay surface; territory mesh + characters + trails sit on this.
+    const grass = new THREE.Mesh(
+      new THREE.CircleGeometry(ARENA_RADIUS, 64),
+      new THREE.MeshLambertMaterial({ color: 0x9CC15A }),
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.y = 0.18;
+    grass.receiveShadow = true;
+    this.scene.add(grass);
+    // Canonical "island top" Y — anything that should render on the grass
+    // (territory mesh, characters, trails, respawn FX) reads from this.
+    this._islandTopY = 0.19;
+
+    // 3) Cube cliff-rocks around the rim. 14 chunky stones, varied size.
+    // Sizes bumped ×6.7 vs mockup so they read as cliff-rocks (not pebbles)
+    // at the game's camera distance.
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.95 });
+    const rockMatDark = new THREE.MeshStandardMaterial({ color: 0x6d6045, roughness: 0.95 });
+    const rockCount = 14;
+    for (let i = 0; i < rockCount; i++) {
+      const ang = (i / rockCount) * Math.PI * 2 + (Math.random() * 0.12);
+      const r = ARENA_RADIUS * 1.05 + Math.random() * 3.0;
+      const sz = 3.3 + Math.random() * 3.4;     // mockup 0.5–0.99 × 6.689
+      const rock = new THREE.Mesh(
+        new THREE.BoxGeometry(sz, sz * 0.7, sz),
+        i % 3 === 0 ? rockMatDark : rockMat,
+      );
+      rock.position.set(Math.cos(ang) * r, sz * 0.35 - 0.1, Math.sin(ang) * r);
+      rock.rotation.y = Math.random() * Math.PI;
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      this.scene.add(rock);
+    }
+
+    // 4) Distant atolls — background scenery, no shadows, behind fog. Pushed
+    // out to ~3× ARENA_RADIUS so they sit on the fog horizon, dimensions
+    // bumped ×6.7 vs mockup so the silhouette reads at distance.
+    for (let i = 0; i < 3; i++) {
+      const ang = -Math.PI / 2 + (i - 1) * 0.6 + (Math.random() - 0.5) * 0.2;
+      const r = ARENA_RADIUS * 2.8 + Math.random() * ARENA_RADIUS * 0.6;
+      const dwidth = 10.7 + Math.random() * 8.0;     // mockup 1.6–2.8 × 6.689
+      const dheight = 3.3 + Math.random() * 2.7;     // mockup 0.5–0.9 × 6.689
+      const distantAtoll = new THREE.Mesh(
+        new THREE.BoxGeometry(dwidth, dheight, dwidth),
+        new THREE.MeshStandardMaterial({ color: 0x7a8b62, roughness: 1.0 }),
+      );
+      distantAtoll.position.set(Math.cos(ang) * r, dheight / 2 - 0.5, Math.sin(ang) * r);
+      this.scene.add(distantAtoll);
+    }
   }
 
   // Throttle the (heavy) putImageData to at most ~10 Hz. Claims and
@@ -2008,7 +2224,8 @@ if (arrivedViaPortal) {
     // Recenter camera on the new spawn so the player isn't off-screen.
     game.camCurrent.set(startX, 0, startZ);
     game.camTarget.copy(game.camCurrent);
-    game.camera.position.set(startX, CAMERA_HEIGHT, startZ + CAMERA_Z_OFFSET);
-    game.camera.lookAt(startX, 0, startZ);
+    const yLift = game._islandTopY || 0;
+    game.camera.position.set(startX, CAMERA_HEIGHT + yLift, startZ + CAMERA_Z_OFFSET);
+    game.camera.lookAt(startX, yLift, startZ);
   }
 }

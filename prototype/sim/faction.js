@@ -8,7 +8,11 @@ export const CHARS_PER_FACTION = 6;
 export const ENDANGERED_THRESHOLD = 10;   // territory % below which endangered triggers
 export const RECOVERY_THRESHOLD = 12;     // territory % at or above which recovery triggers
 
-export const FACTION_COLORS = [0xE53935, 0x1E88E5, 0x43A047, 0xFDD835, 0x8E24AA];
+// Direction E (Castaway Atoll) palette — desaturated cooler Blue (locked
+// per Director 2026-04-30) keeps the faction distinct from the deep-teal sea;
+// boosted Yellow reads against teal water reflections at distance.
+// Round 3 retune: see docs/visual-direction-plan.md §16 + §18.
+export const FACTION_COLORS = [0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE];
 export const FACTION_NAMES = ["Red", "Blue", "Green", "Yellow", "Purple"];
 
 export class FactionManager {
