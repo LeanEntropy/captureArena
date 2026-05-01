@@ -487,8 +487,11 @@ describe("Simulation", () => {
     sim.claim(c);
     const after = countCellsOwnedBy(sim.grid, 1);
     expect(c.trailVerts.length).toBe(0);
-    // No meaningful change.
-    expect(Math.abs(after - before)).toBeLessThan(5);
+    // No meaningful change. The wall stamp at WALL_RADIUS=2 produces a
+    // 5×5 footprint at the trail point; a few of those cells may flip if the
+    // trail point is right on the own-faction boundary, but it must remain
+    // far below any flood-fill commit (which would be hundreds of cells).
+    expect(Math.abs(after - before)).toBeLessThan(30);
   });
 
   it("Flood-fill claim: onClaimResult fires with cell-diff matching the cells flipped to factionId", () => {

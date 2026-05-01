@@ -566,20 +566,37 @@ export class Simulation {
     if (endNear.gx > maxGX) maxGX = endNear.gx;
     if (endNear.gy < minGY) minGY = endNear.gy;
     if (endNear.gy > maxGY) maxGY = endNear.gy;
-    // Pad bbox by 3 cells on each side so sub-fill perimeter checks always
-    // have a 1-cell margin around the trail+bridge stamp. Clamp to grid.
-    const PAD = 3;
+    // Pad bbox to enclose not just the trail but also the loop-closure path
+    // along own-faction territory between the two anchors. The inside-region
+    // BFS uses own-faction cells as walls; if the bbox edge falls between the
+    // trail and the connecting own-faction cells, the BFS hits the bbox edge
+    // and incorrectly marks the inside region as "escaped".
+    //
+    // Heuristic: scale PAD with trail extent (the connecting own-faction path
+    // is at most as long as the trail itself for most realistic shapes), with
+    // a small floor for the wall-thickness margin and a cap so degenerate
+    // long trails don't blow the perf budget.
+    const WALL_RADIUS = 2;
+    const trailExtent = Math.max(maxGX - minGX, maxGY - minGY);
+    const PAD = Math.min(120, Math.max(WALL_RADIUS + 2, trailExtent));
     minGX = Math.max(0, minGX - PAD);
     minGY = Math.max(0, minGY - PAD);
     maxGX = Math.min(N - 1, maxGX + PAD);
     maxGY = Math.min(N - 1, maxGY + PAD);
 
+    // Wall thickness rationale: with TRAIL_KILL_DIST=0.6 (~4.6 cells) the player
+    // can come within ~4 cells of an older part of their own trail before dying.
+    // A 3-cell-thick wall (radius=1) leaves a 1-row gap when the trail's stamp
+    // from one row doesn't reach a parallel segment 2 rows away — a 4-connected
+    // BFS leaks straight through. A 5-cell-thick wall (radius=2) merges
+    // parallel segments up to 4 cells apart into a solid wall, eliminating the
+    // gap-leak that produced thin-line claim outcomes.
     for (let i = 0; i < trail.length - 1; i++) {
-      this._rasterizeLine(trailMask, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy, false, 1, trailCells);
+      this._rasterizeLine(trailMask, tg[i].gx, tg[i].gy, tg[i + 1].gx, tg[i + 1].gy, false, WALL_RADIUS, trailCells);
     }
     // Bridges: trail[0] → nearest own cell, trail[N-1] → nearest own cell.
-    this._rasterizeLine(trailMask, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy, false, 1, trailCells);
-    this._rasterizeLine(trailMask, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy, false, 1, trailCells);
+    this._rasterizeLine(trailMask, tg[0].gx, tg[0].gy, startNear.gx, startNear.gy, false, WALL_RADIUS, trailCells);
+    this._rasterizeLine(trailMask, tg[trail.length - 1].gx, tg[trail.length - 1].gy, endNear.gx, endNear.gy, false, WALL_RADIUS, trailCells);
 
     // 3. For every cell adjacent to a trail cell, run a sub-flood-fill.
     //    Walls = sentinel | own faction | trail cells.
@@ -593,14 +610,6 @@ export class Simulation {
     const visited = new Uint8Array(N * N);
     const changedCells = []; // flat list of grid indices that flipped owner
     const losers = new Set(); // factions that lost cells — invalidate contour cache
-
-    // [CLAIM_DIAG] sub-fill statistics
-    let _diagAttempts = 0;
-    let _diagCommitted = 0;
-    let _diagDiscarded = 0;
-    let _diagCellsCommittedTotal = 0;
-    let _diagCellsDiscardedTotal = 0;
-    let _diagLargestDiscardSize = 0;
 
     // Reusable BFS scratch arrays. Re-allocated only if a sub-fill outgrows
     // them; keeps the common-case allocation cost down to one push per cell.
@@ -636,7 +645,6 @@ export class Simulation {
         subQueue.length = 0;
         subQueue.push(sIdx);
         visited[sIdx] = 1;
-        _diagAttempts++;
         let touchedBoundary = false;
         let head = 0;
 
@@ -649,9 +657,10 @@ export class Simulation {
             const ax = cx + NEIGHBORS[i][0];
             const ay = cy + NEIGHBORS[i][1];
             // Out of bbox = "outside the trail loop" = sub-fill escaped.
-            // (The bbox padding guarantees a real escape if the wall has a
-            // gap; without bounding here the sub-fill could traverse the
-            // entire arena chasing a leak, blowing the perf budget.)
+            // The bbox is sized to cover both the trail and the own-faction
+            // loop-closure path between the two anchors (PAD scales with
+            // trail extent above), so an honest enclosed region's BFS hits
+            // own-faction or trail walls before bbox edge.
             if (ax < minGX || ax > maxGX || ay < minGY || ay > maxGY) {
               touchedBoundary = true;
               continue;
@@ -672,8 +681,6 @@ export class Simulation {
 
         if (!touchedBoundary) {
           // Enclosed region: commit every cell to the claimer.
-          _diagCommitted++;
-          _diagCellsCommittedTotal += subCells.length;
           for (let i = 0; i < subCells.length; i++) {
             const ci = subCells[i];
             const prev = grid[ci];
@@ -684,10 +691,6 @@ export class Simulation {
             grid[ci] = factionId;
             changedCells.push(ci);
           }
-        } else {
-          _diagDiscarded++;
-          _diagCellsDiscardedTotal += subCells.length;
-          if (subCells.length > _diagLargestDiscardSize) _diagLargestDiscardSize = subCells.length;
         }
         // If touchedBoundary: discard. visited[] entries stay set so other
         // trail-adjacent seeds skip the same open region.
@@ -716,78 +719,6 @@ export class Simulation {
     // 5. Clear trail and fire hooks.
     char.trailVerts = [];
     const cellsFlipped = changedCells.length;
-
-    // [CLAIM_DIAG] Always log basic stats; on suspected thin-line, dump full state.
-    try {
-      const _thinLine = cellsFlipped <= trailCells.length + 5;
-      const _diagSummary = {
-        ts: Date.now(),
-        charId: char.id,
-        factionId,
-        trailLen: trail.length,
-        bridges: {
-          start: { trail: { gx: tg[0].gx, gy: tg[0].gy }, near: { gx: startNear.gx, gy: startNear.gy } },
-          end:   { trail: { gx: tg[trail.length - 1].gx, gy: tg[trail.length - 1].gy }, near: { gx: endNear.gx, gy: endNear.gy } },
-        },
-        bbox: { minGX, minGY, maxGX, maxGY, w: maxGX - minGX, h: maxGY - minGY },
-        trailCells: trailCells.length,
-        subFillStats: {
-          totalAttempts: _diagAttempts,
-          committed: _diagCommitted,
-          discarded: _diagDiscarded,
-          cellsCommittedTotal: _diagCellsCommittedTotal,
-          cellsDiscardedTotal: _diagCellsDiscardedTotal,
-          largestDiscardSize: _diagLargestDiscardSize,
-        },
-        result: cellsFlipped,
-        thinLine: _thinLine,
-      };
-      // eslint-disable-next-line no-console
-      console.log("[CLAIM]", JSON.stringify(_diagSummary));
-      if (_thinLine && typeof window !== "undefined") {
-        // Build a trail/bbox dump. Encode walls as plain int array (small).
-        const wallsArr = Array.from(trailCells);
-        // Snapshot the full grid window inside bbox: row-major, with sentinel→255, factionId→1, others→0.
-        const w = maxGX - minGX + 1;
-        const h = maxGY - minGY + 1;
-        const snap = new Uint8Array(w * h);
-        for (let yy = 0; yy < h; yy++) {
-          for (let xx = 0; xx < w; xx++) {
-            const gv = grid[(minGY + yy) * N + (minGX + xx)];
-            // Encode: 0=empty, 1=ownFaction, 2=otherFaction, 255=sentinel
-            if (gv === GRID_SENTINEL) snap[yy * w + xx] = 255;
-            else if (gv === factionId) snap[yy * w + xx] = 1;
-            else if (gv === 0) snap[yy * w + xx] = 0;
-            else snap[yy * w + xx] = 2;
-          }
-        }
-        // Trail world coords (we capture pre-mutated grid by re-reading bbox after mutation;
-        // but mutations only affect own faction so "1" cells include freshly-claimed which is fine for
-        // post-mortem. Nevertheless save the trail itself for reconstruction.)
-        const trailDump = trail.map(p => ({ x: p.x, z: p.z }));
-        const tgDump = tg.map(p => ({ gx: p.gx, gy: p.gy }));
-        const dump = {
-          summary: _diagSummary,
-          trail: trailDump,
-          trailGrid: tgDump,
-          bbox: { minGX, minGY, maxGX, maxGY, w, h },
-          walls: wallsArr,
-          startNear, endNear,
-          gridSnapshotBase64: typeof Buffer !== "undefined"
-            ? Buffer.from(snap).toString("base64")
-            : (() => {
-                // Browser path: btoa with binary string
-                let s = "";
-                for (let i = 0; i < snap.length; i++) s += String.fromCharCode(snap[i]);
-                return btoa(s);
-              })(),
-        };
-        if (!window.__claimThinLineDumps) window.__claimThinLineDumps = [];
-        window.__claimThinLineDumps.push(dump);
-        // eslint-disable-next-line no-console
-        console.log("[THIN_LINE_DUMP]", `dump#${window.__claimThinLineDumps.length} cellsFlipped=${cellsFlipped} trailCells=${trailCells.length}`);
-      }
-    } catch (_e) { /* diagnostics never throw */ }
 
     // Build flat trail-points array for the legacy onClaim hook (renderers
     // use it to clear trail meshes by charId).
