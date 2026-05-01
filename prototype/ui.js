@@ -306,11 +306,29 @@ export class UIManager {
       `<span style="flex-shrink:0;min-width:36px;text-align:right;">Cap %</span>` +
       `</div>`;
 
+    // Online presence indicator — only shown when in multiplayer with >5
+    // human players, so it stays out of the way during sparse rooms.
+    let presenceHtml = "";
+    if (typeof window !== "undefined" && window._game?.mp) {
+      let humans = 0;
+      for (const c of window._game.characters || []) {
+        if (c.simChar?.isHuman) humans++;
+      }
+      if (humans > 5) {
+        presenceHtml =
+          `<div style="margin-top:6px;padding:4px 6px;border-top:1px solid rgba(0,0,0,0.15);font-size:11px;color:#666;text-align:center;font-weight:bold;">` +
+          `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3CB54A;margin-right:5px;vertical-align:middle;"></span>` +
+          `${humans} players online` +
+          `</div>`;
+      }
+    }
+
     this.leaderboardEl.innerHTML =
       `<div class="lb-title">Leaderboard</div>` +
       headerHtml +
       `<div class="lb-list">${listHtml}</div>` +
-      `<div class="lb-pinned" id="lb-pinned-player">${pinnedHtml}</div>`;
+      `<div class="lb-pinned" id="lb-pinned-player">${pinnedHtml}</div>` +
+      presenceHtml;
 
     // Check visibility: hide pinned row if player is in top 10 or visible in scroll
     this._updatePinnedVisibility(playerRank);
