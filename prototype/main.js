@@ -2167,6 +2167,12 @@ class Game {
         this.fx.triggerRespawn(c.group, baseY, c.simChar.pos.x, c.simChar.pos.z);
         if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
         if (c === this.player) this.hud.push("You spawned (invuln 2s)");
+        // Juice: punch-in then pull-back camera zoom on local player respawn.
+        if (c === this.player) {
+          const savedZoom = this._cameraZoomTarget;
+          this._cameraZoomTarget = 0.45;          // zoom in fast
+          setTimeout(() => { this._cameraZoomTarget = savedZoom; }, 450); // pull back to normal
+        }
         dlog("RESPAWN", `${c.name} respawned`, { x: c.simChar.pos.x.toFixed(1), z: c.simChar.pos.z.toFixed(1) });
       }
 
