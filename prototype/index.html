@@ -120,6 +120,83 @@
       background: rgba(0,0,0,0.85);
       border-color: white;
     }
+    /* Settings (gears) button — sits next to the music icon. Same circular
+       chrome as #music-toggle-hud so they read as a paired set. */
+    #settings-toggle-hud {
+      position: absolute;
+      left: 250px;
+      bottom: 16px;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+      z-index: 12;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #settings-toggle-hud:hover {
+      background: rgba(0,0,0,0.85);
+      border-color: white;
+    }
+    /* Settings popup — small card anchored above the gears button. */
+    #settings-popup {
+      position: absolute;
+      left: 230px;
+      bottom: 64px;
+      min-width: 180px;
+      padding: 12px 14px 10px 14px;
+      background: #FFE140;
+      color: #1a0f08;
+      border: 3px solid #1a0f08;
+      border-radius: 6px;
+      box-shadow: 4px 4px 0 #1a0f08;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      pointer-events: auto;
+      z-index: 13;
+      display: none;
+    }
+    #settings-popup.visible { display: block; }
+    #settings-popup .settings-title {
+      font-size: 14px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+      padding-right: 18px;
+    }
+    #settings-popup .settings-close {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      width: 22px; height: 22px;
+      padding: 0;
+      background: transparent;
+      color: #1a0f08;
+      border: none;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #settings-popup .settings-close:hover { background: rgba(0,0,0,0.1); }
+    #settings-popup label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    #settings-popup input[type="checkbox"] {
+      width: 16px; height: 16px;
+      cursor: pointer;
+    }
     #music-toggle-title {
       width: 44px; height: 44px;
       padding: 0;
@@ -377,6 +454,15 @@
     <div id="hud-bottom"></div>
     <div id="minimap-container"><canvas id="minimap"></canvas></div>
     <button id="music-toggle-hud" title="Toggle music">&#x1F50A;</button>
+    <button id="settings-toggle-hud" title="Settings">&#x2699;</button>
+    <div id="settings-popup">
+      <button class="settings-close" id="settings-close" title="Close">&times;</button>
+      <div class="settings-title">SETTINGS</div>
+      <label>
+        <input type="checkbox" id="setting-waves" checked>
+        Battlefield waves
+      </label>
+    </div>
     <button id="return-to-menu">Main Menu</button>
     <!-- Mobile collapse tabs — shown only on mobile via media query -->
     <button class="hud-collapse-tab" data-target="hud-tr" title="Toggle factions">&#x2691;</button>

@@ -14,6 +14,10 @@ import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./p
 const CAMERA_HEIGHT = 34;
 const CAMERA_Z_OFFSET = 26;
 const TRAIL_WIDTH = 0.8;
+// Trail is a 3D extruded ribbon: bottom edge at TRAIL_Y, top edge above the
+// peak wave amplitude (waves cap ~0.55) so the player's path stays visible
+// above the wavy arena surface.
+const TRAIL_Y_TOP = 0.85;
 
 // ===== Theme F (Atoll Hybrid) — Y stratification =====
 // Director's HARD RULE from prior reverted Slice A: the floor of the island
@@ -546,6 +550,13 @@ class Character {
 
     // Allocate / grow geometry buffers if needed. Capacity doubles each time
     // to amortize growth cost; max trail length is bounded by sim's MAX_TRAIL.
+    // 3D trail layout: 4 verts per point laid out as
+    //   [0]=bottom-left, [1]=bottom-right, [2]=top-left, [3]=top-right
+    // Each segment from i-1 → i becomes 3 quads (top + 2 side walls) = 6 tris
+    // = 18 indices. Bottom face is omitted (camera looks down, never sees it).
+    const VERTS_PER_POINT = 4;
+    const FLOATS_PER_POINT = VERTS_PER_POINT * 3;       // 12
+    const INDICES_PER_SEGMENT = 18;
     if (!this.trailMesh || (this._trailGeomCapacity || 0) < verts.length) {
       if (this.trailMesh) {
         this.scene.remove(this.trailMesh);
@@ -553,9 +564,11 @@ class Character {
         this.trailMesh = null;
       }
       const cap = Math.max(64, Math.ceil(verts.length * 1.5));
-      const positions = new Float32Array(cap * 6);   // 2 verts/point × 3 floats
-      const useUint32 = cap * 2 > 65535;
-      const indexArr = useUint32 ? new Uint32Array(cap * 6) : new Uint16Array(cap * 6);
+      const positions = new Float32Array(cap * FLOATS_PER_POINT);
+      const useUint32 = cap * VERTS_PER_POINT > 65535;
+      const indexArr = useUint32
+        ? new Uint32Array(cap * INDICES_PER_SEGMENT)
+        : new Uint16Array(cap * INDICES_PER_SEGMENT);
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       geom.setIndex(new THREE.BufferAttribute(indexArr, 1));
@@ -565,7 +578,7 @@ class Character {
       }));
       this.scene.add(this.trailMesh);
       this._trailGeomCapacity = cap;
-      this._trailWrittenCount = 0;     // # of points whose ribbon verts are filled
+      this._trailWrittenCount = 0;     // # of points whose 4 verts are filled
       this._trailIndexCount = 0;       // # of indices written
     }
 
@@ -590,9 +603,15 @@ class Character {
       }
       const len = Math.sqrt(dx*dx + dz*dz) || 1;
       const nx = -dz/len, nz = dx/len;
-      const o = i * 6;
-      posArr[o    ] = p.x + nx*hw; posArr[o + 1] = TRAIL_Y; posArr[o + 2] = p.z + nz*hw;
-      posArr[o + 3] = p.x - nx*hw; posArr[o + 4] = TRAIL_Y; posArr[o + 5] = p.z - nz*hw;
+      const o = i * FLOATS_PER_POINT;
+      // bottom-left (Y=TRAIL_Y, +normal)
+      posArr[o     ] = p.x + nx*hw; posArr[o +  1] = TRAIL_Y;     posArr[o +  2] = p.z + nz*hw;
+      // bottom-right (Y=TRAIL_Y, -normal)
+      posArr[o +  3] = p.x - nx*hw; posArr[o +  4] = TRAIL_Y;     posArr[o +  5] = p.z - nz*hw;
+      // top-left (Y=TRAIL_Y_TOP, +normal)
+      posArr[o +  6] = p.x + nx*hw; posArr[o +  7] = TRAIL_Y_TOP; posArr[o +  8] = p.z + nz*hw;
+      // top-right (Y=TRAIL_Y_TOP, -normal)
+      posArr[o +  9] = p.x - nx*hw; posArr[o + 10] = TRAIL_Y_TOP; posArr[o + 11] = p.z - nz*hw;
     };
 
     // Rewrite the previous tail (its forward-neighbor changed) and write all
@@ -600,13 +619,23 @@ class Character {
     const start = Math.max(0, (this._trailWrittenCount || 0) - 1);
     for (let i = start; i < verts.length; i++) {
       writePoint(i);
-      if (i > 0 && i >= (this._trailIndexCount / 6 | 0) + 1) {
-        // Append two triangles for the newly-formed segment from i-1 to i.
-        const pr = (i - 1) * 2, cr = i * 2;
-        const o = this._trailIndexCount;
-        idxArr[o    ] = pr;     idxArr[o + 1] = pr + 1; idxArr[o + 2] = cr + 1;
-        idxArr[o + 3] = pr;     idxArr[o + 4] = cr + 1; idxArr[o + 5] = cr;
-        this._trailIndexCount = o + 6;
+      if (i > 0 && i >= (this._trailIndexCount / INDICES_PER_SEGMENT | 0) + 1) {
+        // Vertex base for prev (i-1) and current (i) — each point owns 4 verts.
+        const pBase = (i - 1) * VERTS_PER_POINT;
+        const cBase = i * VERTS_PER_POINT;
+        const pBL = pBase, pBR = pBase + 1, pTL = pBase + 2, pTR = pBase + 3;
+        const cBL = cBase, cBR = cBase + 1, cTL = cBase + 2, cTR = cBase + 3;
+        let o = this._trailIndexCount;
+        // Top face: pTL, pTR, cTR, cTL
+        idxArr[o   ] = pTL; idxArr[o+ 1] = pTR; idxArr[o+ 2] = cTR;
+        idxArr[o+ 3] = pTL; idxArr[o+ 4] = cTR; idxArr[o+ 5] = cTL;
+        // Left wall: pBL, pTL, cTL, cBL
+        idxArr[o+ 6] = pBL; idxArr[o+ 7] = pTL; idxArr[o+ 8] = cTL;
+        idxArr[o+ 9] = pBL; idxArr[o+10] = cTL; idxArr[o+11] = cBL;
+        // Right wall: pBR, pTR, cTR, cBR
+        idxArr[o+12] = pBR; idxArr[o+13] = pTR; idxArr[o+14] = cTR;
+        idxArr[o+15] = pBR; idxArr[o+16] = cTR; idxArr[o+17] = cBR;
+        this._trailIndexCount = o + INDICES_PER_SEGMENT;
       }
     }
     this._trailWrittenCount = verts.length;
@@ -2154,6 +2183,7 @@ class Game {
       this._maybeRebuildTerritory(dt);
       this.fx.update(dt);
       if (this._waterMat) this._waterMat.uniforms.uTime.value += dt;
+      if (this._territoryMat) this._territoryMat.uniforms.uTime.value += dt;
       this.hud.updateNotificationAnchor();
       return;
     }
@@ -2306,6 +2336,7 @@ class Game {
     // ---- Theme F overlays + water shader ----
     this.fx.update(dt);
     if (this._waterMat) this._waterMat.uniforms.uTime.value += dt;
+    if (this._territoryMat) this._territoryMat.uniforms.uTime.value += dt;
     this.hud.updateNotificationAnchor();
     // Faction-state banners (D wooden stamp): poll once/frame, fire on transitions.
     this._pollFactionBanners();
@@ -2664,28 +2695,93 @@ class Game {
     this.territoryTexture.wrapS = THREE.ClampToEdgeWrapping;
     this.territoryTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-    const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
-    // Performance: alphaTest with transparent:false keeps the binary alpha cutout
-    // (boundary cells are fully transparent, all other cells fully opaque) but
-    // skips the alpha-blend pipeline — one of the biggest fillrate costs since
-    // this plane covers most of the screen. Single-sided cuts shading cost in
-    // half (we only ever view it from above).
+    // Subdivided plane so the Vanta wave vertex displacement has resolution
+    // to bend with. Same ShaderMaterial trick as the water (dFdx/dFdy faceted
+    // normals) so the arena reads as faceted polygons that move in sync with
+    // the surrounding waves. Wave displacement is upward-only (n ∈ [0,1]), so
+    // the surface never dips below the cylinder top → no z-fight.
     //
-    // Theme F: polygonOffset pushes the territory mesh forward in z-buffer
-    // by a tiny amount so the depth test prefers it over the cylinder top
-    // face (Y=0 vs territory at Y=0.05) at all camera angles. Belt-and-
-    // suspenders against Z-fighting that broke prior Slice A.
-    const mat = new THREE.MeshBasicMaterial({
-      map: this.territoryTexture,
+    // VISUAL ONLY: characters and collision continue to use TERRITORY_Y; the
+    // simulation is unaware of the wave height.
+    const geom = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 96, 96);
+    this._territoryMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uMap: { value: this.territoryTexture },
+        // Match the water shader's light direction so facet contrast aligns.
+        uLightDir: { value: new THREE.Vector3(0.4, 0.8, 0.5).normalize() },
+        // Lower amplitude than the water (water=1.6) — the arena is the
+        // gameplay surface, so we want a noticeable but gentle ripple, not a
+        // heaving sea. Tweak here to dial wave intensity.
+        uAmplitude: { value: 0.55 },
+        // Spatial frequency multiplier. <1 = longer wavelength (fewer, larger
+        // waves on the arena); 1.0 = same density as the water shader. Tweak
+        // here to dial the wave count without touching the formula.
+        uFreq: { value: 0.5 },
+        // Lambert tint range: result rgb is texColor * mix(uShadeMin, 1.0, lambert).
+        // Keeps texture colors readable while showing clear facet shading.
+        uShadeMin: { value: 0.55 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uAmplitude;
+        uniform float uFreq;
+        varying vec2 vUv;
+        varying vec3 vViewPosition;
+        void main() {
+          // Same Vanta wave formula as the water shader, with a spatial-
+          // frequency multiplier (uFreq). Lower uFreq = longer wavelength.
+          // Plane is rotated -PI/2 around X by the host, so local (x,y)
+          // becomes world (x,z).
+          vec3 p = position;
+          float wsp = 1.0;
+          float fx = p.x * uFreq;
+          float fy = p.y * uFreq;
+          float phase = sqrt(wsp) * cos(-fx - 0.7 * fy);
+          float o = sin(wsp * uTime * 0.02 * 60.0
+                      - wsp * fx * 0.025
+                      + wsp * fy * 0.015
+                      + phase);
+          float n = pow(o + 1.0, 2.0) / 4.0;
+          p.z += n * uAmplitude;
+          vUv = uv;
+          vec4 mvPos = modelViewMatrix * vec4(p, 1.0);
+          vViewPosition = mvPos.xyz;
+          gl_Position = projectionMatrix * mvPos;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uMap;
+        uniform vec3 uLightDir;
+        uniform float uShadeMin;
+        varying vec2 vUv;
+        varying vec3 vViewPosition;
+        void main() {
+          vec4 tex = texture2D(uMap, vUv);
+          // Preserve the original alpha cutout (boundary/sentinel cells are
+          // alpha=0). Discard before doing facet work to save fragment cost.
+          if (tex.a < 0.5) discard;
+
+          // Per-face normal via screen-space derivatives — same trick as the
+          // water shader. Gives flat-shaded facets without duplicating verts.
+          vec3 dx = dFdx(vViewPosition);
+          vec3 dy = dFdy(vViewPosition);
+          vec3 faceNormal = normalize(cross(dx, dy));
+          float lambert = clamp(abs(dot(faceNormal, normalize(uLightDir))), 0.0, 1.0);
+          // Multiplicative tint keeps team colors recognizable while giving
+          // each facet a visibly different shade.
+          float shade = mix(uShadeMin, 1.0, lambert);
+          gl_FragColor = vec4(tex.rgb * shade, 1.0);
+        }
+      `,
       transparent: false,
-      alphaTest: 0.5,
       side: THREE.FrontSide,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
 
-    this.territoryMesh = new THREE.Mesh(geom, mat);
+    this.territoryMesh = new THREE.Mesh(geom, this._territoryMat);
     this.territoryMesh.rotation.x = -Math.PI / 2;
     this.territoryMesh.position.y = TERRITORY_Y;
     this.scene.add(this.territoryMesh);
@@ -3050,6 +3146,44 @@ document.addEventListener("keydown", (e) => {
 
 // Initialize button labels
 _updateMusicButtons();
+
+// Settings popup (gears icon in HUD). Click toggles a small card next to
+// the gears button. Currently exposes one toggle: battlefield waves on/off.
+// Wave toggle works by zeroing the territory shader's amplitude — pure
+// visual flip, no impact on simulation or collisions.
+(function initSettingsPopup() {
+  const btn = document.getElementById("settings-toggle-hud");
+  const popup = document.getElementById("settings-popup");
+  const closeBtn = document.getElementById("settings-close");
+  const wavesChk = document.getElementById("setting-waves");
+  if (!btn || !popup || !closeBtn || !wavesChk) return;
+
+  // Default amplitude is the value set in the territory shader (0.55).
+  const DEFAULT_AMP = 0.55;
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    popup.classList.toggle("visible");
+  });
+  closeBtn.addEventListener("click", () => popup.classList.remove("visible"));
+  // Click outside the popup closes it.
+  document.addEventListener("click", (e) => {
+    if (!popup.classList.contains("visible")) return;
+    if (popup.contains(e.target) || btn.contains(e.target)) return;
+    popup.classList.remove("visible");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && popup.classList.contains("visible")) {
+      popup.classList.remove("visible");
+    }
+  });
+
+  wavesChk.addEventListener("change", () => {
+    const mat = window._game?._territoryMat;
+    if (!mat) return;
+    mat.uniforms.uAmplitude.value = wavesChk.checked ? DEFAULT_AMP : 0.0;
+  });
+})();
 
 // ===================== MOBILE HUD COLLAPSE =====================
 // On mobile (max-width 768px OR pointer:coarse), both the factions panel and
