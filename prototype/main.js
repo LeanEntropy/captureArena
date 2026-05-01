@@ -2963,6 +2963,53 @@ document.addEventListener("keydown", (e) => {
 // Initialize button labels
 _updateMusicButtons();
 
+// ===================== MOBILE HUD COLLAPSE =====================
+// On mobile (max-width 768px OR pointer:coarse), both the factions panel and
+// leaderboard default to collapsed so they don't obscure the arena.
+// Each panel has a companion tab-sticker button that toggles it open/closed.
+// Collapsed state is persisted in localStorage so it survives across sessions.
+
+(function initMobileHUDCollapse() {
+  const isMobile =
+    window.matchMedia("(max-width: 768px)").matches ||
+    window.matchMedia("(pointer: coarse)").matches;
+
+  const PANELS = [
+    { id: "hud-tr",           storageKey: "hudTrCollapsed" },
+    { id: "player-leaderboard", storageKey: "lbCollapsed"  },
+  ];
+
+  // On mobile, restore persisted collapsed state (default: collapsed).
+  // On desktop this function is a no-op (buttons are hidden via CSS anyway).
+  if (isMobile) {
+    for (const panel of PANELS) {
+      const el = document.getElementById(panel.id);
+      if (!el) continue;
+      let collapsed = true; // default collapsed on mobile
+      try {
+        const stored = localStorage.getItem(panel.storageKey);
+        if (stored !== null) collapsed = stored === "true";
+      } catch(e) {}
+      if (collapsed) el.classList.add("collapsed");
+    }
+  }
+
+  // Wire click handlers for all tab stickers (they are present in DOM but
+  // hidden via CSS on desktop, so safe to always attach).
+  document.querySelectorAll(".hud-collapse-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const targetEl = document.getElementById(tab.dataset.target);
+      if (!targetEl) return;
+      const nowCollapsed = targetEl.classList.toggle("collapsed");
+      // Persist the new state
+      const panel = PANELS.find(p => p.id === tab.dataset.target);
+      if (panel) {
+        try { localStorage.setItem(panel.storageKey, String(nowCollapsed)); } catch(e) {}
+      }
+    });
+  });
+})();
+
 // Name entry
 document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";

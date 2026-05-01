@@ -317,6 +317,45 @@
       line-height: 1;
     }
     #rules-modal .modal-close:hover { background: rgba(0,0,0,0.1); }
+
+    /* ============ Mobile: collapsible HUD panels ============ */
+    @media (max-width: 768px), (pointer: coarse) {
+      /* Hide panels when collapsed */
+      #hud-tr.collapsed,
+      #player-leaderboard.collapsed { display: none !important; }
+
+      /* Tab sticker buttons — visible only on mobile */
+      .hud-collapse-tab {
+        position: fixed;
+        right: 0;
+        width: 36px;
+        height: 80px;
+        background: rgba(0,0,0,0.6);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-right: none;
+        border-radius: 8px 0 0 8px;
+        cursor: pointer;
+        pointer-events: auto;
+        z-index: 13;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .hud-collapse-tab:active { background: rgba(0,0,0,0.85); }
+      .hud-collapse-tab[data-target="hud-tr"] { top: 16px; }
+      .hud-collapse-tab[data-target="player-leaderboard"] { top: 110px; }
+    }
+
+    /* On desktop: hide the tab buttons entirely */
+    @media (min-width: 769px) and (pointer: fine) {
+      .hud-collapse-tab { display: none !important; }
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -339,6 +378,9 @@
     <div id="minimap-container"><canvas id="minimap"></canvas></div>
     <button id="music-toggle-hud" title="Toggle music">&#x1F50A;</button>
     <button id="return-to-menu">Main Menu</button>
+    <!-- Mobile collapse tabs — shown only on mobile via media query -->
+    <button class="hud-collapse-tab" data-target="hud-tr" title="Toggle factions">&#x2691;</button>
+    <button class="hud-collapse-tab" data-target="player-leaderboard" title="Toggle leaderboard">&#x1F3C6;</button>
   </div>
   <!-- Theme F overlays: notification stack (cream cards) + center banner (wooden stamp).
        Live OUTSIDE #ui so they don't inherit pointer-events:none and so their stacking
