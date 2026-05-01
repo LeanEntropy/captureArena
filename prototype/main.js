@@ -2155,6 +2155,10 @@ class Game {
             if (child.material && child.material.color) child.material.color.setHex(newColor);
           });
           if (c === this.player && this.uiManager) this.uiManager.setPlayer(this.player.simChar);
+          if (c === this.player) {
+            const fname = FACTION_NAMES[newFactionId - 1] ?? `F${newFactionId}`;
+            this.hud.push(`Reassigned to ${fname} Team`);
+          }
           dlog("REASSIGN", `${c.name} reassigned to faction ${newFactionId}`);
         }
         c.onRespawnVisual();
