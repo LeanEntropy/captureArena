@@ -19,6 +19,8 @@ export class CharacterSchema extends Schema {
   @type("boolean") alive: boolean = true;
   @type("number") invulnTimer: number = 0;
   @type("uint16") killCount: number = 0;
+  @type("uint16") deaths: number = 0;
+  @type("uint32") cellsCaptured: number = 0;
   @type("number") score: number = 0;
   // Last input seq number applied by the server for the client bound to this
   // character. The bound client uses this to drop confirmed inputs from its

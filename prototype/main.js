@@ -521,6 +521,19 @@ class Character {
     capTop.position.y = 1.85;
     capTop.castShadow = true;
     g.add(capTop);
+    // Invuln shield: transparent sphere enclosing the character. Hidden by
+    // default; toggled on in syncVisuals() while invulnTimer > 0. Faction-
+    // colored so onlookers can identify both the player AND that they're
+    // invulnerable at a glance.
+    this.invulnSphere = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.22, depthWrite: false,
+      })
+    );
+    this.invulnSphere.position.y = 1.0;
+    this.invulnSphere.visible = false;
+    g.add(this.invulnSphere);
     return g;
   }
 
@@ -812,9 +825,18 @@ class Character {
       this.group.rotation.y = curAng + d * t;
     }
 
-    this.group.visible = (this.isPlayer && this.invulnTimer > 0)
-      ? Math.sin(performance.now() * 0.01) > 0
-      : true;
+    // Invuln shield visible while invulnTimer > 0 (any character, not just
+    // local player). Pulses subtly so it reads as "active effect" rather than
+    // a static prop. Replaces the old player-only flicker.
+    const invuln = this.invulnTimer > 0;
+    this.group.visible = true;
+    if (this.invulnSphere) {
+      this.invulnSphere.visible = invuln;
+      if (invuln) {
+        const pulse = 0.18 + 0.10 * Math.sin(performance.now() * 0.006);
+        this.invulnSphere.material.opacity = pulse;
+      }
+    }
   }
 
   // Renderer trail mesh teardown. Sim owns the actual trailVerts data; this
@@ -858,6 +880,8 @@ function makeOnlineCharProxy(schemaChar) {
     set invulnTimer(_v) {},
     get killCount() { return schemaChar.killCount; },
     set killCount(_v) {},
+    get deaths() { return schemaChar.deaths ?? 0; },
+    get cellsCaptured() { return schemaChar.cellsCaptured ?? 0; },
     get respawnTimer() { return 0; },
     set respawnTimer(_v) {},
     pos: {
@@ -1740,7 +1764,10 @@ class Game {
       get timeRemaining() { return game.mp.room.state.timeRemaining; },
       get phase() { return game.mp.room.state.phase; },
       get winner() {
-        if (game.mp.room.state.phase !== "ended") return null;
+        const phase = game.mp.room.state.phase;
+        // Server transitions to "intermission" right after the round ends —
+        // we still want to show the winner banner during intermission.
+        if (phase !== "ended" && phase !== "intermission") return null;
         const factions = game.factionManager.getAllFactions();
         return factions.slice().sort((a, b) => b.territoryPct - a.territoryPct)[0] ?? null;
       },
@@ -1752,10 +1779,17 @@ class Game {
     this.scoreTracker = {
       getScore(char) {
         const id = char?.id;
-        if (id == null) return { total: 0, captures: 0, kills: 0, claims: 0 };
+        if (id == null) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
         const cs = game.mp.room.state.characters.find(c => c.id === id);
-        if (!cs) return { total: 0, captures: 0, kills: 0, claims: 0 };
-        return { total: cs.score, captures: 0, kills: cs.killCount, claims: 0 };
+        if (!cs) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
+        return {
+          total: cs.score,
+          captures: 0,
+          kills: cs.killCount,
+          claims: 0,
+          cellsCaptured: cs.cellsCaptured ?? 0,
+          deaths: cs.deaths ?? 0,
+        };
       },
       getLeaderboard() {
         const chars = Array.from(game.mp.room.state.characters);
@@ -1770,6 +1804,8 @@ class Game {
               captures: 0,
               kills: cs.killCount,
               claims: 0,
+              cellsCaptured: cs.cellsCaptured ?? 0,
+              deaths: cs.deaths ?? 0,
             };
           })
           .filter(e => e.char != null);
@@ -2098,10 +2134,15 @@ class Game {
     if (!this.started) return;
 
     // ---- Player input: collect WASD + mouse → player.targetDir in any mode. ----
-    // Frozen during the respawn cinematic — send zero dir so the player doesn't
-    // drift from stale keyboard/mouse input while the camera tween plays.
+    // Frozen during the FIRST TWO PHASES of the respawn cinematic (camera
+    // approach + hold-at-spawn). Once the zoom-back-out begins (phase 3 at
+    // t≥0.65), the player regains control while the camera smoothly returns.
+    // This keeps the "freshly respawned, not moving" feel of the cinematic
+    // without locking the player out for the full 2 seconds.
+    const cinFreezeInput = this._respawnCinematic
+      && (performance.now() - this._respawnCinematic.startTime) < 1300;
     if (this.player && this.player.alive && this.player.isPlayer) {
-      if (this._respawnCinematic) {
+      if (cinFreezeInput) {
         // Input frozen: zero the target direction so the sim doesn't move the
         // player from whatever direction was held at the moment of respawn.
         this.player.targetDir.set(0, 0, 0);
@@ -2165,8 +2206,14 @@ class Game {
       this._stepPrediction(dt);
     }
 
-    // Match ended: still update visuals/HUD then bail out (but tick FX + water).
-    if (this.matchManager && this.matchManager.phase === "ended") {
+    // Match ended (or in intermission for multiplayer): still update visuals/
+    // HUD then bail out (but tick FX + water).
+    const _matchPhase = this.matchManager && this.matchManager.phase;
+    // Reset the one-shot win FX guard when a new round starts.
+    if (_matchPhase === "playing" && this._winFXFired) {
+      this._winFXFired = false;
+    }
+    if (_matchPhase === "ended" || _matchPhase === "intermission") {
       // Win FX (one-shot): fire voxel-rain in the winner's color.
       if (!this._winFXFired) {
         this._winFXFired = true;
@@ -2216,7 +2263,7 @@ class Game {
         const baseY = c.baseY != null ? c.baseY : (ISLAND_TOP_Y + 0.05);
         this.fx.triggerRespawn(c.group, baseY, c.simChar.pos.x, c.simChar.pos.z);
         if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
-        if (c === this.player) this.hud.push("You spawned (invuln 2s)");
+        if (c === this.player) this.hud.push("You spawned (invuln 5s)");
         // Juice: 2-second cinematic on local player respawn.
         // Phase 1 [0–700ms]: camera moves to spawn + zooms in to 0.45.
         // Phase 2 [700–1300ms]: hold (build-up FX plays).
@@ -2340,10 +2387,77 @@ class Game {
     this.hud.updateNotificationAnchor();
     // Faction-state banners (D wooden stamp): poll once/frame, fire on transitions.
     this._pollFactionBanners();
+    // Top-player categories (killer / land grabber / survivor): poll once/frame.
+    this._pollTopPlayers();
     // Countdown intensification: D blocky-flip pulses last 9 seconds.
     if (this.matchManager && this.matchManager.timeRemaining != null) {
       this.hud.setCountdownIntense(this.matchManager.timeRemaining <= 9);
     }
+  }
+
+  // Re-evaluate the three "top" categories (killer / land grabber / survivor)
+  // each frame and:
+  //   * cache the winning charId per category in this._topPlayers
+  //   * fire a banner notification if the LOCAL player just earned an icon
+  // Ties skip the category (no winner). Survivor requires deaths>0 to count
+  // (otherwise everyone alive at game start is tied at 0).
+  // The icons are read by _updateLabels() which prepends them to each label.
+  _pollTopPlayers() {
+    if (!this.scoreTracker) return;
+    const lb = this.scoreTracker.getLeaderboard?.() ?? [];
+    if (lb.length === 0) return;
+
+    const pickTop = (key, lowest) => {
+      let best = null;
+      let bestVal = lowest ? Infinity : -Infinity;
+      let tied = false;
+      for (const e of lb) {
+        const v = e[key] ?? 0;
+        if (lowest ? v < bestVal : v > bestVal) {
+          best = e;
+          bestVal = v;
+          tied = false;
+        } else if (v === bestVal) {
+          tied = true;
+        }
+      }
+      if (!best || tied) return null;
+      // For "top killer" / "top land grabber": require >0 to avoid declaring a
+      // winner when nobody has scored anything yet.
+      if (!lowest && bestVal <= 0) return null;
+      return best.char;
+    };
+
+    const topKiller = pickTop("kills", false);
+    const topGrabber = pickTop("cellsCaptured", false);
+    // Survivor: lowest deaths, but only if at least one player has died
+    // (otherwise the field is meaningless — everyone's at 0).
+    const anyDeaths = lb.some(e => (e.deaths ?? 0) > 0);
+    const topSurvivor = anyDeaths ? pickTop("deaths", true) : null;
+
+    const prev = this._topPlayers || { killer: null, grabber: null, survivor: null };
+    const next = {
+      killer: topKiller ? topKiller.id : null,
+      grabber: topGrabber ? topGrabber.id : null,
+      survivor: topSurvivor ? topSurvivor.id : null,
+    };
+
+    // Fire a banner ONLY when the LOCAL player gains a category they didn't
+    // hold last frame. Avoids spamming for bot transitions.
+    const localId = this.player?.simChar?.id;
+    if (localId != null) {
+      if (next.killer === localId && prev.killer !== localId) {
+        this.hud.showBanner("★ TOP KILLER ★", `top-killer-${localId}`, 2500);
+      }
+      if (next.grabber === localId && prev.grabber !== localId) {
+        this.hud.showBanner("★ TOP LAND GRABBER ★", `top-grabber-${localId}`, 2500);
+      }
+      if (next.survivor === localId && prev.survivor !== localId) {
+        this.hud.showBanner("★ TOP SURVIVOR ★", `top-survivor-${localId}`, 2500);
+      }
+    }
+
+    this._topPlayers = next;
   }
 
   // Poll faction state each frame and fire D wooden-stamp banners on
@@ -2414,9 +2528,21 @@ class Game {
         label.style.display = "";
         label._displayed = "";
       }
-      if (label._cachedName !== c.name) {
-        label.textContent = c.name;
-        label._cachedName = c.name;
+      // Prepend top-player icons (⚔️ killer, 🏆 land grabber, 🛡️ survivor).
+      // _topPlayers maps category → winning charId. The icon string is rebuilt
+      // only when the resulting label text changes (cheap when no transitions).
+      const charId = c.simChar?.id;
+      const tp = this._topPlayers;
+      let prefix = "";
+      if (tp && charId != null) {
+        if (tp.killer === charId) prefix += "⚔️";
+        if (tp.grabber === charId) prefix += "\u{1F3C6}";
+        if (tp.survivor === charId) prefix += "\u{1F6E1}️";
+      }
+      const desired = prefix ? `${prefix} ${c.name}` : c.name;
+      if (label._cachedName !== desired) {
+        label.textContent = desired;
+        label._cachedName = desired;
       }
       label.style.left = `${(tmp.x * 0.5 + 0.5) * W}px`;
       label.style.top = `${(-tmp.y * 0.5 + 0.5) * H}px`;

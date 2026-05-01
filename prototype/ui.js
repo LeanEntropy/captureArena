@@ -93,8 +93,15 @@ export class UIManager {
       this._updateMinimap();
     }
 
-    if (this.matchManager.phase === "ended") {
+    const phase = this.matchManager.phase;
+    if (phase === "ended" || phase === "intermission") {
       this._showEndScreen();
+    } else if (this._endShown) {
+      // Round restarted (server flipped back to "playing") — hide end screen.
+      this._endShown = false;
+      if (this.endScreenEl) this.endScreenEl.style.display = "none";
+      const modal = document.getElementById("end-leaderboard-modal");
+      if (modal) modal.classList.remove("visible");
     }
   }
 
@@ -338,12 +345,22 @@ export class UIManager {
       pinned ? "border:2px solid #333;padding:3px 4px;" : ""
     ].filter(Boolean).join(";");
 
+    // Extra columns: kills, capture %. Smaller / lighter than the score so
+    // they don't dominate. Total cell count is needed for the % — pull from
+    // the live sim if available so the value matches what's on the grid.
+    const kills = entry.kills ?? 0;
+    const cellsCaptured = entry.cellsCaptured ?? 0;
+    const totalCells = (typeof window !== "undefined" && window._game?.sim?.totalArenaCells) || 0;
+    const capturePct = totalCells > 0 ? (cellsCaptured / totalCells * 100).toFixed(1) : "0.0";
+
     return (
       `<div style="${style}"${attrs}>` +
       `<span style="width:18px;text-align:right;color:#999;flex-shrink:0;">${rank + 1}.</span>` +
       `<span style="display:inline-block;width:10px;height:10px;background:${hex};border-radius:2px;flex-shrink:0;"></span>` +
       `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${char.name || "?"}</span>` +
-      `<span style="color:#555;font-weight:bold;flex-shrink:0;">${Math.floor(total)}</span>` +
+      `<span style="color:#555;font-weight:bold;flex-shrink:0;min-width:34px;text-align:right;">${Math.floor(total)}</span>` +
+      `<span style="color:#888;font-size:10px;flex-shrink:0;min-width:24px;text-align:right;" title="Kills">${kills}</span>` +
+      `<span style="color:#888;font-size:10px;flex-shrink:0;min-width:36px;text-align:right;" title="Capture %">${capturePct}%</span>` +
       `</div>`
     );
   }
@@ -351,18 +368,26 @@ export class UIManager {
   // ── End screen ────────────────────────────────────────────────────────────
 
   _showEndScreen() {
-    if (this._endShown || !this.endScreenEl) return;
-    this._endShown = true;
+    if (!this.endScreenEl) return;
 
-    this.endScreenEl.style.display = "flex";
+    // First call: render the static layout (banner + standings + buttons).
+    // Subsequent calls: only refresh the dynamic countdown text.
+    if (!this._endShown) {
+      this._endShown = true;
+      this.endScreenEl.style.display = "flex";
+      this._renderEndScreenStatic();
+      this._wireEndScreenButtons();
+    }
+    this._updateEndScreenCountdown();
+  }
 
+  _renderEndScreenStatic() {
     const winner = this.matchManager.winner;
     const winnerHex = winner
       ? "#" + winner.color.toString(16).padStart(6, "0")
       : "#fff";
     const winnerName = winner ? winner.name : "No one";
 
-    // Final standings by territory
     const factions = this.factionManager.getAllFactions()
       .slice()
       .sort((a, b) => b.territoryPct - a.territoryPct);
@@ -379,7 +404,6 @@ export class UIManager {
         `</div>`;
     });
 
-    // Player personal stats
     let playerHtml = "";
     if (this.player) {
       const { total, kills } = this.scoreTracker.getScore(this.player);
@@ -394,11 +418,19 @@ export class UIManager {
         `</div>`;
     }
 
+    // Mode-aware bottom section: solo gets Play Again, online gets countdown.
+    const isOnline = !!(typeof window !== "undefined" && window._game?.mp);
+    const actionHtml = isOnline
+      ? `<div class="end-countdown" id="end-countdown">Next round in 30s</div>`
+      : `<button class="end-play-again-btn" id="end-play-again">PLAY AGAIN</button>`;
+
     const content =
       `<div style="font-size:36px;font-weight:bold;color:${winnerHex};margin-bottom:8px;">${winnerName} Wins!</div>` +
       `<div style="font-size:14px;color:#ccc;margin-bottom:16px;">Final Standings</div>` +
       standingsHtml +
-      playerHtml;
+      playerHtml +
+      actionHtml +
+      `<div><button class="end-leaderboard-btn" id="end-leaderboard-btn">LEADERBOARD</button></div>`;
 
     const endContent = this.endScreenEl.querySelector(".end-content");
     if (endContent) {
@@ -406,5 +438,51 @@ export class UIManager {
     } else {
       this.endScreenEl.innerHTML = content;
     }
+  }
+
+  _wireEndScreenButtons() {
+    const playAgain = document.getElementById("end-play-again");
+    if (playAgain) {
+      playAgain.addEventListener("click", () => {
+        location.reload();
+      });
+    }
+    const lbBtn = document.getElementById("end-leaderboard-btn");
+    const modal = document.getElementById("end-leaderboard-modal");
+    const closeBtn = document.getElementById("end-leaderboard-close");
+    if (lbBtn && modal) {
+      lbBtn.addEventListener("click", () => {
+        this._renderEndLeaderboardModal();
+        modal.classList.add("visible");
+      });
+    }
+    if (closeBtn && modal) {
+      closeBtn.addEventListener("click", () => modal.classList.remove("visible"));
+    }
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) modal.classList.remove("visible");
+      });
+    }
+  }
+
+  _renderEndLeaderboardModal() {
+    const rowsEl = document.getElementById("end-leaderboard-rows");
+    if (!rowsEl) return;
+    const allEntries = this.scoreTracker.getLeaderboard();
+    let html = "";
+    allEntries.forEach((entry, i) => {
+      html += this._renderLeaderboardRow(entry, i, entry.char === this.player);
+    });
+    rowsEl.innerHTML = html;
+  }
+
+  _updateEndScreenCountdown() {
+    const cd = document.getElementById("end-countdown");
+    if (!cd) return;
+    // Multiplayer-only — read intermissionRemaining from the room state.
+    const room = (typeof window !== "undefined" && window._game?.mp?.room) || null;
+    const remaining = room?.state?.intermissionRemaining ?? 0;
+    cd.textContent = `Next round in ${Math.max(0, Math.ceil(remaining))}s`;
   }
 }

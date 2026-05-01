@@ -25,6 +25,8 @@ export class ScoreTracker {
       captures: 0,
       kills: 0,
       claims: 0,
+      cellsCaptured: 0,
+      deaths: 0,
       factionHistory: [char.factionId],
     });
   }
@@ -52,6 +54,7 @@ export class ScoreTracker {
     const multiplier = this._getMultiplier(char, factionManager);
     entry.total += cellsFlipped * SCORE_PER_CELL * multiplier;
     entry.captures += 1;
+    entry.cellsCaptured += cellsFlipped;
   }
 
   /**
@@ -75,6 +78,7 @@ export class ScoreTracker {
     const entry = this.scores.get(char);
     if (!entry) return;
     entry.total = Math.max(0, Math.floor(entry.total * 0.96));
+    entry.deaths += 1;
   }
 
   /**
@@ -125,6 +129,8 @@ export class ScoreTracker {
         captures: entry.captures,
         kills: entry.kills,
         claims: entry.claims,
+        cellsCaptured: entry.cellsCaptured,
+        deaths: entry.deaths,
       }))
       .sort((a, b) => b.total - a.total);
   }
@@ -132,11 +138,11 @@ export class ScoreTracker {
   /**
    * Return the score entry for a character, or zeroed defaults if not registered.
    * @param {object} char
-   * @returns {{total: number, captures: number, kills: number, claims: number}}
+   * @returns {{total: number, captures: number, kills: number, claims: number, cellsCaptured: number, deaths: number}}
    */
   getScore(char) {
     const entry = this.scores.get(char);
-    if (!entry) return { total: 0, captures: 0, kills: 0, claims: 0 };
+    if (!entry) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
     return entry;
   }
 

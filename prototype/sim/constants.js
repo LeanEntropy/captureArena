@@ -16,7 +16,7 @@ export const SELF_TRAIL_SKIP = 5;
 // Players / respawn
 export const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
 export const RESPAWN_DELAY = 3;
-export const INVULN_TIME = 2;
+export const INVULN_TIME = 5;
 
 // Gameplay
 export const CONTINUOUS_LAND = true; // When true, disconnected land fragments are freed after territory loss

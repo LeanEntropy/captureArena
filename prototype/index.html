@@ -219,10 +219,87 @@
     #match-end-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       display: none; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.7); z-index: 70; pointer-events: none;
+      background: rgba(0,0,0,0.7); z-index: 70; pointer-events: auto;
     }
     #match-end-screen .end-content {
       background: rgba(0,0,0,0.85); color: white; padding: 32px 48px; border-radius: 16px; text-align: center; min-width: 350px;
+    }
+    /* End-screen action buttons (Play Again / countdown row) */
+    .end-play-again-btn {
+      margin-top: 18px;
+      padding: 14px 28px;
+      font-family: 'Lilita One', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      background: #4CAF50;
+      color: #fff;
+      border: 2px solid #2e7031;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 0 rgba(0,0,0,0.4);
+    }
+    .end-play-again-btn:hover { background: #5BC163; }
+    .end-countdown {
+      margin-top: 18px;
+      font-family: 'Lilita One', sans-serif;
+      font-size: 20px;
+      color: #FFE140;
+      letter-spacing: 1px;
+    }
+    .end-leaderboard-btn {
+      margin-top: 12px;
+      padding: 10px 22px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      background: #FFE140;
+      color: #1a0f08;
+      border: 3px solid #1a0f08;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 #1a0f08;
+    }
+    .end-leaderboard-btn:hover { background: #FFEB6E; }
+    /* Full leaderboard modal (toggled from end-screen) */
+    #end-leaderboard-modal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7); z-index: 80; pointer-events: auto;
+    }
+    #end-leaderboard-modal.visible { display: flex; }
+    #end-leaderboard-modal .modal-card {
+      position: relative;
+      max-width: 560px; width: 90%;
+      max-height: 80vh;
+      background: #FFE140; border: 4px solid #1a0f08; border-radius: 14px;
+      box-shadow: inset 0 -6px 0 rgba(0,0,0,0.25), 0 8px 0 rgba(0,0,0,0.4);
+      padding: 20px 24px;
+      font-family: 'Courier New', monospace;
+      color: #1a0f08;
+      display: flex; flex-direction: column;
+    }
+    #end-leaderboard-modal .modal-title {
+      font-family: 'Lilita One', sans-serif; font-size: 22px; letter-spacing: 3px;
+      text-align: center; margin-bottom: 12px;
+    }
+    #end-leaderboard-modal .modal-close {
+      position: absolute; top: 6px; right: 12px;
+      background: none; border: none; cursor: pointer;
+      font-family: 'Lilita One', sans-serif; font-size: 24px; color: #1a0f08;
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+    #end-leaderboard-modal .modal-close:hover { background: rgba(0,0,0,0.1); }
+    #end-leaderboard-modal .lb-scroll {
+      overflow-y: auto;
+      padding-right: 4px;
+      background: rgba(255,255,255,0.4);
+      border: 2px solid #1a0f08;
+      border-radius: 6px;
+      padding: 8px 10px;
     }
     /* ============ Title screen — Design 3: Faction Stripes ============ */
     #name-entry {
@@ -495,6 +572,13 @@
   </div>
   <div id="match-end-screen">
     <div class="end-content"></div>
+  </div>
+  <div id="end-leaderboard-modal">
+    <div class="modal-card">
+      <button class="modal-close" id="end-leaderboard-close" title="Close">&times;</button>
+      <div class="modal-title">LEADERBOARD</div>
+      <div class="lb-scroll" id="end-leaderboard-rows"></div>
+    </div>
   </div>
   <!-- Title screen — Design 3: Faction Stripes.
        Layered front-to-back:

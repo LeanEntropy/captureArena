@@ -337,6 +337,8 @@ export class GameRoom extends Room<GameStateSchema> {
       cs.lastAppliedInputSeq = seqByCharId.get(c.id) ?? 0;
       const sc = this.sim.scoreTracker?.getScore?.(c);
       cs.score = sc?.total ?? 0;
+      cs.deaths = sc?.deaths ?? 0;
+      cs.cellsCaptured = sc?.cellsCaptured ?? 0;
     }
   }
 
