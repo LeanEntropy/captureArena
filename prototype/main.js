@@ -7,6 +7,7 @@ import { UIManager } from "./ui.js";
 import {
   ARENA_RADIUS, PLAYER_SPEED, BOT_SPEED, TURN_SPEED,
   GRID_SIZE, WORLD_MIN, WORLD_SIZE, CELL_SIZE, GRID_SENTINEL,
+  BOT_NAMES,
 } from "./sim/constants.js";
 import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./portals.js";
 
@@ -1396,6 +1397,28 @@ class Game {
     this.onlineInitialized = false;
     this.mp = new MultiplayerClient();
 
+    // Server says the chosen name is already in use by another human.
+    // Disconnect, re-show the name entry with an inline error, and let the
+    // user pick a different name without reloading.
+    this.mp.onNameRejected = ({ reason }) => {
+      try { this.mp.disconnect(); } catch (_) {}
+      this.mp = null;
+      this.mode = null;
+      const nameEntry = document.getElementById("name-entry");
+      const nameInput = document.getElementById("name-input");
+      let errEl = document.getElementById("name-error");
+      if (!errEl) {
+        errEl = document.createElement("div");
+        errEl.id = "name-error";
+        errEl.style.cssText = "color:#FFD0D0;font-size:13px;font-weight:bold;margin-top:8px;text-shadow:0 0 4px rgba(0,0,0,0.6);";
+        nameInput?.parentElement?.appendChild(errEl);
+      }
+      errEl.textContent = reason || "Name already in use. Pick a different one.";
+      nameEntry?.classList.remove("hidden");
+      nameInput?.focus();
+      nameInput?.select();
+    };
+
     // First state arrival → build renderer characters from schema. After init,
     // schema entries auto-mutate as Colyseus syncs; syncVisuals() reads them.
     this.mp.onState = (state) => {
@@ -2070,6 +2093,21 @@ class Game {
     }
     if (!playerSimChar) playerSimChar = this.sim.characters[0]; // safety
     playerSimChar.name = name;
+    // Solo: ensure no bot shares the player's name. Pull a fresh name from
+    // BOT_NAMES that nobody else is using; fallback to "Bot-{id}" if the pool
+    // is exhausted. (Online does the equivalent server-side in handleHello.)
+    {
+      const used = new Set(this.sim.characters.map(c => (c.name || "").toLowerCase()));
+      for (const c of this.sim.characters) {
+        if (c === playerSimChar) continue;
+        if ((c.name || "").toLowerCase() === name.toLowerCase()) {
+          const fresh = BOT_NAMES.find(n => !used.has(n.toLowerCase())) ?? `Bot-${c.id}`;
+          used.delete((c.name || "").toLowerCase());
+          used.add(fresh.toLowerCase());
+          c.name = fresh;
+        }
+      }
+    }
 
     // Build renderer Characters wrapping each sim Character.
     for (const sc of this.sim.characters) {

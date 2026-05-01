@@ -3,6 +3,7 @@ import { gzipSync } from "zlib";
 import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameState.js";
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
+import { BOT_NAMES } from "../sim/constants.js";
 
 const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
@@ -199,8 +200,40 @@ export class GameRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // Reject if any OTHER human already holds this name (case-insensitive).
+    // Client surfaces this as "name in use, pick another" in the title screen.
+    const trimmedName = (name || "").trim();
+    if (trimmedName) {
+      const conflict = this.sim.characters.find((c: any) =>
+        c.isHuman && c !== target && (c.name || "").toLowerCase() === trimmedName.toLowerCase(),
+      );
+      if (conflict) {
+        client.send("nameRejected", { reason: "Name already in use. Pick a different one." });
+        console.log(`[GameRoom] hello from ${client.sessionId} rejected: name "${name}" taken`);
+        return;
+      }
+    }
+
     target.isHuman = true;
     if (name) target.name = name;
+
+    // Rename any BOT that shares the player's name so player + bot never share.
+    // Pick a fresh name from BOT_NAMES that nobody else is using; fallback to
+    // a synthetic "Bot-{id}" if all canonical names are taken.
+    if (trimmedName) {
+      const used = new Set<string>(
+        this.sim.characters.map((c: any) => (c.name || "").toLowerCase()),
+      );
+      for (const c of this.sim.characters as any[]) {
+        if (c === target || c.isHuman) continue;
+        if ((c.name || "").toLowerCase() === trimmedName.toLowerCase()) {
+          const fresh = BOT_NAMES.find((n: string) => !used.has(n.toLowerCase())) ?? `Bot-${c.id}`;
+          used.delete((c.name || "").toLowerCase());
+          used.add(fresh.toLowerCase());
+          c.name = fresh;
+        }
+      }
+    }
 
     const meta = this.clientMeta.get(client.sessionId)!;
     meta.charId = target.id;

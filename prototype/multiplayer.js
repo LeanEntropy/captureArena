@@ -28,6 +28,7 @@ export class MultiplayerClient {
     this.onYourCharId = null;      // (charId) => void
     this.onGridSnapshot = null;    // (b64) => void
     this.onCumulativeScore = null; // (score) => void
+    this.onNameRejected = null;    // ({reason}) => void — server says name conflict
   }
 
   async connect(playerName, playerToken) {
@@ -74,6 +75,9 @@ export class MultiplayerClient {
     });
     this.room.onMessage("cumulativeScore", ({ score }) => {
       if (this.onCumulativeScore) this.onCumulativeScore(score);
+    });
+    this.room.onMessage("nameRejected", ({ reason }) => {
+      if (this.onNameRejected) this.onNameRejected({ reason });
     });
 
     // Now that handlers are wired, send hello

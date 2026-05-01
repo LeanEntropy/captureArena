@@ -294,8 +294,21 @@ export class UIManager {
       pinnedHtml = this._renderLeaderboardRow(playerEntry, playerRank, true, true);
     }
 
+    // Column header row — widths mirror _renderLeaderboardRow exactly so the
+    // header titles line up over their values.
+    const headerHtml =
+      `<div style="display:flex;align-items:center;gap:6px;padding:2px 4px 4px 4px;border-bottom:1px solid rgba(0,0,0,0.15);font-size:9px;letter-spacing:0.5px;text-transform:uppercase;color:#999;font-weight:bold;">` +
+      `<span style="width:18px;flex-shrink:0;"></span>` +
+      `<span style="display:inline-block;width:10px;flex-shrink:0;"></span>` +
+      `<span style="flex:1;">Name</span>` +
+      `<span style="flex-shrink:0;min-width:34px;text-align:right;">Score</span>` +
+      `<span style="flex-shrink:0;min-width:24px;text-align:right;">Kill</span>` +
+      `<span style="flex-shrink:0;min-width:36px;text-align:right;">Cap %</span>` +
+      `</div>`;
+
     this.leaderboardEl.innerHTML =
       `<div class="lb-title">Leaderboard</div>` +
+      headerHtml +
       `<div class="lb-list">${listHtml}</div>` +
       `<div class="lb-pinned" id="lb-pinned-player">${pinnedHtml}</div>`;
 
