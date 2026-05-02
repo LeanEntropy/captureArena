@@ -1644,6 +1644,32 @@ class Game {
     if (r) r._clearTrail();
   }
 
+  // Online-only: poll for new schema characters that the server has pushed
+  // since our initial wrap. Cheap (length compare + Set lookup); fires once
+  // per tick. Replaces a fragile state.characters.onAdd listener that broke
+  // online init due to API differences across @colyseus/schema versions.
+  _syncDynamicChars() {
+    if (this.mode !== "online" || !this.mp || !this.mp.room) return;
+    const schemaChars = this.mp.room.state.characters;
+    if (!schemaChars || schemaChars.length === this.characters.length) return;
+    // Build the set of already-wrapped schema entries via the proxy's
+    // _schemaChar back-reference (set in makeOnlineCharProxy).
+    const known = new Set();
+    for (const r of this.characters) {
+      const sc = r.simChar?._schemaChar;
+      if (sc) known.add(sc);
+    }
+    for (const schemaChar of schemaChars) {
+      if (known.has(schemaChar)) continue;
+      const proxy = makeOnlineCharProxy(schemaChar);
+      const color = FACTION_COLORS[schemaChar.factionId - 1] ?? 0x808080;
+      const r = new Character(this.scene, proxy, color, false);
+      this.characters.push(r);
+      this._charBySim.set(proxy, r);
+      dlog("DYN_CHAR", `wrapped late char id=${schemaChar.id} faction=${schemaChar.factionId}`);
+    }
+  }
+
   _findRendererCharBySimId(simCharId) {
     for (const r of this.characters) {
       if (r.simChar && r.simChar.id === simCharId) return r;
@@ -1865,18 +1891,12 @@ class Game {
     // mid-room (because all bot slots filled with humans), spin up a
     // renderer Character for it on the fly. Without this, late additions
     // would exist server-side but be invisible on the client.
-    state.characters.onAdd((schemaChar /* , key */) => {
-      // Skip entries we already wrapped during the initial loop.
-      for (const existing of this.characters) {
-        if (existing.simChar?._schema === schemaChar) return;
-        if (existing.simChar === schemaChar) return;
-      }
-      const proxy = makeOnlineCharProxy(schemaChar);
-      const color = FACTION_COLORS[schemaChar.factionId - 1] ?? 0x808080;
-      const r = new Character(this.scene, proxy, color, false);
-      this.characters.push(r);
-      this._charBySim.set(proxy, r);
-    });
+    //
+    // Earlier this used Colyseus's state.characters.onAdd listener but the
+    // exact API + lifecycle of that callback varies across @colyseus/schema
+    // versions and a registration-time exception broke online init entirely.
+    // A polling check in the renderer's per-tick sync (see _syncDynamicChars)
+    // is bullet-proof and adds negligible overhead.
 
     // Placeholder: use first character as a non-input "player" so existing
     // camera/HUD code that reads this.player.pos doesn't crash. The actual
@@ -2285,6 +2305,7 @@ class Game {
         }
       }
       for (const c of this.characters) c.syncVisuals();
+      this._syncDynamicChars();
       this._updateLabels();
       if (this.uiManager) this.uiManager.update(dt);
       this._maybeRebuildTerritory(dt);
@@ -2296,6 +2317,7 @@ class Game {
     }
 
     // ---- Sync renderer-side state from sim/schema ----
+    this._syncDynamicChars();
     for (const c of this.characters) {
       const wasAliveBefore = wasAlive.get(c);
       const isAliveNow = c.alive;
