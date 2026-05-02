@@ -34,15 +34,21 @@ export class Character {
     this.dir = { x, z };
   }
 
-  kill() {
-    this.alive = false;
-    this.respawnTimer = this.respawnDelay;
+  // Reset all per-life transient state (trail, outside flag, bot plan).
+  // Caller is responsible for setting alive, pos, respawnTimer, invulnTimer.
+  _resetTransient() {
     this.trailVerts = [];
-    this.invulnTimer = 0;
     this.wasOutside = false;
     this._lastInsidePos = null;
     this.botWaypoints = [];
     this.botLoopCount = 0;
+  }
+
+  kill() {
+    this.alive = false;
+    this.respawnTimer = this.respawnDelay;
+    this.invulnTimer = 0;
+    this._resetTransient();
   }
 
   respawn(x, z) {
@@ -50,10 +56,6 @@ export class Character {
     this.pos = { x, z };
     this.respawnTimer = 0;
     this.invulnTimer = INVULN_TIME;
-    this.trailVerts = [];
-    this.wasOutside = false;
-    this._lastInsidePos = null;
-    this.botWaypoints = [];
-    this.botLoopCount = 0;
+    this._resetTransient();
   }
 }

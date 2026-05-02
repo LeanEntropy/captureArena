@@ -20,6 +20,13 @@ export const RECOVERY_THRESHOLD = 12;     // territory % at or above which recov
 export const FACTION_COLORS = [0xE74A3F, 0x3D6CD0, 0x52B856, 0xFFCF2A, 0xA94BBE];
 export const FACTION_NAMES = ["Red", "Blue", "Green", "Yellow", "Purple"];
 
+// Count living characters in a faction's character set.
+function aliveCount(faction) {
+  let n = 0;
+  for (const c of faction.characters) if (c.alive) n++;
+  return n;
+}
+
 export class FactionManager {
   constructor() {
     /** @type {Map<number, object>} factionId (1-based) -> faction object */
@@ -199,8 +206,7 @@ export class FactionManager {
     if (!faction) return false;
     if (!faction.alive) return true;
 
-    const livingChars = [...faction.characters].filter(c => c.alive);
-    if (faction.territoryPct < ENDANGERED_THRESHOLD && livingChars.length === 0) {
+    if (faction.territoryPct < ENDANGERED_THRESHOLD && aliveCount(faction) === 0) {
       faction.alive = false;
       return true;
     }
@@ -236,8 +242,8 @@ export class FactionManager {
 
     // Pick faction with fewest active characters; tie-break by least territory %
     const target = pool.reduce((best, f) => {
-      const bCount = [...best.characters].filter(c => c.alive).length;
-      const fCount = [...f.characters].filter(c => c.alive).length;
+      const bCount = aliveCount(best);
+      const fCount = aliveCount(f);
       if (fCount < bCount) return f;
       if (fCount === bCount && f.territoryPct < best.territoryPct) return f;
       return best;
@@ -310,14 +316,11 @@ export class FactionManager {
    * @returns {object[]}
    */
   getAllFactions() {
-    return [...this._factions.values()].map(f => {
-      const chars = [...f.characters];
-      return {
-        ...f,
-        aliveCount: chars.filter(c => c.alive).length,
-        totalCount: chars.length,
-      };
-    });
+    return [...this._factions.values()].map(f => ({
+      ...f,
+      aliveCount: aliveCount(f),
+      totalCount: f.characters.size,
+    }));
   }
 
   /**

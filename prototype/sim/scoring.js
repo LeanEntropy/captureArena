@@ -9,6 +9,19 @@ const SCORE_PER_CLAIM = 50;
 const LAST_STAND_MULTIPLIER = 1.25;
 const TEAM_BONUS = [0.20, 0.10, 0.05, 0, 0];
 
+// Project a stored score entry into the public-facing shape (drops factionHistory).
+// Pass null for the zeroed default returned by getScore() when the char isn't registered.
+function _publicScore(entry) {
+  return {
+    total: entry?.total ?? 0,
+    captures: entry?.captures ?? 0,
+    kills: entry?.kills ?? 0,
+    claims: entry?.claims ?? 0,
+    cellsCaptured: entry?.cellsCaptured ?? 0,
+    deaths: entry?.deaths ?? 0,
+  };
+}
+
 export class ScoreTracker {
   constructor() {
     /** @type {Map<object, {total: number, captures: number, kills: number, claims: number, factionHistory: number[]}>} */
@@ -123,15 +136,7 @@ export class ScoreTracker {
    */
   getLeaderboard() {
     return Array.from(this.scores.entries())
-      .map(([char, entry]) => ({
-        char,
-        total: entry.total,
-        captures: entry.captures,
-        kills: entry.kills,
-        claims: entry.claims,
-        cellsCaptured: entry.cellsCaptured,
-        deaths: entry.deaths,
-      }))
+      .map(([char, entry]) => ({ char, ..._publicScore(entry) }))
       .sort((a, b) => b.total - a.total);
   }
 
@@ -142,8 +147,8 @@ export class ScoreTracker {
    */
   getScore(char) {
     const entry = this.scores.get(char);
-    if (!entry) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
-    return entry;
+    if (entry) return entry;
+    return _publicScore(null);
   }
 
   /**

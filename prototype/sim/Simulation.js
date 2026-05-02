@@ -111,9 +111,7 @@ export class Simulation {
     }
     // Place each char at its faction's spawn point (mirrors main.js Game.start).
     for (const c of this.characters) {
-      const sp = this.factionManager.getSpawnPoint(
-        c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-      );
+      const sp = this._spawnFor(c.factionId);
       c.setPos(sp.x, sp.z);
     }
     this.matchManager.startMatch();
@@ -198,11 +196,18 @@ export class Simulation {
   // Returns the faction id (1-5) that owns the cell at world coords (wx, wz),
   // or 0 if unclaimed / out of bounds.
   _getOwnerAt(wx, wz) {
-    const gx = Math.floor((wx - WORLD_MIN) / CELL_SIZE);
-    const gy = Math.floor((wz - WORLD_MIN) / CELL_SIZE);
+    const { gx, gy } = this._worldToGrid(wx, wz);
     if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE) return 0;
     const v = this.grid[gy * GRID_SIZE + gx];
     return v === GRID_SENTINEL ? 0 : v;
+  }
+
+  // Look up the faction's spawn point. Wrapper that supplies the standard
+  // grid/dimensions arguments so callers don't have to repeat them.
+  _spawnFor(factionId) {
+    return this.factionManager.getSpawnPoint(
+      factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
+    );
   }
 
   // Mirror of main.js Character.update(dt) simulation portion:
@@ -597,21 +602,18 @@ export class Simulation {
     const trailCells = [];
     const tg = new Array(trail.length);
     let minGX = Infinity, minGY = Infinity, maxGX = -Infinity, maxGY = -Infinity;
+    const expandBbox = (gx, gy) => {
+      if (gx < minGX) minGX = gx;
+      if (gx > maxGX) maxGX = gx;
+      if (gy < minGY) minGY = gy;
+      if (gy > maxGY) maxGY = gy;
+    };
     for (let i = 0; i < trail.length; i++) {
       tg[i] = this._worldToGrid(trail[i].x, trail[i].z);
-      if (tg[i].gx < minGX) minGX = tg[i].gx;
-      if (tg[i].gx > maxGX) maxGX = tg[i].gx;
-      if (tg[i].gy < minGY) minGY = tg[i].gy;
-      if (tg[i].gy > maxGY) maxGY = tg[i].gy;
+      expandBbox(tg[i].gx, tg[i].gy);
     }
-    if (startNear.gx < minGX) minGX = startNear.gx;
-    if (startNear.gx > maxGX) maxGX = startNear.gx;
-    if (startNear.gy < minGY) minGY = startNear.gy;
-    if (startNear.gy > maxGY) maxGY = startNear.gy;
-    if (endNear.gx < minGX) minGX = endNear.gx;
-    if (endNear.gx > maxGX) maxGX = endNear.gx;
-    if (endNear.gy < minGY) minGY = endNear.gy;
-    if (endNear.gy > maxGY) maxGY = endNear.gy;
+    expandBbox(startNear.gx, startNear.gy);
+    expandBbox(endNear.gx, endNear.gy);
     // Pad bbox to enclose not just the trail but also the loop-closure path
     // along own-faction territory between the two anchors. The inside-region
     // BFS uses own-faction cells as walls; if the bbox edge falls between the
@@ -823,9 +825,7 @@ export class Simulation {
   respawnChar(c) {
     const faction = this.factionManager.factions.get(c.factionId);
     if (faction && faction.respawnsEnabled) {
-      const sp = this.factionManager.getSpawnPoint(
-        c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-      );
+      const sp = this._spawnFor(c.factionId);
       c.respawn(sp.x, sp.z);
       this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "respawn");
       return;
@@ -834,9 +834,7 @@ export class Simulation {
     const newFaction = this.factionManager.reassignCharacter(c);
     if (newFaction) {
       this.scoreTracker.onFactionChange(c);
-      const sp = this.factionManager.getSpawnPoint(
-        c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-      );
+      const sp = this._spawnFor(c.factionId);
       c.respawn(sp.x, sp.z);
       this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "reassign");
     }
@@ -872,19 +870,13 @@ export class Simulation {
     this._recomputeCellCounts();
     for (const c of this.characters) {
       c.alive = true;
-      c.trailVerts = [];
       c.killCount = 0;
       c.invulnTimer = 0;
       c.respawnTimer = 0;
-      c.wasOutside = false;
-      c._lastInsidePos = null;
-      c.botWaypoints = [];
-      c.botLoopCount = 0;
+      c._resetTransient();
       this.factionManager.addCharacter(c, c.factionId);
       // Reposition at spawn point (mirrors start())
-      const sp = this.factionManager.getSpawnPoint(
-        c.factionId, this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, GRID_SENTINEL
-      );
+      const sp = this._spawnFor(c.factionId);
       if (sp) {
         c.setPos(sp.x, sp.z);
         this.onTeleport?.(c.id, sp.x, sp.z, c.dir.x, c.dir.z, "restart");
