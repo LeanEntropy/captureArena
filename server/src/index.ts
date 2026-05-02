@@ -22,6 +22,26 @@ const app = express();
 app.use(express.static(PROTOTYPE_DIR));
 app.get("/health", (_req, res) => { res.send("ok"); });
 
+// CORS for cross-origin embeds. Same static client may be hosted on
+// itch.io (under *.itch.zone iframes) and POST telemetry / WS-connect to
+// this Railway server. Allow itch's known origins; reflect the request's
+// Origin header when it matches so each response has the exact origin
+// rather than "*". Required for /track POSTs from the iframe; the
+// Colyseus WebSocket transport accepts cross-origin handshakes by default.
+const ITCH_ORIGIN_RE = /^https:\/\/([a-z0-9-]+\.)?itch\.(zone|io)$/;
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (typeof origin === "string" && ITCH_ORIGIN_RE.test(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.method === "OPTIONS") { res.status(204).end(); return; }
+  }
+  next();
+});
+
 // Self-hosted analytics — must come BEFORE the Colyseus mount and any catch-all.
 // `trust proxy` lets `req.ip` reflect X-Forwarded-For when running behind
 // Railway / a load balancer, so geo lookups work in production.

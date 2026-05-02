@@ -1,9 +1,20 @@
 import * as Colyseus from "colyseus.js";
 
+// When this client is loaded from itch.io's iframe sandbox the host is
+// some `*.itch.zone` URL — connecting back to that host obviously won't
+// reach our Colyseus server. Detect it and route to the canonical Railway
+// host so the same static client works on both itch and the direct site.
+const REMOTE_SERVER = "wss://landcapture.up.railway.app";
+function _isItchHost() {
+  const h = location.hostname.toLowerCase();
+  return h.endsWith(".itch.zone") || h.endsWith(".itch.io") || h === "itch.io";
+}
+
 export class MultiplayerClient {
   constructor() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}`;
+    const url = _isItchHost()
+      ? REMOTE_SERVER
+      : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
     this.client = new Colyseus.Client(url);
     this.room = null;
     this.playerToken = null;

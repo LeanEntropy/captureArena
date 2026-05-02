@@ -10,7 +10,15 @@
 // ts, country (via IP geolookup), referrer host, and traffic source — the
 // server strips client-supplied ts/country values.
 
-const ENDPOINT = "/track";
+// On the canonical site `/track` resolves to our own server. From itch's
+// iframe sandbox we have to point at the absolute Railway URL or the POST
+// goes to itch (which does nothing with it).
+function _resolveEndpoint() {
+  const h = location.hostname.toLowerCase();
+  const onItch = h.endsWith(".itch.zone") || h.endsWith(".itch.io") || h === "itch.io";
+  return onItch ? "https://landcapture.up.railway.app/track" : "/track";
+}
+const ENDPOINT = _resolveEndpoint();
 const FLUSH_MS = 5000;
 
 const queue = [];

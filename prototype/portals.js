@@ -207,7 +207,22 @@ function checkStartPortal() {
   params.set('ref', window.location.hostname);
 
   const s = params.toString();
-  window.location.href = url + (s ? '?' + s : '');
+  _portalNavigate(url + (s ? '?' + s : ''));
+}
+
+// Navigate the TOP frame so portal hops escape any iframe sandbox (e.g.
+// itch.io's game iframe). Falls back to plain window.location.href if the
+// top-frame access is blocked by cross-origin policy.
+function _portalNavigate(href) {
+  try {
+    if (window.top && window.top !== window) {
+      window.top.location.href = href;
+      return;
+    }
+  } catch (_) {
+    /* cross-origin top — fall through */
+  }
+  window.location.href = href;
 }
 
 // Exit portal: sends the player to vibej.am/portal/2026, which picks
@@ -240,7 +255,7 @@ function checkExitPortal() {
   const live = getPlayerParams();
   for (const [k, v] of Object.entries(live)) params.set(k, v);
 
-  window.location.href = 'https://vibej.am/portal/2026?' + params.toString();
+  _portalNavigate('https://vibej.am/portal/2026?' + params.toString());
 }
 
 // ── Public API ─────────────────────────────────────────────────
