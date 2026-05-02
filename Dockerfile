@@ -5,6 +5,14 @@ RUN corepack enable
 RUN apk add --no-cache python3 make g++ wget
 WORKDIR /app
 
+# Skip Playwright's ~300MB Chromium download. The `playwright` package
+# is a root devDependency used only by tools/screenshot.mjs (dev-only) —
+# `--filter "template-server..."` SHOULD exclude it, but pnpm has been
+# inconsistent about this in v10. Setting this env var is belt-and-
+# suspenders: even if the package gets installed, the browser binary
+# download (which dominates install time) is skipped.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
 # Copy package manifests for dependency install
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json ./server/
@@ -36,22 +44,24 @@ RUN mkdir -p /app/server/dist && \
     rm /tmp/dbip.mmdb.gz
 
 # Stage 2: runtime
+# Reuse the build stage's compiled node_modules (already includes the
+# better-sqlite3 native binding compiled against node:20-alpine). Skipping
+# `pnpm install --prod` here saves ~3-5 minutes of build time per deploy:
+# no second native compile, no second `apk add python3 make g++`. The
+# tradeoff is the runtime image carries devDeps (~50MB more), which Railway
+# doesn't bill us for; if image size becomes a concern we can `pnpm prune
+# --prod` in this stage instead of reinstalling from scratch.
 FROM node:20-alpine AS runtime
-RUN corepack enable
-# Runtime needs python/make/g++ too because the prod install rebuilds
-# better-sqlite3's native binding for this image's Node version.
-RUN apk add --no-cache python3 make g++
 WORKDIR /app
 
-# Copy package manifests
+# Copy node_modules + manifests from build stage (no reinstall, no recompile).
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/server/node_modules ./server/node_modules
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
 COPY --from=build /app/server/package.json ./server/
 COPY --from=build /app/prototype/package.json ./prototype/
 COPY --from=build /app/packages/shared/package.json ./packages/shared/
 COPY --from=build /app/packages/simulation/package.json ./packages/simulation/
-
-# Install only production deps for the server's workspace tree
-RUN pnpm install --frozen-lockfile --prod --filter "template-server..."
 
 # Copy built server + the static prototype + the geoip database
 COPY --from=build /app/server/dist ./server/dist
