@@ -4,6 +4,7 @@ import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameS
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
 import { BOT_NAMES } from "../sim/constants.js";
+import { MAX_CHARS_PER_FACTION } from "../sim/faction.js";
 import { setCurrentRoom } from "./registry.js";
 import { insertServerEvent } from "../stats/db.js";
 
@@ -199,8 +200,28 @@ export class GameRoom extends Room<GameStateSchema> {
     if (!target) {
       target = this.sim.characters.find((c: any) => c.factionId === factionId && !c.isHuman);
     }
+    // No bot slot left → grow the faction up to MAX_CHARS_PER_FACTION (10).
+    // Push a fresh CharacterSchema entry so clients see the new character
+    // via state.characters.onAdd. Solo never hits this path.
     if (!target) {
-      console.log(`[GameRoom] hello from ${client.sessionId}: no available bots in faction ${factionId}`);
+      const grown = this.sim.addCharacter(factionId, MAX_CHARS_PER_FACTION);
+      if (grown) {
+        const cs = new CharacterSchema();
+        cs.id = grown.id;
+        cs.factionId = grown.factionId;
+        cs.name = grown.name;
+        cs.posX = grown.pos.x;
+        cs.posZ = grown.pos.z;
+        cs.dirX = grown.dir.x;
+        cs.dirZ = grown.dir.z;
+        this.state.characters.push(cs);
+        target = grown;
+        console.log(`[GameRoom] grew faction ${factionId} → ${this.sim.characters.length} chars total`);
+      }
+    }
+    if (!target) {
+      console.log(`[GameRoom] hello from ${client.sessionId}: faction ${factionId} at cap ${MAX_CHARS_PER_FACTION}`);
+      client.send("nameRejected", { reason: "Server is full. Try again in a moment." });
       return;
     }
 

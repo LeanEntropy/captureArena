@@ -164,6 +164,37 @@ export class Simulation {
     }
   }
 
+  /**
+   * Dynamically grow the simulation by appending one bot character to a
+   * given faction. Returns the new Character (also pushed onto
+   * this.characters and registered with scoreTracker), or null if the
+   * faction can't be grown (already at the per-faction cap or the faction
+   * id is out of range).
+   *
+   * Used by the multiplayer server when all bot slots are taken by humans
+   * but a new client still wants in. Solo never calls this — its 30-char
+   * arrangement is fixed at start.
+   *
+   * @param {number} factionId - 1..FACTION_COUNT
+   * @param {number} maxPerFaction - cap (typically MAX_CHARS_PER_FACTION)
+   * @returns {object|null}
+   */
+  addCharacter(factionId, maxPerFaction) {
+    if (factionId < 1 || factionId > FACTION_COUNT) return null;
+    let countInFaction = 0;
+    for (const c of this.characters) {
+      if (c.factionId === factionId) countInFaction++;
+    }
+    if (countInFaction >= maxPerFaction) return null;
+
+    const id = this.characters.length;
+    const name = BOT_NAMES[id % BOT_NAMES.length];
+    const c = new Character({ id, factionId, name, respawnDelay: RESPAWN_DELAY });
+    this.characters.push(c);
+    this.scoreTracker.register(c);
+    return c;
+  }
+
   // Returns the faction id (1-5) that owns the cell at world coords (wx, wz),
   // or 0 if unclaimed / out of bounds.
   _getOwnerAt(wx, wz) {

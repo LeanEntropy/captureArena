@@ -1861,6 +1861,23 @@ class Game {
       this._charBySim.set(proxy, r);
     }
 
+    // Dynamic faction growth: when the server pushes a NEW CharacterSchema
+    // mid-room (because all bot slots filled with humans), spin up a
+    // renderer Character for it on the fly. Without this, late additions
+    // would exist server-side but be invisible on the client.
+    state.characters.onAdd((schemaChar /* , key */) => {
+      // Skip entries we already wrapped during the initial loop.
+      for (const existing of this.characters) {
+        if (existing.simChar?._schema === schemaChar) return;
+        if (existing.simChar === schemaChar) return;
+      }
+      const proxy = makeOnlineCharProxy(schemaChar);
+      const color = FACTION_COLORS[schemaChar.factionId - 1] ?? 0x808080;
+      const r = new Character(this.scene, proxy, color, false);
+      this.characters.push(r);
+      this._charBySim.set(proxy, r);
+    });
+
     // Placeholder: use first character as a non-input "player" so existing
     // camera/HUD code that reads this.player.pos doesn't crash. The actual
     // human takeover lands in Task 17.
