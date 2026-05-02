@@ -1260,6 +1260,10 @@ class Game {
     this._territoryRebuildInterval = 0.1;
     // Map: simChar -> renderer Character (used by event hooks).
     this._charBySim = new Map();
+    // Reused per-tick: tracks each char's alive flag from the previous frame so
+    // we can fire visual hooks when sim respawns or kills a character. Allocated
+    // once here, then clear()/refilled per tick — same pattern as _labelTmpVec3.
+    this._wasAlive = new Map();
 
     // Input
     this.mouseNDC = new THREE.Vector2();
@@ -1501,10 +1505,7 @@ class Game {
         this._onlineEventQueue.push({ type: "heal", changedCells });
         return;
       }
-      for (let i = 0; i < changedCells.length; i += 2) {
-        territoryGrid.grid[changedCells[i]] = changedCells[i + 1];
-      }
-      this.territoryDirty = true;
+      this._applyHealCells(changedCells);
     };
 
     // Trail vertices: append to renderer character trail so the line is visible.
@@ -1602,10 +1603,7 @@ class Game {
           this._clearOnlineCharTrail(ev.charId);
         }
       } else if (ev.type === "heal") {
-        for (let i = 0; i < ev.changedCells.length; i += 2) {
-          territoryGrid.grid[ev.changedCells[i]] = ev.changedCells[i + 1];
-        }
-        this.territoryDirty = true;
+        this._applyHealCells(ev.changedCells);
       } else if (ev.type === "trail") {
         const r = this._findRendererCharBySimId(ev.charId);
         if (r) {
@@ -1642,6 +1640,17 @@ class Game {
   _clearOnlineCharTrail(charId) {
     const r = this._findRendererCharBySimId(charId);
     if (r) r._clearTrail();
+  }
+
+  // Server-broadcast heal: changedCells is a flat [gridIdx, factionId, ...]
+  // pair list. Writing them straight into territoryGrid keeps the client in
+  // lockstep with the server without re-running the heal pass locally.
+  _applyHealCells(changedCells) {
+    const grid = territoryGrid.grid;
+    for (let i = 0; i < changedCells.length; i += 2) {
+      grid[changedCells[i]] = changedCells[i + 1];
+    }
+    this.territoryDirty = true;
   }
 
   // Online-only: poll for new schema characters that the server has pushed
@@ -1708,8 +1717,8 @@ class Game {
     if (charId === this.myCharId && this.predicted) {
       this.predicted.posX = posX;
       this.predicted.posZ = posZ;
-      this.predicted.dirX = dirX || this.predicted.dirX;
-      this.predicted.dirZ = dirZ || this.predicted.dirZ;
+      this.predicted.dirX = dirX != null ? dirX : this.predicted.dirX;
+      this.predicted.dirZ = dirZ != null ? dirZ : this.predicted.dirZ;
       // Drop pending inputs — they were aimed at the pre-teleport position
       // and replaying them onto the new pos would slide the player off-spawn.
       if (this.mp) {
@@ -1830,12 +1839,15 @@ class Game {
     // (simChar) which are the same objects passed to UIManager.setPlayer.
     // entry.char === this.player comparisons therefore work the same way as
     // they do in solo, where the player key is the sim Character instance.
+    const emptyScore = () => ({
+      total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0,
+    });
     this.scoreTracker = {
       getScore(char) {
         const id = char?.id;
-        if (id == null) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
+        if (id == null) return emptyScore();
         const cs = game.mp.room.state.characters.find(c => c.id === id);
-        if (!cs) return { total: 0, captures: 0, kills: 0, claims: 0, cellsCaptured: 0, deaths: 0 };
+        if (!cs) return emptyScore();
         return {
           total: cs.score,
           captures: 0,
@@ -2271,8 +2283,10 @@ class Game {
     // Bot AI lives entirely inside sim.tick() now (sim/BotAI.js).
 
     // Track per-char alive state from previous frame so we can fire visual
-    // hooks when sim respawns or kills a character.
-    const wasAlive = new Map();
+    // hooks when sim respawns or kills a character. Reuses this._wasAlive
+    // (cleared + refilled here) instead of allocating a fresh Map every frame.
+    const wasAlive = this._wasAlive;
+    wasAlive.clear();
     for (const c of this.characters) wasAlive.set(c, c.alive);
 
     // ---- Run authoritative sim tick (solo mode only; online state arrives
@@ -2626,8 +2640,18 @@ class Game {
         label.textContent = desired;
         label._cachedName = desired;
       }
-      label.style.left = `${(tmp.x * 0.5 + 0.5) * W}px`;
-      label.style.top = `${(-tmp.y * 0.5 + 0.5) * H}px`;
+      // Cache last-written px values so identical positions skip the style
+      // mutation — same caching pattern as _displayed / _cachedName above.
+      const left = (tmp.x * 0.5 + 0.5) * W;
+      const top = (-tmp.y * 0.5 + 0.5) * H;
+      if (label._lastLeft !== left) {
+        label.style.left = `${left}px`;
+        label._lastLeft = left;
+      }
+      if (label._lastTop !== top) {
+        label.style.top = `${top}px`;
+        label._lastTop = top;
+      }
     }
   }
 
@@ -3021,9 +3045,12 @@ class Game {
     const grid = territoryGrid.grid;
     const size = GRID_SIZE;
 
-    const factionR = new Uint8Array(6);
-    const factionG = new Uint8Array(6);
-    const factionB = new Uint8Array(6);
+    // Faction IDs are 1-based, so allocate FACTION_COUNT + 1 slots (index 0
+    // unused). Hardcoding 6 silently truncated when FACTION_COUNT changed.
+    const paletteSize = FACTION_COUNT + 1;
+    const factionR = new Uint8Array(paletteSize);
+    const factionG = new Uint8Array(paletteSize);
+    const factionB = new Uint8Array(paletteSize);
     for (let i = 0; i < FACTION_COUNT; i++) {
       const c = FACTION_COLORS[i];
       factionR[i + 1] = (c >> 16) & 0xFF;
@@ -3347,7 +3374,7 @@ if (_rulesModal) _rulesModal.addEventListener("click", (e) => {
   if (e.target === _rulesModal) _rulesModal.classList.remove("visible"); // click outside card → close
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && _rulesModal.classList.contains("visible")) {
+  if (_rulesModal && e.key === "Escape" && _rulesModal.classList.contains("visible")) {
     _rulesModal.classList.remove("visible");
   }
 });
