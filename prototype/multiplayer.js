@@ -5,17 +5,23 @@ import * as Colyseus from "colyseus.js";
 // reach our Colyseus server. Detect it and route to the canonical Railway
 // host so the same static client works on both itch and the direct site.
 const REMOTE_SERVER = "wss://landcapture.up.railway.app";
+const ITCH_HOST_SUFFIXES = [".itch.zone", ".itch.io"];
+const INPUT_BUFFER_MAX = 100; // ~3.3s @ 30Hz
+
 function _isItchHost() {
   const h = location.hostname.toLowerCase();
-  return h.endsWith(".itch.zone") || h.endsWith(".itch.io") || h === "itch.io";
+  return h === "itch.io" || ITCH_HOST_SUFFIXES.some((suffix) => h.endsWith(suffix));
+}
+
+function _resolveServerUrl() {
+  if (_isItchHost()) return REMOTE_SERVER;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}`;
 }
 
 export class MultiplayerClient {
   constructor() {
-    const url = _isItchHost()
-      ? REMOTE_SERVER
-      : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
-    this.client = new Colyseus.Client(url);
+    this.client = new Colyseus.Client(_resolveServerUrl());
     this.room = null;
     this.playerToken = null;
 
@@ -46,50 +52,36 @@ export class MultiplayerClient {
     // Browser refresh = new sessionId. Reconnection grace covers transient
     // network blips only. Score persistence across refresh is via playerToken.
     // Resolve token: passed-in > localStorage > generate new
-    let token = playerToken;
+    let token = playerToken || localStorage.getItem("playerToken");
     if (!token) {
-      token = localStorage.getItem("playerToken");
-      if (!token) {
-        token = crypto.randomUUID();
-        localStorage.setItem("playerToken", token);
-      }
+      token = crypto.randomUUID();
+      localStorage.setItem("playerToken", token);
     }
     this.playerToken = token;
 
     this.room = await this.client.joinOrCreate("game", {});
-    this.room.onStateChange((state) => {
-      if (this.onState) this.onState(state);
-    });
-    this.room.onMessage("claim", ({ charId, trailPoints, factionId, replayTrail }) => {
-      if (this.onClaim) this.onClaim(charId, factionId, trailPoints, !!replayTrail);
-    });
-    this.room.onMessage("claimResult", ({ charId, factionId, cells }) => {
-      if (this.onClaimResult) this.onClaimResult(charId, factionId, cells);
-    });
-    this.room.onMessage("heal", ({ changedCells }) => {
-      if (this.onHeal) this.onHeal(changedCells);
-    });
-    this.room.onMessage("trailVertex", ({ charId, x, z }) => {
-      if (this.onTrailVertex) this.onTrailVertex(charId, x, z);
-    });
-    this.room.onMessage("kill", ({ killerId, victimId }) => {
-      if (this.onKill) this.onKill(killerId, victimId);
-    });
-    this.room.onMessage("teleport", ({ charId, posX, posZ, dirX, dirZ, reason }) => {
-      if (this.onTeleport) this.onTeleport(charId, posX, posZ, dirX, dirZ, reason);
-    });
-    this.room.onMessage("yourCharId", ({ charId }) => {
-      if (this.onYourCharId) this.onYourCharId(charId);
-    });
-    this.room.onMessage("gridSnapshot", ({ bytes }) => {
-      if (this.onGridSnapshot) this.onGridSnapshot(bytes);
-    });
-    this.room.onMessage("cumulativeScore", ({ score }) => {
-      if (this.onCumulativeScore) this.onCumulativeScore(score);
-    });
-    this.room.onMessage("nameRejected", ({ reason }) => {
-      if (this.onNameRejected) this.onNameRejected({ reason });
-    });
+    this.room.onStateChange((state) => this.onState?.(state));
+
+    // Forward server messages to the matching event hook. Each entry is
+    // [serverMessage, hookName, (payload) => args[]].
+    const handlers = [
+      ["claim",           "onClaim",           (m) => [m.charId, m.factionId, m.trailPoints, !!m.replayTrail]],
+      ["claimResult",     "onClaimResult",     (m) => [m.charId, m.factionId, m.cells]],
+      ["heal",            "onHeal",            (m) => [m.changedCells]],
+      ["trailVertex",     "onTrailVertex",     (m) => [m.charId, m.x, m.z]],
+      ["kill",            "onKill",            (m) => [m.killerId, m.victimId]],
+      ["teleport",        "onTeleport",        (m) => [m.charId, m.posX, m.posZ, m.dirX, m.dirZ, m.reason]],
+      ["yourCharId",      "onYourCharId",      (m) => [m.charId]],
+      ["gridSnapshot",    "onGridSnapshot",    (m) => [m.bytes]],
+      ["cumulativeScore", "onCumulativeScore", (m) => [m.score]],
+      ["nameRejected",    "onNameRejected",    (m) => [{ reason: m.reason }]],
+    ];
+    for (const [msg, hook, mapArgs] of handlers) {
+      this.room.onMessage(msg, (payload) => {
+        const fn = this[hook];
+        if (fn) fn(...mapArgs(payload));
+      });
+    }
 
     // Now that handlers are wired, send hello
     this.room.send("hello", { name: playerName, playerToken: token });
@@ -107,7 +99,7 @@ export class MultiplayerClient {
       t: performance.now(),
     });
     // Bound the buffer — at 30Hz this caps memory at ~3.3s of pending inputs.
-    while (this.inputBuffer.length > 100) this.inputBuffer.shift();
+    while (this.inputBuffer.length > INPUT_BUFFER_MAX) this.inputBuffer.shift();
     this.room.send("input", { dirX, dirZ, seq: this.inputSeq });
   }
 

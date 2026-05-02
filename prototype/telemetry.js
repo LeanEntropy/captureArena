@@ -13,13 +13,20 @@
 // On the canonical site `/track` resolves to our own server. From itch's
 // iframe sandbox we have to point at the absolute Railway URL or the POST
 // goes to itch (which does nothing with it).
+const ITCH_HOST_SUFFIXES = [".itch.zone", ".itch.io"];
+const REMOTE_TRACK_URL = "https://landcapture.up.railway.app/track";
+const FLUSH_MS = 5000;
+const SERVER_BATCH_CAP = 50;
+const NAME_MAX_LEN = 32;
+
 function _resolveEndpoint() {
   const h = location.hostname.toLowerCase();
-  const onItch = h.endsWith(".itch.zone") || h.endsWith(".itch.io") || h === "itch.io";
-  return onItch ? "https://landcapture.up.railway.app/track" : "/track";
+  const onItch =
+    h === "itch.io" || ITCH_HOST_SUFFIXES.some((suffix) => h.endsWith(suffix));
+  return onItch ? REMOTE_TRACK_URL : "/track";
 }
+
 const ENDPOINT = _resolveEndpoint();
-const FLUSH_MS = 5000;
 
 const queue = [];
 let inited = false;
@@ -39,26 +46,27 @@ let referrerHref = null;
 function _parseHost(href) {
   if (!href) return null;
   try {
-    const h = new URL(href).hostname.toLowerCase();
-    return h || null;
+    return new URL(href).hostname.toLowerCase() || null;
   } catch {
     return null;
   }
+}
+
+function _randomId(prefix) {
+  return prefix + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 function _getSessionId() {
   try {
     let id = sessionStorage.getItem("tel_sid");
     if (!id) {
-      id = (crypto && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : "s_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      id = crypto?.randomUUID ? crypto.randomUUID() : _randomId("s_");
       sessionStorage.setItem("tel_sid", id);
     }
     return id;
   } catch {
     // sessionStorage may be blocked in private mode — fall back to in-memory.
-    return "s_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return _randomId("s_");
   }
 }
 
@@ -71,14 +79,12 @@ function _getPlayerToken() {
 }
 
 function _send(payload) {
+  const body = JSON.stringify(payload);
   // Try sendBeacon first (survives unload). Fall back to fetch+keepalive.
   try {
     if (navigator.sendBeacon) {
-      const blob = new Blob([JSON.stringify(payload)], {
-        type: "application/json",
-      });
-      const ok = navigator.sendBeacon(ENDPOINT, blob);
-      if (ok) return;
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon(ENDPOINT, blob)) return;
     }
   } catch {
     // fall through
@@ -87,7 +93,7 @@ function _send(payload) {
     fetch(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body,
       keepalive: true,
       credentials: "same-origin",
     }).catch(() => {});
@@ -98,23 +104,20 @@ function _send(payload) {
 
 function flush() {
   if (queue.length === 0) return;
-  // Splice up to 50 (server cap) so a long-lived tab never overflows.
-  const batch = queue.splice(0, 50);
+  // Splice up to server cap so a long-lived tab never overflows.
+  const batch = queue.splice(0, SERVER_BATCH_CAP);
   _send({ events: batch });
 }
 
 export function setPlayerName(name) {
   if (typeof name === "string" && name.trim().length > 0) {
-    playerName = name.trim().slice(0, 32);
+    playerName = name.trim().slice(0, NAME_MAX_LEN);
   }
 }
 
 export function track(event, detail) {
   if (!inited) init();
-  const entry = {
-    event,
-    session_id: sessionId,
-  };
+  const entry = { event, session_id: sessionId };
   if (playerToken) entry.player_token = playerToken;
   // Always attach playerName when set so the dashboard can show recent names.
   if (detail && typeof detail === "object") {
