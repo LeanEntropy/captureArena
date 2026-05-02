@@ -80,10 +80,6 @@ function classifyPlatform(ua: string | undefined): string {
 
 // ── validation ───────────────────────────────────────────────────────────────
 
-function isString(x: unknown): x is string {
-  return typeof x === "string";
-}
-
 type ClientEvent = {
   event: string;
   session_id: string;
@@ -98,54 +94,69 @@ type ClientEvent = {
   referrer?: string | null;
 };
 
+// Sentinel return from optString: distinguishes "absent/null OK" (undefined)
+// from "present-but-invalid" (the symbol). Callers map invalid → reject entry.
+const INVALID = Symbol("invalid");
+
+function optString(value: unknown, maxLen: number): string | undefined | typeof INVALID {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.length > maxLen) return INVALID;
+  return value;
+}
+
+function requiredString(value: unknown, maxLen: number): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLen) return null;
+  return value;
+}
+
 function validateEntry(raw: unknown): ClientEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
-  if (!isString(e.event) || e.event.length === 0 || e.event.length > 64) return null;
-  if (!isString(e.session_id) || e.session_id.length === 0 || e.session_id.length > 128) return null;
-  const out: ClientEvent = {
-    event: e.event,
-    session_id: e.session_id,
-  };
-  if (e.player_token !== undefined && e.player_token !== null) {
-    if (!isString(e.player_token) || e.player_token.length > 128) return null;
-    out.player_token = e.player_token;
-  }
-  if (e.path !== undefined && e.path !== null) {
-    if (!isString(e.path) || e.path.length > 256) return null;
-    out.path = e.path;
-  }
-  if (e.mode !== undefined && e.mode !== null) {
-    if (!isString(e.mode) || e.mode.length > 32) return null;
-    out.mode = e.mode;
-  }
+  const event = requiredString(e.event, 64);
+  const session_id = requiredString(e.session_id, 128);
+  if (!event || !session_id) return null;
+
+  const playerToken = optString(e.player_token, 128);
+  const path = optString(e.path, 256);
+  const mode = optString(e.mode, 32);
+  const referrerHost = optString(e.referrer_host, 256);
+  const referrer = optString(e.referrer, 1024);
+  if (
+    playerToken === INVALID ||
+    path === INVALID ||
+    mode === INVALID ||
+    referrerHost === INVALID ||
+    referrer === INVALID
+  ) return null;
+
+  let detail: Record<string, unknown> | undefined;
   if (e.detail !== undefined && e.detail !== null) {
     if (typeof e.detail !== "object" || Array.isArray(e.detail)) return null;
-    out.detail = e.detail as Record<string, unknown>;
+    detail = e.detail as Record<string, unknown>;
   }
-  if (e.referrer_host !== undefined && e.referrer_host !== null) {
-    if (!isString(e.referrer_host) || e.referrer_host.length > 256) return null;
-    out.referrer_host = e.referrer_host.toLowerCase();
-  }
-  if (e.referrer !== undefined && e.referrer !== null) {
-    if (!isString(e.referrer) || e.referrer.length > 1024) return null;
-    out.referrer = e.referrer;
-  }
+
+  const out: ClientEvent = { event, session_id };
+  if (playerToken !== undefined) out.player_token = playerToken;
+  if (path !== undefined) out.path = path;
+  if (mode !== undefined) out.mode = mode;
+  if (referrerHost !== undefined) out.referrer_host = referrerHost.toLowerCase();
+  if (referrer !== undefined) out.referrer = referrer;
+  if (detail !== undefined) out.detail = detail;
   return out;
 }
 
 // ── handler ──────────────────────────────────────────────────────────────────
 
+function headerString(req: Request, name: string): string | undefined {
+  const v = req.headers[name];
+  return typeof v === "string" ? v : undefined;
+}
+
 export function trackHandler(req: Request, res: Response): void {
   ensureFlushTimer();
 
-  const body = req.body;
-  if (!body || !Array.isArray(body.events)) {
-    res.status(204).end();
-    return;
-  }
-  const events = body.events as unknown[];
-  if (events.length < 1 || events.length > 50) {
+  const events = Array.isArray(req.body?.events) ? (req.body.events as unknown[]) : null;
+  if (!events || events.length < 1 || events.length > 50) {
     res.status(204).end();
     return;
   }
@@ -154,30 +165,21 @@ export function trackHandler(req: Request, res: Response): void {
   // Header-based referrer is our own URL on every /track POST (the page
   // making the fetch). Keep it only as a fallback for clients that haven't
   // snapshotted document.referrer yet — the per-event referrer_host wins.
-  const headerReferrerHost = parseReferrerHost(
-    typeof req.headers["referer"] === "string" ? req.headers["referer"] : undefined
-  );
+  const headerReferrerHost = parseReferrerHost(headerString(req, "referer"));
   const country = lookupCountry(req.ip);
-  const platform = classifyPlatform(
-    typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined
-  );
+  const platform = classifyPlatform(headerString(req, "user-agent"));
 
   for (const raw of events) {
     const v = validateEntry(raw);
     if (!v) continue;
-    const portalFlag =
-      !!v.detail && (v.detail as Record<string, unknown>).portal === true;
+    const portalFlag = v.detail?.portal === true;
     // Prefer the client-supplied referrer (captured from document.referrer
     // at page load — the actual upstream page). Fall back to the request
     // header only if absent. The client also strips self-referrals before
     // sending.
     const referrerHost = v.referrer_host ?? headerReferrerHost;
-    const source = deriveSource(referrerHost, portalFlag);
     // mode is best-effort: prefer top-level field, fall back to detail.mode.
-    const detailMode =
-      v.detail && typeof (v.detail as Record<string, unknown>).mode === "string"
-        ? ((v.detail as Record<string, unknown>).mode as string)
-        : null;
+    const detailMode = typeof v.detail?.mode === "string" ? v.detail.mode : null;
     pendingWrites.push({
       ts,
       session_id: v.session_id,
@@ -185,7 +187,7 @@ export function trackHandler(req: Request, res: Response): void {
       event: v.event,
       country,
       referrer_host: referrerHost,
-      source,
+      source: deriveSource(referrerHost, portalFlag),
       mode: v.mode ?? detailMode ?? null,
       path: v.path ?? null,
       detail: v.detail ? JSON.stringify(v.detail) : null,

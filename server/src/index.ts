@@ -1,26 +1,21 @@
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { GameRoom } from "./rooms/GameRoom.js";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
-import { trackHandler } from "./stats/ingest.js";
+import { GameRoom } from "./rooms/GameRoom.js";
 import { statsAuth } from "./stats/auth.js";
-import { dashboardRouter } from "./stats/dashboard.js";
 import { startConcurrencySampler } from "./stats/concurrency.js";
+import { dashboardRouter } from "./stats/dashboard.js";
+import { trackHandler } from "./stats/ingest.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // In dev (`tsx watch src/index.ts`), __dirname is server/src/.
 // In prod (`node dist/index.js`), __dirname is server/dist/.
 // Both resolve to the repo root via "../.." then we go to "prototype/".
 const PROTOTYPE_DIR = path.resolve(__dirname, "../../prototype");
-
-const app = express();
-app.use(express.static(PROTOTYPE_DIR));
-app.get("/health", (_req, res) => { res.send("ok"); });
 
 // CORS for cross-origin embeds. Same static client may be hosted on
 // itch.io (under *.itch.zone iframes) and POST telemetry / WS-connect to
@@ -29,7 +24,7 @@ app.get("/health", (_req, res) => { res.send("ok"); });
 // rather than "*". Required for /track POSTs from the iframe; the
 // Colyseus WebSocket transport accepts cross-origin handshakes by default.
 const ITCH_ORIGIN_RE = /^https:\/\/([a-z0-9-]+\.)?itch\.(zone|io)$/;
-app.use((req, res, next) => {
+function itchCors(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
   if (typeof origin === "string" && ITCH_ORIGIN_RE.test(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -40,7 +35,12 @@ app.use((req, res, next) => {
     if (req.method === "OPTIONS") { res.status(204).end(); return; }
   }
   next();
-});
+}
+
+const app = express();
+app.use(express.static(PROTOTYPE_DIR));
+app.get("/health", (_req, res) => { res.send("ok"); });
+app.use(itchCors);
 
 // Self-hosted analytics — must come BEFORE the Colyseus mount and any catch-all.
 // `trust proxy` lets `req.ip` reflect X-Forwarded-For when running behind

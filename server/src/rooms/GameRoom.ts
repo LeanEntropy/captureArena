@@ -1,21 +1,57 @@
-import { Room, Client } from "@colyseus/core";
+import { Client, Room } from "@colyseus/core";
 import { gzipSync } from "zlib";
-import { GameStateSchema, FactionSchema, CharacterSchema } from "../schema/GameState.js";
+import { CharacterSchema, FactionSchema, GameStateSchema } from "../schema/GameState.js";
 // @ts-ignore — JS module, types not exported
 import { Simulation } from "../sim/Simulation.js";
 import { BOT_NAMES } from "../sim/constants.js";
 import { MAX_CHARS_PER_FACTION } from "../sim/faction.js";
-import { setCurrentRoom } from "./registry.js";
 import { insertServerEvent } from "../stats/db.js";
+import { setCurrentRoom } from "./registry.js";
 
 const TICK_HZ = 30;
 const TICK_MS = 1000 / TICK_HZ;
 const INTERMISSION_SECONDS = 30;
+// For very large claims the cell-diff can grow big; fall back to broadcasting
+// only the trail (and let clients re-run the algorithm) above this threshold.
+const CLAIM_DIFF_MAX_CELLS = 5000;
+// Clamp dt to a sane upper bound. setSimulationInterval normally fires
+// every TICK_MS=33ms (dt≈0.033s), but if the server stalls (GC pause,
+// expensive claim, host load spike), the next tick's dt can balloon to
+// hundreds of ms. An unclamped dt × PLAYER_SPEED produces a single-tick
+// pos jump of >1 world unit, which broadcasts as a visible mid-movement
+// teleport on the client. Cap dt so the worst-case is <1 cell of jump.
+// 60ms (≈ 2× nominal tick) preserves smooth motion for routine scheduling
+// jitter while bounding the visible damage from real stalls.
+const MAX_DT = 0.06;
 
 interface ClientMeta {
   charId: number | null;
   playerToken: string | null;
   lastInputSeq: number;
+}
+
+// Sim-side character shape — sim is JS, so we type the touched fields here.
+interface SimCharacter {
+  id: number;
+  factionId: number;
+  name: string;
+  isHuman: boolean;
+  alive: boolean;
+  pos: { x: number; z: number };
+  dir: { x: number; z: number };
+  invulnTimer?: number;
+  killCount?: number;
+}
+
+// Copy the per-tick mutable fields. Schema `id` is set once at create-time;
+// don't re-write it here to avoid spurious dirty-flag flips on every tick.
+function syncCharacterSchema(cs: CharacterSchema, c: SimCharacter): void {
+  cs.factionId = c.factionId;
+  cs.name = c.name;
+  cs.posX = c.pos.x;
+  cs.posZ = c.pos.z;
+  cs.dirX = c.dir.x;
+  cs.dirZ = c.dir.z;
 }
 
 export function pickWeakestFaction(
@@ -45,6 +81,11 @@ export class GameRoom extends Room<GameStateSchema> {
   private playerScores = new Map<string, { cumulativeScore: number; lastSeenAt: number }>();
   private matchStartTs: number = Date.now();
 
+  // Set by onClaimResult when the diff is too big to send; consumed (and
+  // cleared) by the immediately-following onClaim to decide whether the
+  // legacy claim event needs to carry the trail for client replay.
+  private lastClaimWasLarge = false;
+
   onCreate() {
     this.setState(new GameStateSchema());
     setCurrentRoom(this);
@@ -58,33 +99,63 @@ export class GameRoom extends Room<GameStateSchema> {
     this.sim = new Simulation();
     this.sim.start();
 
-    // Wire sim event hooks → broadcast to clients.
-    //
-    // Two paths for grid-sync:
-    //   - claimResult: server-authoritative cell-diff. Client applies the diff
-    //     directly to its grid copy without re-running the algorithm. This is
-    //     the primary path; clients always trust the server and skip any local
-    //     algorithmic re-run.
-    //   - claim: legacy trail-only event. Still broadcast so the renderer can
-    //     clear the trail mesh by charId; no longer used for grid changes.
-    //
-    // For very large claims the cell-diff can grow big; fall back to broadcasting
-    // only the trail (and let clients re-run the algorithm) above this threshold.
-    const CLAIM_DIFF_MAX_CELLS = 5000;
+    this.wireSimEvents();
+
+    // Initialize schema from sim's initial state
+    for (let f = 1; f <= 5; f++) {
+      const fs = new FactionSchema();
+      fs.id = f;
+      this.state.factions.push(fs);
+    }
+    for (const c of this.sim.characters as SimCharacter[]) {
+      const cs = new CharacterSchema();
+      cs.id = c.id;
+      syncCharacterSchema(cs, c);
+      this.state.characters.push(cs);
+    }
+
+    this.setSimulationInterval((dtMs) => this.tick(dtMs / 1000), TICK_MS);
+
+    this.onMessage("hello", (client, msg: { name?: string; playerToken?: string | null }) => {
+      this.handleHello(client, msg.name ?? "Player", msg.playerToken ?? null);
+    });
+
+    this.onMessage("input", (client, msg: { dirX: number; dirZ: number; seq?: number }) => {
+      const meta = this.clientMeta.get(client.sessionId);
+      if (!meta || meta.charId === null) return;
+      this.sim.setTargetDir(meta.charId, msg.dirX, msg.dirZ);
+      // Track the highest seq we've applied for this client so the per-tick
+      // schema sync can echo it back. Monotonic-only — drop out-of-order/dup.
+      if (typeof msg.seq === "number" && msg.seq > meta.lastInputSeq) {
+        meta.lastInputSeq = msg.seq;
+      }
+    });
+  }
+
+  // Wire sim event hooks → broadcast to clients.
+  //
+  // Two paths for grid-sync:
+  //   - claimResult: server-authoritative cell-diff. Client applies the diff
+  //     directly to its grid copy without re-running the algorithm. This is
+  //     the primary path; clients always trust the server and skip any local
+  //     algorithmic re-run.
+  //   - claim: legacy trail-only event. Still broadcast so the renderer can
+  //     clear the trail mesh by charId; no longer used for grid changes.
+  private wireSimEvents(): void {
     this.sim.onClaimResult = (
       charId: number,
       factionId: number,
       changedCells: number[],
-      _trailPoints: number[],
+      trailPoints: number[],
     ) => {
       // Telemetry: only log slow claims (>10ms) — under normal load claims
       // run in 2-5ms and don't need a log line each.
-      const ms = (this.sim as any)._lastClaimMs ?? 0;
+      const ms = this.sim._lastClaimMs ?? 0;
       if (ms > 10) {
         console.log(`[claim slow] charId=${charId} faction=${factionId} cells=${changedCells.length} ms=${ms.toFixed(1)}`);
       }
       // Thin-line diagnostic: capture suspicious claims for analysis.
-      const trailLen = _trailPoints.length / 2;
+      const trailLen = trailPoints.length / 2;
       const cellsFlipped = changedCells.length;
       const ratio = trailLen > 0 ? cellsFlipped / trailLen : 0;
       // Catch: short trails with no fill (ratio<5 + ANY length)
@@ -92,7 +163,9 @@ export class GameRoom extends Room<GameStateSchema> {
       const suspicious = (cellsFlipped > 0 && ratio < 5) || (trailLen > 20 && ratio < 10);
       if (suspicious) {
         const ts = new Date().toISOString().substring(11, 19);
-        console.log(`[CLAIM_THIN ${ts}] char=${charId} faction=${factionId} trailLen=${trailLen} cellsFlipped=${cellsFlipped} ratio=${ratio.toFixed(2)} trail=${JSON.stringify(_trailPoints.slice(0, 200))}${_trailPoints.length > 200 ? `...(${_trailPoints.length-200} more)` : ""}`);
+        const trailPreview = JSON.stringify(trailPoints.slice(0, 200));
+        const truncated = trailPoints.length > 200 ? `...(${trailPoints.length - 200} more)` : "";
+        console.log(`[CLAIM_THIN ${ts}] char=${charId} faction=${factionId} trailLen=${trailLen} cellsFlipped=${cellsFlipped} ratio=${ratio.toFixed(2)} trail=${trailPreview}${truncated}`);
       }
       if (changedCells.length === 0) return;
       if (changedCells.length <= CLAIM_DIFF_MAX_CELLS) {
@@ -101,13 +174,12 @@ export class GameRoom extends Room<GameStateSchema> {
         this.broadcast("claimResult", { charId, factionId, cells: changedCells });
       } else {
         // Large claim: leave grid sync to the legacy claim event (trail replay).
-        // Mark this so onClaim broadcasts the trail.
-        (this.sim as any)._lastClaimWasLarge = true;
+        this.lastClaimWasLarge = true;
       }
     };
     this.sim.onClaim = (charId: number, trailPoints: number[], factionId: number) => {
-      const isLarge = (this.sim as any)._lastClaimWasLarge === true;
-      (this.sim as any)._lastClaimWasLarge = false;
+      const isLarge = this.lastClaimWasLarge;
+      this.lastClaimWasLarge = false;
       // Always broadcast claim so the renderer can clear the trail mesh.
       // For LARGE claims, include trailPoints (clients will replay the algorithm).
       // For small claims, omit trailPoints (claimResult already synced the grid).
@@ -140,47 +212,14 @@ export class GameRoom extends Room<GameStateSchema> {
     ) => {
       this.broadcast("teleport", { charId, posX, posZ, dirX, dirZ, reason });
     };
-
-    // Initialize schema from sim's initial state
-    for (let f = 1; f <= 5; f++) {
-      const fs = new FactionSchema();
-      fs.id = f;
-      this.state.factions.push(fs);
-    }
-    for (const c of this.sim.characters) {
-      const cs = new CharacterSchema();
-      cs.id = c.id;
-      cs.factionId = c.factionId;
-      cs.name = c.name;
-      cs.posX = c.pos.x;
-      cs.posZ = c.pos.z;
-      cs.dirX = c.dir.x;
-      cs.dirZ = c.dir.z;
-      this.state.characters.push(cs);
-    }
-
-    this.setSimulationInterval((dtMs) => this.tick(dtMs / 1000), TICK_MS);
-
-    this.onMessage("hello", (client, msg: { name?: string; playerToken?: string | null }) => {
-      this.handleHello(client, msg.name ?? "Player", msg.playerToken ?? null);
-    });
-
-    this.onMessage("input", (client, msg: { dirX: number; dirZ: number; seq?: number }) => {
-      const meta = this.clientMeta.get(client.sessionId);
-      if (!meta || meta.charId === null) return;
-      this.sim.setTargetDir(meta.charId, msg.dirX, msg.dirZ);
-      // Track the highest seq we've applied for this client so the per-tick
-      // schema sync can echo it back. Monotonic-only — drop out-of-order/dup.
-      if (typeof msg.seq === "number" && msg.seq > meta.lastInputSeq) {
-        meta.lastInputSeq = msg.seq;
-      }
-    });
   }
 
   private handleHello(client: Client, name: string, playerToken: string | null) {
+    const characters = this.sim.characters as SimCharacter[];
+
     // Count humans per faction
     const humanCounts = new Map<number, number>();
-    for (const c of this.sim.characters) {
+    for (const c of characters) {
       if (c.isHuman) humanCounts.set(c.factionId, (humanCounts.get(c.factionId) ?? 0) + 1);
     }
     const factionsForPick = this.sim.factionManager.getAllFactions().map((f: any) => ({
@@ -192,31 +231,22 @@ export class GameRoom extends Room<GameStateSchema> {
       return;
     }
 
-    // Prefer alive bot in that faction
-    let target = this.sim.characters.find((c: any) =>
-      c.factionId === factionId && !c.isHuman && c.alive,
-    );
-    // Fallback: any non-human in that faction
+    // Prefer alive bot in that faction; fallback to any non-human; finally
+    // grow the faction up to MAX_CHARS_PER_FACTION (10). Pushing a fresh
+    // CharacterSchema entry on growth surfaces the new char via
+    // state.characters.onAdd. Solo never hits the grow path.
+    let target =
+      characters.find(c => c.factionId === factionId && !c.isHuman && c.alive) ??
+      characters.find(c => c.factionId === factionId && !c.isHuman);
     if (!target) {
-      target = this.sim.characters.find((c: any) => c.factionId === factionId && !c.isHuman);
-    }
-    // No bot slot left → grow the faction up to MAX_CHARS_PER_FACTION (10).
-    // Push a fresh CharacterSchema entry so clients see the new character
-    // via state.characters.onAdd. Solo never hits this path.
-    if (!target) {
-      const grown = this.sim.addCharacter(factionId, MAX_CHARS_PER_FACTION);
+      const grown = this.sim.addCharacter(factionId, MAX_CHARS_PER_FACTION) as SimCharacter | null;
       if (grown) {
         const cs = new CharacterSchema();
         cs.id = grown.id;
-        cs.factionId = grown.factionId;
-        cs.name = grown.name;
-        cs.posX = grown.pos.x;
-        cs.posZ = grown.pos.z;
-        cs.dirX = grown.dir.x;
-        cs.dirZ = grown.dir.z;
+        syncCharacterSchema(cs, grown);
         this.state.characters.push(cs);
         target = grown;
-        console.log(`[GameRoom] grew faction ${factionId} → ${this.sim.characters.length} chars total`);
+        console.log(`[GameRoom] grew faction ${factionId} → ${characters.length} chars total`);
       }
     }
     if (!target) {
@@ -227,10 +257,11 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Reject if any OTHER human already holds this name (case-insensitive).
     // Client surfaces this as "name in use, pick another" in the title screen.
-    const trimmedName = (name || "").trim();
+    const trimmedName = name.trim();
+    const trimmedLower = trimmedName.toLowerCase();
     if (trimmedName) {
-      const conflict = this.sim.characters.find((c: any) =>
-        c.isHuman && c !== target && (c.name || "").toLowerCase() === trimmedName.toLowerCase(),
+      const conflict = characters.find(c =>
+        c.isHuman && c !== target && (c.name || "").toLowerCase() === trimmedLower,
       );
       if (conflict) {
         client.send("nameRejected", { reason: "Name already in use. Pick a different one." });
@@ -246,17 +277,14 @@ export class GameRoom extends Room<GameStateSchema> {
     // Pick a fresh name from BOT_NAMES that nobody else is using; fallback to
     // a synthetic "Bot-{id}" if all canonical names are taken.
     if (trimmedName) {
-      const used = new Set<string>(
-        this.sim.characters.map((c: any) => (c.name || "").toLowerCase()),
-      );
-      for (const c of this.sim.characters as any[]) {
+      const used = new Set<string>(characters.map(c => (c.name || "").toLowerCase()));
+      for (const c of characters) {
         if (c === target || c.isHuman) continue;
-        if ((c.name || "").toLowerCase() === trimmedName.toLowerCase()) {
-          const fresh = BOT_NAMES.find((n: string) => !used.has(n.toLowerCase())) ?? `Bot-${c.id}`;
-          used.delete((c.name || "").toLowerCase());
-          used.add(fresh.toLowerCase());
-          c.name = fresh;
-        }
+        if ((c.name || "").toLowerCase() !== trimmedLower) continue;
+        const fresh = BOT_NAMES.find((n: string) => !used.has(n.toLowerCase())) ?? `Bot-${c.id}`;
+        used.delete((c.name || "").toLowerCase());
+        used.add(fresh.toLowerCase());
+        c.name = fresh;
       }
     }
 
@@ -275,25 +303,13 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`[GameRoom] ${client.sessionId} ("${name}") took over char ${target.id} (faction ${factionId})`);
   }
 
-  // Sliding window stats: every 5s, log max + p99 tick duration. Useful for
+  // Sliding window stats: every 5s, log max + avg tick duration. Useful for
   // confirming that the 1Hz updateTerritoryPcts stall is gone after the
   // incremental-cellCounts fix.
-  private _tickStatsMaxMs = 0;
-  private _tickStatsLastDumpMs = 0;
-  private _tickStatsCount = 0;
-  private _tickStatsSumMs = 0;
+  private tickStats = { maxMs: 0, sumMs: 0, count: 0, windowStartMs: 0 };
 
   private tick(dt: number) {
     const tickStart = performance.now();
-    // Clamp dt to a sane upper bound. setSimulationInterval normally fires
-    // every TICK_MS=33ms (dt≈0.033s), but if the server stalls (GC pause,
-    // expensive claim, host load spike), the next tick's dt can balloon to
-    // hundreds of ms. An unclamped dt × PLAYER_SPEED produces a single-tick
-    // pos jump of >1 world unit, which broadcasts as a visible mid-movement
-    // teleport on the client. Cap dt so the worst-case is <1 cell of jump.
-    // 60ms (≈ 2× nominal tick) preserves smooth motion for routine scheduling
-    // jitter while bounding the visible damage from real stalls.
-    const MAX_DT = 0.06;
     if (dt > MAX_DT) {
       console.warn(`[GameRoom] tick dt clamp: ${(dt * 1000).toFixed(1)}ms → ${(MAX_DT * 1000).toFixed(0)}ms`);
       dt = MAX_DT;
@@ -302,24 +318,25 @@ export class GameRoom extends Room<GameStateSchema> {
       this._tickInner(dt);
     } finally {
       const elapsed = performance.now() - tickStart;
-      if (elapsed > this._tickStatsMaxMs) this._tickStatsMaxMs = elapsed;
-      this._tickStatsCount++;
-      this._tickStatsSumMs += elapsed;
-      if (this._tickStatsLastDumpMs === 0) this._tickStatsLastDumpMs = tickStart;
-      if (tickStart - this._tickStatsLastDumpMs >= 5000) {
-        const avg = this._tickStatsSumMs / Math.max(1, this._tickStatsCount);
-        console.log(`[tick stats] window=${(tickStart - this._tickStatsLastDumpMs).toFixed(0)}ms ticks=${this._tickStatsCount} max=${this._tickStatsMaxMs.toFixed(1)}ms avg=${avg.toFixed(2)}ms`);
-        this._tickStatsLastDumpMs = tickStart;
-        this._tickStatsMaxMs = 0;
-        this._tickStatsCount = 0;
-        this._tickStatsSumMs = 0;
+      const stats = this.tickStats;
+      if (elapsed > stats.maxMs) stats.maxMs = elapsed;
+      stats.count++;
+      stats.sumMs += elapsed;
+      if (stats.windowStartMs === 0) stats.windowStartMs = tickStart;
+      if (tickStart - stats.windowStartMs >= 5000) {
+        const avg = stats.sumMs / Math.max(1, stats.count);
+        console.log(`[tick stats] window=${(tickStart - stats.windowStartMs).toFixed(0)}ms ticks=${stats.count} max=${stats.maxMs.toFixed(1)}ms avg=${avg.toFixed(2)}ms`);
+        stats.windowStartMs = tickStart;
+        stats.maxMs = 0;
+        stats.count = 0;
+        stats.sumMs = 0;
       }
       if (elapsed > 50) {
         // Tick exceeded the 50ms budget. Log the simulation's phase breakdown
         // so we can attribute the cost. With incremental cellCounts the 1Hz
         // territoryPcts scan is gone; remaining outliers are rare big claims.
-        const claimMs = ((this.sim as any)._lastClaimMs ?? 0);
-        const phaseLog = (this.sim as any)._lastTickPhases ?? "";
+        const claimMs = this.sim._lastClaimMs ?? 0;
+        const phaseLog = this.sim._lastTickPhases ?? "";
         console.warn(`[GameRoom] tick OVER BUDGET: ${elapsed.toFixed(1)}ms (claim=${claimMs.toFixed(1)}ms ${phaseLog})`);
       }
     }
@@ -380,17 +397,13 @@ export class GameRoom extends Room<GameStateSchema> {
       if (meta.charId !== null) seqByCharId.set(meta.charId, meta.lastInputSeq);
     }
 
-    for (let i = 0; i < this.sim.characters.length; i++) {
-      const c = this.sim.characters[i];
+    const characters = this.sim.characters as SimCharacter[];
+    for (let i = 0; i < characters.length; i++) {
+      const c = characters[i];
       const cs = this.state.characters[i];
       if (!cs || !c) continue;
-      cs.factionId = c.factionId;
+      syncCharacterSchema(cs, c);
       cs.isHuman = c.isHuman;
-      cs.name = c.name;
-      cs.posX = c.pos.x;
-      cs.posZ = c.pos.z;
-      cs.dirX = c.dir.x;
-      cs.dirZ = c.dir.z;
       cs.alive = c.alive;
       cs.invulnTimer = c.invulnTimer ?? 0;
       cs.killCount = c.killCount ?? 0;
@@ -405,28 +418,20 @@ export class GameRoom extends Room<GameStateSchema> {
   private emitMatchEnd() {
     try {
       const durationMs = Date.now() - this.matchStartTs;
-      const winner = this.sim.matchManager?.winner ?? null;
-      const factionWinner = winner?.name ?? null;
-      const players: Array<{
-        name: string;
-        kills: number;
-        captured: number;
-        score: number;
-        isHuman: boolean;
-        factionId: number;
-      }> = [];
-      for (const c of this.sim.characters as any[]) {
-        if (!c.isHuman) continue;
-        const sc = this.sim.scoreTracker?.getScore?.(c) ?? {};
-        players.push({
-          name: c.name ?? "",
-          kills: sc.kills ?? 0,
-          captured: sc.cellsCaptured ?? 0,
-          score: sc.total ?? 0,
-          isHuman: true,
-          factionId: c.factionId,
+      const factionWinner = this.sim.matchManager?.winner?.name ?? null;
+      const players = (this.sim.characters as SimCharacter[])
+        .filter(c => c.isHuman)
+        .map(c => {
+          const sc = this.sim.scoreTracker?.getScore?.(c) ?? {};
+          return {
+            name: c.name ?? "",
+            kills: sc.kills ?? 0,
+            captured: sc.cellsCaptured ?? 0,
+            score: sc.total ?? 0,
+            isHuman: true,
+            factionId: c.factionId,
+          };
         });
-      }
       insertServerEvent(
         "match_end",
         { durationMs, factionWinner, players },
@@ -438,14 +443,15 @@ export class GameRoom extends Room<GameStateSchema> {
   }
 
   private accumulateScores() {
-    for (const [, meta] of this.clientMeta) {
+    const now = Date.now();
+    for (const meta of this.clientMeta.values()) {
       if (meta.charId === null || !meta.playerToken) continue;
       const c = this.sim.characters[meta.charId];
       if (!c) continue;
       const score = this.sim.scoreTracker?.getScore?.(c)?.total ?? 0;
-      const prior = this.playerScores.get(meta.playerToken) ?? { cumulativeScore: 0, lastSeenAt: Date.now() };
+      const prior = this.playerScores.get(meta.playerToken) ?? { cumulativeScore: 0, lastSeenAt: now };
       prior.cumulativeScore += score;
-      prior.lastSeenAt = Date.now();
+      prior.lastSeenAt = now;
       this.playerScores.set(meta.playerToken, prior);
     }
   }
@@ -464,6 +470,11 @@ export class GameRoom extends Room<GameStateSchema> {
     setCurrentRoom(null);
   }
 
+  private releaseChar(sessionId: string, meta: ClientMeta): void {
+    if (meta.charId !== null) this.sim.setHumanControl(meta.charId, false);
+    this.clientMeta.delete(sessionId);
+  }
+
   async onLeave(client: Client, consented: boolean) {
     const meta = this.clientMeta.get(client.sessionId);
     if (!meta) {
@@ -473,10 +484,7 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Consented leave (explicit close from client) → immediate cleanup
     if (consented) {
-      if (meta.charId !== null) {
-        this.sim.setHumanControl(meta.charId, false);
-      }
-      this.clientMeta.delete(client.sessionId);
+      this.releaseChar(client.sessionId, meta);
       console.log(`[GameRoom] leave: ${client.sessionId} (consented)`);
       return;
     }
@@ -488,11 +496,7 @@ export class GameRoom extends Room<GameStateSchema> {
       // Successful reconnection — meta still in place, char still bound
       console.log(`[GameRoom] ${client.sessionId} reconnected`);
     } catch {
-      // Timeout — clean up
-      if (meta.charId !== null) {
-        this.sim.setHumanControl(meta.charId, false);
-      }
-      this.clientMeta.delete(client.sessionId);
+      this.releaseChar(client.sessionId, meta);
       console.log(`[GameRoom] ${client.sessionId} reconnection timed out — bot resumes`);
     }
   }

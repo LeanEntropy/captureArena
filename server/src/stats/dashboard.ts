@@ -202,24 +202,33 @@ function send(res: Response, key: string, build: () => unknown): void {
   }
 }
 
+function since30d(): number {
+  return Date.now() - 30 * DAY_MS;
+}
+
+function safeJsonParse(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 // ── API routes ───────────────────────────────────────────────────────────────
 
 router.get("/api/visitors-daily", (_req: Request, res: Response) => {
-  send(res, "visitors-daily", () =>
-    stmtVisitorsDaily.all(Date.now() - 30 * DAY_MS)
-  );
+  send(res, "visitors-daily", () => stmtVisitorsDaily.all(since30d()));
 });
 
 router.get("/api/countries", (_req: Request, res: Response) => {
-  send(res, "countries", () => stmtCountries.all(Date.now() - 30 * DAY_MS));
+  send(res, "countries", () => stmtCountries.all(since30d()));
 });
 
 router.get("/api/modes", (_req: Request, res: Response) => {
   send(res, "modes", () => {
-    const rows = stmtModes.all(Date.now() - 30 * DAY_MS) as Array<{
-      m: string | null;
-      n: number;
-    }>;
+    const rows = stmtModes.all(since30d()) as Array<{ m: string | null; n: number }>;
     let solo = 0;
     let online = 0;
     for (const r of rows) {
@@ -231,15 +240,15 @@ router.get("/api/modes", (_req: Request, res: Response) => {
 });
 
 router.get("/api/sources", (_req: Request, res: Response) => {
-  send(res, "sources", () => stmtSources.all(Date.now() - 30 * DAY_MS));
+  send(res, "sources", () => stmtSources.all(since30d()));
 });
 
 router.get("/api/top-referrers", (_req: Request, res: Response) => {
-  send(res, "top-referrers", () => stmtTopReferrers.all(Date.now() - 30 * DAY_MS));
+  send(res, "top-referrers", () => stmtTopReferrers.all(since30d()));
 });
 
 router.get("/api/platforms", (_req: Request, res: Response) => {
-  send(res, "platforms", () => stmtPlatforms.all(Date.now() - 30 * DAY_MS));
+  send(res, "platforms", () => stmtPlatforms.all(since30d()));
 });
 
 // ── new endpoints ────────────────────────────────────────────────────────────
@@ -269,12 +278,7 @@ router.get("/api/recent-matches", (_req: Request, res: Response) => {
   send(res, "recent-matches", () => {
     const rows = stmtRecentMatches.all() as Array<{ ts: number; detail: string | null }>;
     return rows.map(r => {
-      let parsed: any = {};
-      try {
-        parsed = r.detail ? JSON.parse(r.detail) : {};
-      } catch {
-        parsed = {};
-      }
+      const parsed = safeJsonParse(r.detail);
       const players = Array.isArray(parsed.players) ? parsed.players : [];
       return {
         ts: r.ts,
@@ -289,7 +293,7 @@ router.get("/api/recent-matches", (_req: Request, res: Response) => {
 
 router.get("/api/games-per-day", (_req: Request, res: Response) => {
   send(res, "games-per-day", () => {
-    const rows = stmtGamesPerDay.all(Date.now() - 30 * DAY_MS) as Array<{
+    const rows = stmtGamesPerDay.all(since30d()) as Array<{
       date: string; m: string | null; n: number;
     }>;
     const byDate = new Map<string, { date: string; solo: number; online: number }>();
@@ -306,7 +310,7 @@ router.get("/api/games-per-day", (_req: Request, res: Response) => {
   });
 });
 
-function aggregatePlaytime(rows: Array<{ period: string; m: string | null; ms: number | null }>) {
+function aggregatePlaytime(rows: Array<{ period: string; m: string | null; ms: number | null }>): Array<{ period: string; solo_minutes: number; online_minutes: number }> {
   const byPeriod = new Map<string, { period: string; solo_minutes: number; online_minutes: number }>();
   for (const r of rows) {
     let bucket = byPeriod.get(r.period);
@@ -327,23 +331,14 @@ function aggregatePlaytime(rows: Array<{ period: string; m: string | null; ms: n
     .sort((a, b) => a.period.localeCompare(b.period));
 }
 
+type PlaytimeRow = { period: string; m: string | null; ms: number | null };
+
 router.get("/api/playtime", (_req: Request, res: Response) => {
-  send(res, "playtime", () => {
-    const dayRows = stmtPlaytimeDay.all(Date.now() - 30 * DAY_MS) as Array<{
-      period: string; m: string | null; ms: number | null;
-    }>;
-    const weekRows = stmtPlaytimeWeek.all(Date.now() - 12 * 7 * DAY_MS) as Array<{
-      period: string; m: string | null; ms: number | null;
-    }>;
-    const monthRows = stmtPlaytimeMonth.all(Date.now() - 12 * 31 * DAY_MS) as Array<{
-      period: string; m: string | null; ms: number | null;
-    }>;
-    return {
-      day: aggregatePlaytime(dayRows),
-      week: aggregatePlaytime(weekRows),
-      month: aggregatePlaytime(monthRows),
-    };
-  });
+  send(res, "playtime", () => ({
+    day: aggregatePlaytime(stmtPlaytimeDay.all(since30d()) as PlaytimeRow[]),
+    week: aggregatePlaytime(stmtPlaytimeWeek.all(Date.now() - 12 * 7 * DAY_MS) as PlaytimeRow[]),
+    month: aggregatePlaytime(stmtPlaytimeMonth.all(Date.now() - 12 * 31 * DAY_MS) as PlaytimeRow[]),
+  }));
 });
 
 router.get("/api/top-daily-players", (_req: Request, res: Response) => {
@@ -355,13 +350,8 @@ router.get("/api/top-daily-players", (_req: Request, res: Response) => {
       const minutesRow = stmtTopDailyMinutes.get(since, t.pt) as { ms: number } | undefined;
       const totalMinutes = Math.round(((minutesRow?.ms ?? 0) / 60000) * 10) / 10;
       const nameRow = stmtTopDailyName.get(t.pt) as { detail: string | null } | undefined;
-      let mostRecentName: string | null = null;
-      if (nameRow?.detail) {
-        try {
-          const parsed = JSON.parse(nameRow.detail);
-          if (typeof parsed.playerName === "string") mostRecentName = parsed.playerName;
-        } catch { /* ignore */ }
-      }
+      const parsed = safeJsonParse(nameRow?.detail ?? null);
+      const mostRecentName = typeof parsed.playerName === "string" ? parsed.playerName : null;
       return {
         playerToken: t.pt,
         mostRecentName,
