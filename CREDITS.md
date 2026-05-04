@@ -8,7 +8,7 @@ Made for Vibe Jam 2026.
 ## Game
 
 - **Design, code, and art direction** — Ohad Barzilay (Civax)
-- **AI pair-programming** — Anthropic Claude (used throughout development)
+- **AI pair-programming** — Anthropic Claude Code (Claude 4.6) 
 
 ## Music
 
@@ -20,10 +20,6 @@ Made for Vibe Jam 2026.
 - **[Paper.io 2](https://paper-io.com/)** — territory-capture mechanic, trail-kill rule, claim-loop scoring.
 - **[Tanks 3D io](https://tanks3d.io/)** — multiplayer arena structure and round flow.
 
-## Visual references
-
-- Paper.io 2 voxel skins (character read at gameplay scale).
-- Crossy Road (chunky-cube character proportions).
 
 ## Third-party libraries
 

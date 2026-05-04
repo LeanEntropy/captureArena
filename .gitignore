@@ -14,3 +14,27 @@ server/data/
 
 # DB-IP geolocation database (downloaded during Docker build)
 *.mmdb
+
+# Built itch.io ZIP (regenerate via `bash scripts/pack-itch.sh`)
+dist-itch/
+.local-data/
+
+# Jen — internal AI art-director agent. Not part of the public game release.
+# (See PlayDreams CLI for the canonical Jen template.)
+jen/
+
+# Repo-root debug / smoke-test artifacts. Specific files allowed via the
+# !-overrides below so commits to package.json / tsconfig.base.json /
+# pnpm-workspace.yaml still go through.
+/*.png
+/*.jpg
+/*.gif
+/*.json
+/*.txt
+/prototype/*.png
+/prototype/*.json
+!/package.json
+!/tsconfig.base.json
+!/pnpm-workspace.yaml
+!/CREDITS.md
+!/LICENSE
