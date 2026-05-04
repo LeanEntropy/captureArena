@@ -522,6 +522,20 @@
   </script>
   <!-- Vibe Jam 2026 widget — REQUIRED for contest entrant tracking -->
   <script async src="https://vibej.am/2026/widget.js"></script>
+
+  <!--
+    Remote-server URL used by the static client when this file is served from
+    a host that is NOT itself a Colyseus + /track server (e.g. the canonical
+    site is on Railway, but a fork hosted on itch.io / GitHub Pages / a CDN
+    needs to know where to point its WebSocket and telemetry POSTs).
+
+    If you fork this game and host the static files elsewhere, change this
+    to your own Colyseus URL. Origin only — no path. If left at the default,
+    forks will phone home to the canonical Land Capture server. Multiplayer
+    clients use this with a wss:// prefix; telemetry uses it with a /track
+    suffix.
+  -->
+  <meta name="game-remote-origin" content="https://landcapture.up.railway.app">
 </head>
 <body>
   <div id="ui">

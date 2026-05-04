@@ -10,20 +10,34 @@
 // ts, country (via IP geolookup), referrer host, and traffic source — the
 // server strips client-supplied ts/country values.
 
-// On the canonical site `/track` resolves to our own server. From itch's
-// iframe sandbox we have to point at the absolute Railway URL or the POST
-// goes to itch (which does nothing with it).
+// On the canonical site `/track` resolves to our own server. From hosts
+// that are NOT serving Colyseus + /track (itch.io iframe sandbox, GitHub
+// Pages, CDN-only forks) we have to use an absolute URL or the POST goes
+// to the wrong place.
+//
+// Source of the remote origin (in order):
+//   1. <meta name="game-remote-origin" content="https://your-host.tld">
+//      in index.html. Same meta as multiplayer.js consumes.
+//   2. Hardcoded fallback below.
 const ITCH_HOST_SUFFIXES = [".itch.zone", ".itch.io"];
-const REMOTE_TRACK_URL = "https://landcapture.up.railway.app/track";
+const REMOTE_FALLBACK_TRACK_URL = "https://landcapture.up.railway.app/track";
 const FLUSH_MS = 5000;
 const SERVER_BATCH_CAP = 50;
 const NAME_MAX_LEN = 32;
+
+function _readMetaTrackUrl() {
+  const meta = document.querySelector('meta[name="game-remote-origin"]');
+  const origin = meta?.getAttribute("content")?.trim();
+  if (!origin) return null;
+  return origin.replace(/\/+$/, "") + "/track";
+}
 
 function _resolveEndpoint() {
   const h = location.hostname.toLowerCase();
   const onItch =
     h === "itch.io" || ITCH_HOST_SUFFIXES.some((suffix) => h.endsWith(suffix));
-  return onItch ? REMOTE_TRACK_URL : "/track";
+  if (!onItch) return "/track";
+  return _readMetaTrackUrl() ?? REMOTE_FALLBACK_TRACK_URL;
 }
 
 const ENDPOINT = _resolveEndpoint();
