@@ -3512,6 +3512,60 @@ _updateMusicButtons();
   });
 })();
 
+// ===== Private-room modal =====
+const _pmEl = (id) => document.getElementById(id);
+function _pmOpen() { _pmEl("private-modal").classList.remove("hidden"); _pmRecalcCapacity(); }
+function _pmClose() { _pmEl("private-modal").classList.add("hidden"); _pmEl("pm-join-error").textContent = ""; }
+
+document.querySelectorAll(".pm-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".pm-tab").forEach(t => t.classList.toggle("active", t === tab));
+    _pmEl("pm-body-join").classList.toggle("hidden", tab.dataset.tab !== "join");
+    _pmEl("pm-body-create").classList.toggle("hidden", tab.dataset.tab !== "create");
+  });
+});
+
+function _pmReadCreateConfig() {
+  const factionsInput = document.querySelector('input[name="pm-fac"]:checked');
+  const factions = parseInt(factionsInput?.value ?? "5", 10);
+  const bots = _pmEl("pm-bots").checked;
+  const botsPerFaction = parseInt(_pmEl("pm-bots-per").value, 10);
+  const minHumans = parseInt(_pmEl("pm-min-humans").value, 10);
+  return { factions, bots, botsPerFaction, minHumans };
+}
+
+function _pmRecalcCapacity() {
+  const cfg = _pmReadCreateConfig();
+  const totalBots = cfg.bots ? cfg.factions * cfg.botsPerFaction : 0;
+  const humanSlots = 50 - totalBots;
+  const out = _pmEl("pm-cap-readout");
+  out.textContent = `Capacity: ${humanSlots} human slots + ${totalBots} bot slots = ${humanSlots + totalBots} / 50`;
+  // Hide the "bots per faction" row when bots disabled.
+  _pmEl("pm-bots-per-row").style.display = cfg.bots ? "" : "none";
+  _pmEl("pm-bots-per-val").textContent = String(cfg.botsPerFaction);
+  // Disable submit if min-humans exceeds capacity.
+  const overCap = humanSlots < cfg.minHumans;
+  const submit = _pmEl("pm-create-submit");
+  submit.disabled = overCap;
+  submit.style.opacity = overCap ? "0.5" : "1";
+}
+
+["pm-bots", "pm-bots-per", "pm-min-humans"].forEach(id => {
+  _pmEl(id).addEventListener("input", _pmRecalcCapacity);
+});
+document.querySelectorAll('input[name="pm-fac"]').forEach(r => r.addEventListener("change", _pmRecalcCapacity));
+
+_pmEl("pm-cancel").addEventListener("click", _pmClose);
+_pmEl("private-modal-backdrop").addEventListener("click", _pmClose);
+
+document.getElementById("private-btn").addEventListener("click", _pmOpen);
+
+// Force-uppercase + 6-char clamp on the code input.
+_pmEl("pm-code").addEventListener("input", (e) => {
+  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  e.target.value = v;
+});
+
 // Name entry
 document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
