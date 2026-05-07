@@ -74,17 +74,17 @@ export function pickWeakestFaction(
 
 export class GameRoom extends Room<GameStateSchema> {
   // typed loosely — sim is JS
-  private sim!: any;
-  private clientMeta = new Map<string, ClientMeta>();
-  private prevPhase: string = "playing";
-  private intermissionRemaining: number = 0;
-  private playerScores = new Map<string, { cumulativeScore: number; lastSeenAt: number }>();
-  private matchStartTs: number = Date.now();
+  protected sim!: any;
+  protected clientMeta = new Map<string, ClientMeta>();
+  protected prevPhase: string = "playing";
+  protected intermissionRemaining: number = 0;
+  protected playerScores = new Map<string, { cumulativeScore: number; lastSeenAt: number }>();
+  protected matchStartTs: number = Date.now();
 
   // Set by onClaimResult when the diff is too big to send; consumed (and
   // cleared) by the immediately-following onClaim to decide whether the
   // legacy claim event needs to carry the trail for client replay.
-  private lastClaimWasLarge = false;
+  protected lastClaimWasLarge = false;
 
   onCreate() {
     this.setState(new GameStateSchema());
@@ -147,7 +147,7 @@ export class GameRoom extends Room<GameStateSchema> {
   //     algorithmic re-run.
   //   - claim: legacy trail-only event. Still broadcast so the renderer can
   //     clear the trail mesh by charId; no longer used for grid changes.
-  private wireSimEvents(): void {
+  protected wireSimEvents(): void {
     this.sim.onClaimResult = (
       charId: number,
       factionId: number,
@@ -220,7 +220,7 @@ export class GameRoom extends Room<GameStateSchema> {
     };
   }
 
-  private handleHello(client: Client, name: string, playerToken: string | null) {
+  protected handleHello(client: Client, name: string, playerToken: string | null) {
     const characters = this.sim.characters as SimCharacter[];
 
     // Count humans per faction
@@ -312,9 +312,9 @@ export class GameRoom extends Room<GameStateSchema> {
   // Sliding window stats: every 5s, log max + avg tick duration. Useful for
   // confirming that the 1Hz updateTerritoryPcts stall is gone after the
   // incremental-cellCounts fix.
-  private tickStats = { maxMs: 0, sumMs: 0, count: 0, windowStartMs: 0 };
+  protected tickStats = { maxMs: 0, sumMs: 0, count: 0, windowStartMs: 0 };
 
-  private tick(dt: number) {
+  protected tick(dt: number) {
     const tickStart = performance.now();
     if (dt > MAX_DT) {
       console.warn(`[GameRoom] tick dt clamp: ${(dt * 1000).toFixed(1)}ms → ${(MAX_DT * 1000).toFixed(0)}ms`);
@@ -348,7 +348,7 @@ export class GameRoom extends Room<GameStateSchema> {
     }
   }
 
-  private _tickInner(dt: number) {
+  protected _tickInner(dt: number) {
     // Round-rolling: handle intermission countdown
     if (this.state.phase === "intermission") {
       this.intermissionRemaining = Math.max(0, this.intermissionRemaining - dt);
@@ -421,7 +421,7 @@ export class GameRoom extends Room<GameStateSchema> {
     }
   }
 
-  private emitMatchEnd() {
+  protected emitMatchEnd() {
     try {
       const durationMs = Date.now() - this.matchStartTs;
       const factionWinner = this.sim.matchManager?.winner?.name ?? null;
@@ -448,7 +448,7 @@ export class GameRoom extends Room<GameStateSchema> {
     }
   }
 
-  private accumulateScores() {
+  protected accumulateScores() {
     const now = Date.now();
     for (const meta of this.clientMeta.values()) {
       if (meta.charId === null || !meta.playerToken) continue;
@@ -476,7 +476,7 @@ export class GameRoom extends Room<GameStateSchema> {
     setCurrentRoom(null);
   }
 
-  private releaseChar(sessionId: string, meta: ClientMeta): void {
+  protected releaseChar(sessionId: string, meta: ClientMeta): void {
     if (meta.charId !== null) this.sim.setHumanControl(meta.charId, false);
     this.clientMeta.delete(sessionId);
   }
