@@ -362,6 +362,60 @@ router.get("/api/top-daily-players", (_req: Request, res: Response) => {
   });
 });
 
+const stmtPrivateRoomsCounts = db.prepare<[number]>(`
+  SELECT
+    SUM(CASE WHEN event = 'room_created' THEN 1 ELSE 0 END) AS created,
+    SUM(CASE WHEN event = 'room_started' THEN 1 ELSE 0 END) AS started,
+    SUM(CASE WHEN event = 'room_expired' AND json_extract(detail, '$.started') = 0 THEN 1 ELSE 0 END) AS expired_unstarted
+  FROM events
+  WHERE event IN ('room_created', 'room_started', 'room_expired') AND ts >= ?
+`);
+
+const stmtPrivateRoomsAvgHumans = db.prepare<[number]>(`
+  SELECT AVG(json_extract(detail, '$.humansAtStart')) AS avg_humans
+  FROM events
+  WHERE event = 'room_started' AND ts >= ?
+`);
+
+const stmtPrivateRoomsTopConfigs = db.prepare<[number]>(`
+  SELECT
+    json_extract(detail, '$.factions') AS factions,
+    json_extract(detail, '$.botsPerFaction') AS bpf,
+    json_extract(detail, '$.minHumans') AS min_h,
+    COUNT(*) AS n
+  FROM events
+  WHERE event = 'room_created' AND ts >= ?
+  GROUP BY factions, bpf, min_h
+  ORDER BY n DESC
+  LIMIT 10
+`);
+
+const stmtPrivateRoomsMedianDurationApprox = db.prepare<[number]>(`
+  SELECT json_extract(detail, '$.durationMs') AS dur
+  FROM events
+  WHERE event = 'room_expired' AND json_extract(detail, '$.started') = 1 AND ts >= ?
+  ORDER BY dur ASC
+`);
+
+router.get("/api/private-rooms", (_req: Request, res: Response) => {
+  send(res, "private-rooms", () => {
+    const since = since30d();
+    const counts = stmtPrivateRoomsCounts.get(since) as { created: number; started: number; expired_unstarted: number } | undefined;
+    const avg = stmtPrivateRoomsAvgHumans.get(since) as { avg_humans: number | null } | undefined;
+    const top = stmtPrivateRoomsTopConfigs.all(since) as Array<{ factions: number; bpf: number; min_h: number; n: number }>;
+    const durs = (stmtPrivateRoomsMedianDurationApprox.all(since) as Array<{ dur: number }>).map(r => r.dur);
+    const median = durs.length === 0 ? 0 : durs[Math.floor(durs.length / 2)];
+    return {
+      created: counts?.created ?? 0,
+      started: counts?.started ?? 0,
+      expired_unstarted: counts?.expired_unstarted ?? 0,
+      avg_humans_at_start: avg?.avg_humans ?? 0,
+      top_configs: top,
+      median_duration_ms: median,
+    };
+  });
+});
+
 // ── HTML dashboard ───────────────────────────────────────────────────────────
 
 const HTML = `<!doctype html>
@@ -506,6 +560,35 @@ const HTML = `<!doctype html>
       <tbody></tbody>
     </table></div>
   </div>
+</div>
+<div class="card grid-mb" style="margin-top:16px">
+  <h2>Private Rooms (last 30 days)</h2>
+  <div class="tile-row" style="margin-bottom:10px">
+    <div class="tile">
+      <h2>Rooms created</h2>
+      <div id="pr-created" class="big">—</div>
+    </div>
+    <div class="tile">
+      <h2>Rooms started</h2>
+      <div id="pr-started" class="big">—</div>
+    </div>
+    <div class="tile">
+      <h2>Expired unstarted</h2>
+      <div id="pr-expired" class="big">—</div>
+    </div>
+    <div class="tile">
+      <h2>Avg humans at start</h2>
+      <div id="pr-avg-humans" class="big">—</div>
+    </div>
+    <div class="tile">
+      <h2>Median duration</h2>
+      <div id="pr-median-dur" class="big">—</div>
+    </div>
+  </div>
+  <div class="table-wrap"><table class="tbl" id="t-pr-top">
+    <thead><tr><th>Factions</th><th>Bots/faction</th><th>Min humans</th><th>Count</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
 </div>
 <footer>
   Anonymous play stats logged. &middot;
@@ -785,6 +868,19 @@ const HTML = `<!doctype html>
         },
         options: noScales({}),
       });
+    } catch (e) { console.error(e); }
+
+    try {
+      const pr = await getJSON("/stats/api/private-rooms");
+      document.getElementById("pr-created").textContent = pr.created;
+      document.getElementById("pr-started").textContent = pr.started;
+      document.getElementById("pr-expired").textContent = pr.expired_unstarted;
+      document.getElementById("pr-avg-humans").textContent = (pr.avg_humans_at_start || 0).toFixed(1);
+      document.getElementById("pr-median-dur").textContent = Math.round((pr.median_duration_ms || 0) / 60000) + " min";
+      const tbody = document.querySelector("#t-pr-top tbody");
+      tbody.innerHTML = pr.top_configs.map(c =>
+        "<tr><td>" + c.factions + "</td><td>" + c.bpf + "</td><td>" + c.min_h + "</td><td>" + c.n + "</td></tr>"
+      ).join("");
     } catch (e) { console.error(e); }
   })();
 </script>
