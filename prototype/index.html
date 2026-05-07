@@ -558,6 +558,17 @@
       padding: 10px 16px; font-weight: 700; letter-spacing: 0.06em; cursor: pointer; font-family: inherit;
     }
     #pm-cancel { background: transparent; color: #9aa6b8; margin-top: 12px; padding: 4px; }
+
+    /* ============ Waiting overlay ============ */
+    #waiting-overlay { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+    #waiting-overlay.hidden { display: none; }
+    #wo-bg { position: absolute; left: 0; right: 0; top: 0; height: 50vh; background: linear-gradient(to bottom, rgba(0,0,0,0.78), rgba(0,0,0,0.0)); }
+    #wo-content { position: absolute; top: 8vh; left: 0; right: 0; text-align: center; color: #f4f8ff; font-family: ui-sans-serif, system-ui, sans-serif; }
+    #wo-title { font-size: 36px; font-weight: 800; letter-spacing: 0.04em; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+    #wo-count { font-size: 22px; margin-top: 10px; opacity: 0.92; }
+    #wo-share { font-size: 14px; margin-top: 14px; }
+    #wo-share code { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; }
+    #wo-copy { pointer-events: auto; margin-left: 8px; padding: 4px 10px; background: #ffcf2a; color: #1a1f2b; border: none; border-radius: 3px; font-weight: 700; cursor: pointer; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -707,6 +718,19 @@
     </div>
   </div>
   <div id="net-stats">FPS — · — ms</div>
+  <!-- Waiting overlay: shown while phase==="waiting" in private rooms. -->
+  <div id="waiting-overlay" class="hidden">
+    <div id="wo-bg"></div>
+    <div id="wo-content">
+      <div id="wo-title">Waiting for players</div>
+      <div id="wo-count">0 players in / 0 minimum required</div>
+      <div id="wo-share">
+        <span>Room code: <strong id="wo-code">______</strong></span>
+        <span> &mdash; URL: <code id="wo-url">…</code></span>
+        <button id="wo-copy">Copy</button>
+      </div>
+    </div>
+  </div>
   <script src="telemetry.js" type="module"></script>
   <script type="module" src="main.js"></script>
 </body>

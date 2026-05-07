@@ -1456,6 +1456,7 @@ class Game {
         this._initRendererFromOnlineState(state);
         this.onlineInitialized = true;
       }
+      _updateWaitingOverlay(state);
     };
 
     // Initial grid snapshot (gzipped) — apply once we receive it. If the
@@ -3631,6 +3632,37 @@ async function _pmSubmitCreate() {
 _pmEl("pm-join-submit").addEventListener("click", _pmSubmitJoin);
 _pmEl("pm-create-submit").addEventListener("click", _pmSubmitCreate);
 _pmEl("pm-code").addEventListener("keydown", (e) => { if (e.key === "Enter") _pmSubmitJoin(); });
+
+// ============ Waiting overlay ============
+function _updateWaitingOverlay(state) {
+  const overlay = document.getElementById("waiting-overlay");
+  if (!overlay) return;
+  const isWaiting = state?.phase === "waiting";
+  overlay.classList.toggle("hidden", !isWaiting);
+  if (!isWaiting) return;
+  document.getElementById("wo-count").textContent =
+    `${state.humanCount} players in / ${state.minHumans} minimum required`;
+  const code = state.roomCode || "";
+  document.getElementById("wo-code").textContent = code;
+  const url = `${location.host}/?r=${code}`;
+  document.getElementById("wo-url").textContent = url;
+}
+
+document.getElementById("wo-copy").addEventListener("click", () => {
+  const url = document.getElementById("wo-url").textContent;
+  if (!url) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(`https://${url}`).catch(() => {});
+  } else {
+    const t = document.createElement("textarea");
+    t.value = `https://${url}`;
+    document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch {}
+    t.remove();
+  }
+  document.getElementById("wo-copy").textContent = "Copied";
+  setTimeout(() => { document.getElementById("wo-copy").textContent = "Copy"; }, 1500);
+});
 
 // Name entry
 document.getElementById("solo-btn").addEventListener("click", () => {
