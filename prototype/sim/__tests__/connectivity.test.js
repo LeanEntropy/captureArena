@@ -86,4 +86,36 @@ describe("enforceConnectivity", () => {
     // Left block unchanged.
     expect(grid[0 * 8 + 0]).toBe(1);
   });
+
+  it("encircled trail-runner whose faction has only the captured region: dies", () => {
+    // Faction 1 occupies a single block. The only living faction-1 char is
+    // OUTSIDE that block (trail-running) — block has no resident.
+    const grid = makeGrid([
+      [1,1,1,0,0,0,0,0],
+      [1,1,1,0,0,0,0,0],
+      [1,1,1,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+    ]);
+    const cellCounts = makeCellCounts(grid, 2);
+    const trailRunner = {
+      id: 7, factionId: 1, alive: true,
+      trailVerts: [{ x: 0, z: 0 }], // non-empty = trailing
+      cellIndex: 5 * 8 + 5, // outside the block
+    };
+    const result = enforceConnectivity({
+      grid, gridSize: 8, numFactions: 2,
+      affectedFactions: new Set([1]),
+      characters: [trailRunner], claimerFactionId: 2, cellCounts,
+    });
+    // 9-cell block captured; 0 cells left for faction 1.
+    expect(result.capturedCells).toBe(9);
+    expect(cellCounts[1]).toBe(0);
+    expect(cellCounts[2]).toBe(9);
+    expect(result.killedCharacters).toHaveLength(1);
+    expect(result.killedCharacters[0]).toBe(trailRunner);
+  });
 });
