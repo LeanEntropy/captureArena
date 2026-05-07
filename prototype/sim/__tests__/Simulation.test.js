@@ -953,6 +953,13 @@ describe("Simulation", () => {
     expectCellCountsMatchGrid(sim);
   });
 
+  it("can be configured with numFactions=3 and botsPerFaction=2", () => {
+    const s = new Simulation({ seed: 1, numFactions: 3, botsPerFaction: 2 });
+    s.start();
+    expect(s.characters.length).toBe(6);
+    expect(s.numFactions).toBe(3);
+  });
+
   it("updateTerritoryPctsFromCounts produces same results as the legacy grid scan", () => {
     // Run a claim to ensure cells have moved around.
     const c = sim.characters[0];

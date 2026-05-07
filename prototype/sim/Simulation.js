@@ -13,8 +13,10 @@ import { extractContours, countCells } from "./grid_geom.js";
 import { enforceConnectivity } from "./connectivity.js";
 
 export class Simulation {
-  constructor({ seed = 1 } = {}) {
+  constructor({ seed = 1, numFactions = FACTION_COUNT, botsPerFaction = CHARS_PER_FACTION } = {}) {
     this.seed = seed;
+    this.numFactions = numFactions;
+    this.botsPerFaction = botsPerFaction;
     this.grid = new Uint8Array(GRID_SIZE * GRID_SIZE);
     this.factionManager = new FactionManager();
     this.scoreTracker = new ScoreTracker();
@@ -22,32 +24,18 @@ export class Simulation {
     this.characters = [];
     this.totalArenaCells = 0;
     this.started = false;
-    // Incremental cell counts per faction (index 0 = unclaimed). Maintained
-    // by every code path that mutates this.grid: claim(), _healUnclaimedCells(),
-    // restart(). Lets updateTerritoryPcts read percentages in O(FACTION_COUNT)
-    // instead of scanning the whole 1024×1024 grid each second (the 50ms stall
-    // that was eating the entire tick budget once per second).
-    this.cellCounts = new Uint32Array(FACTION_COUNT + 1);
+    // cellCounts is sized to numFactions (index 0 = unclaimed).
+    this.cellCounts = new Uint32Array(numFactions + 1);
 
-    // Event hooks (set by host: server or client). Optional.
-    this.onClaim = null;       // (charId, trailPoints, factionId) => void
-    this.onClaimResult = null; // (charId, factionId, changedCells, trailPoints) => void
-    this.onHeal = null;        // (changedCells) => void
-    this.onTrailVertex = null; // (charId, x, z) => void
-    this.onKill = null;        // (killerId, victimId) => void
-    // Position discontinuity (respawn / restart / faction reassignment).
-    // Distinct from onKill — fires at the moment the character's pos jumps
-    // to a new location, NOT when they die. Lets clients clear interpolation
-    // buffers / prediction state so they don't smooth across the artificial
-    // line between old and new positions.
-    this.onTeleport = null;    // (charId, posX, posZ, dirX, dirZ, reason) => void
+    this.onClaim = null;
+    this.onClaimResult = null;
+    this.onHeal = null;
+    this.onTrailVertex = null;
+    this.onKill = null;
+    this.onTeleport = null;
 
-    // Per-faction contour cache. Bots re-plan their loops every few seconds
-    // and need the boundary contour of their faction. Computing it is O(N²)
-    // (full grid scan + marching squares). Cache it and invalidate per-faction
-    // whenever cells change owner during claim() or heal().
-    this._contourCache = new Map();   // factionId → { contours, cellCount }
-    this._contourDirty = new Set();   // factionIds with stale cache
+    this._contourCache = new Map();
+    this._contourDirty = new Set();
   }
 
   // Invalidate cached contours for the given faction(s). Pass an iterable of
@@ -103,7 +91,7 @@ export class Simulation {
   start() {
     this._initGrid();
     this._initCharacters();
-    this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL);
+    this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL, this.numFactions);
     // Initial cellCounts populate. From here, every grid mutation must keep
     // cellCounts in sync.
     this._recomputeCellCounts();
@@ -152,8 +140,8 @@ export class Simulation {
 
   _initCharacters() {
     let id = 0;
-    for (let f = 1; f <= FACTION_COUNT; f++) {
-      for (let i = 0; i < CHARS_PER_FACTION; i++) {
+    for (let f = 1; f <= this.numFactions; f++) {
+      for (let i = 0; i < this.botsPerFaction; i++) {
         const name = BOT_NAMES[id % BOT_NAMES.length];
         const c = new Character({ id, factionId: f, name, respawnDelay: RESPAWN_DELAY });
         this.characters.push(c);
@@ -786,7 +774,7 @@ export class Simulation {
         const result = enforceConnectivity({
           grid,
           gridSize: N,
-          numFactions: this.numFactions ?? FACTION_COUNT,
+          numFactions: this.numFactions,
           affectedFactions,
           characters: this.characters,
           claimerFactionId: factionId,
