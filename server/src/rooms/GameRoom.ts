@@ -86,6 +86,11 @@ export class GameRoom extends Room<GameStateSchema> {
   // legacy claim event needs to carry the trail for client replay.
   protected lastClaimWasLarge = false;
 
+  // When true, _tickInner skips the `state.phase = simPhase` write so a
+  // subclass can manage state.phase manually (e.g. PrivateGameRoom holds
+  // "waiting" until minHumans is met, then flips to "playing" in startMatch).
+  protected skipPhaseSync = false;
+
   onCreate() {
     this.setState(new GameStateSchema());
     setCurrentRoom(this);
@@ -380,7 +385,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.prevPhase = simPhase;
 
     // Sync sim → schema (per-tick mutable fields only — id/name/factionId rarely change)
-    this.state.phase = simPhase;
+    if (!this.skipPhaseSync) this.state.phase = simPhase;
     this.state.timeRemaining = this.sim.matchManager.timeRemaining ?? 0;
     this.state.intermissionRemaining = 0;
 

@@ -70,6 +70,10 @@ export class PrivateGameRoom extends GameRoom {
 
     this.setState(new GameStateSchema());
     this.state.phase = "waiting";
+    // Prevent base _tickInner from overwriting state.phase with the sim's
+    // "playing" phase while we're still in the "waiting" lobby.
+    // Cleared in startMatch() once we're ready to hand phase control back.
+    this.skipPhaseSync = true;
     this.state.roomCode = code;
     this.state.minHumans = cfg.minHumans;
     this.state.humanCount = 0;
@@ -172,6 +176,8 @@ export class PrivateGameRoom extends GameRoom {
         this.state.characters.push(cs);
       }
     }
+    // Re-enable normal phase syncing now that the sim's phase can be trusted.
+    this.skipPhaseSync = false;
     this.state.phase = "playing";
     insertServerEvent("room_started", {
       code: this._privateCode,
