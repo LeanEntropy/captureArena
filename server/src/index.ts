@@ -5,6 +5,8 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GameRoom } from "./rooms/GameRoom.js";
+import { PrivateGameRoom } from "./rooms/PrivateGameRoom.js";
+import { lookup as lookupRoomCode } from "./rooms/roomCodeRegistry.js";
 import { statsAuth } from "./stats/auth.js";
 import { startConcurrencySampler } from "./stats/concurrency.js";
 import { dashboardRouter } from "./stats/dashboard.js";
@@ -47,6 +49,17 @@ app.use(itchCors);
 // Railway / a load balancer, so geo lookups work in production.
 app.set("trust proxy", true);
 app.use("/track", express.json({ limit: "16kb" }), trackHandler);
+
+app.get("/api/room", (req, res) => {
+  const codeRaw = typeof req.query.code === "string" ? req.query.code : "";
+  const code = codeRaw.toUpperCase().slice(0, 6);
+  if (!/^[A-Z0-9]{6}$/.test(code)) {
+    res.json({ exists: false });
+    return;
+  }
+  res.json({ exists: lookupRoomCode(code) !== null });
+});
+
 app.use("/stats", statsAuth, dashboardRouter);
 
 // Colyseus Monitor — development only. Access at http://localhost:2567/colyseus
@@ -64,6 +77,7 @@ const gameServer = new Server({
 });
 
 gameServer.define("game", GameRoom);
+gameServer.define("private", PrivateGameRoom).filterBy(["code"]);
 
 // Self-hosted analytics — start the 60s concurrent-online sampler.
 // Idempotent; reads currentRoom?.clients.length each tick and writes one row.
