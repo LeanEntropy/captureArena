@@ -44,25 +44,22 @@ export class FactionManager {
    * @param {number} arenaRadius
    * @param {number} sentinel  e.g. 255
    */
-  init(grid, gridSize, worldMin, cellSize, arenaRadius, sentinel) {
+  init(grid, gridSize, worldMin, cellSize, arenaRadius, sentinel, numFactions = FACTION_COUNT) {
     this._factions.clear();
 
-    const sliceAngle = (2 * Math.PI) / FACTION_COUNT;
+    const sliceAngle = (2 * Math.PI) / numFactions;
     const spawnRadius = arenaRadius * 0.6;
 
-    // Build faction objects with spawn points at 60% radius along each slice midpoint
-    for (let i = 0; i < FACTION_COUNT; i++) {
-      const id = i + 1; // 1-based
-      const midAngle = i * sliceAngle + sliceAngle / 2 - Math.PI; // center of slice, offset so slice 0 starts at -π
-      // atan2 returns values in [-π, π]; we normalize to [0, 2π] when mapping
-      // Spawn point uses world X/Z (Three.js: Y is up, XZ is ground plane)
+    for (let i = 0; i < numFactions; i++) {
+      const id = i + 1;
+      const midAngle = i * sliceAngle + sliceAngle / 2 - Math.PI;
       const spawnX = Math.cos(midAngle) * spawnRadius;
       const spawnZ = Math.sin(midAngle) * spawnRadius;
 
       this._factions.set(id, {
         id,
-        name: FACTION_NAMES[i],
-        color: FACTION_COLORS[i],
+        name: FACTION_NAMES[i] ?? `Faction ${id}`,
+        color: FACTION_COLORS[i] ?? 0xffffff,
         spawnPoint: { x: spawnX, z: spawnZ },
         alive: true,
         respawnsEnabled: true,
@@ -72,9 +69,6 @@ export class FactionManager {
       });
     }
 
-    // Pie-slice grid assignment
-    // Divide the angle space [0, 2π) into FACTION_COUNT equal sectors.
-    // atan2(wy, wx) gives [-π, π]; normalize to [0, 2π).
     for (let gy = 0; gy < gridSize; gy++) {
       for (let gx = 0; gx < gridSize; gx++) {
         const idx = gy * gridSize + gx;
@@ -83,11 +77,11 @@ export class FactionManager {
         const wx = worldMin + (gx + 0.5) * cellSize;
         const wy = worldMin + (gy + 0.5) * cellSize;
 
-        let angle = Math.atan2(wy, wx); // [-π, π]
-        if (angle < 0) angle += 2 * Math.PI; // normalize to [0, 2π)
+        let angle = Math.atan2(wy, wx);
+        if (angle < 0) angle += 2 * Math.PI;
 
-        const sectorIndex = Math.floor(angle / sliceAngle); // 0-based
-        const factionId = (sectorIndex % FACTION_COUNT) + 1; // 1-based
+        const sectorIndex = Math.floor(angle / sliceAngle);
+        const factionId = (sectorIndex % numFactions) + 1;
         grid[idx] = factionId;
       }
     }
