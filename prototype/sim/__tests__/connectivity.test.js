@@ -54,4 +54,36 @@ describe("enforceConnectivity", () => {
     // Both blocks unchanged — count of faction 1 cells preserved.
     expect(cellCounts[1]).toBe(12);
   });
+
+  it("split-with-resident-in-only-one-half: empty half captured by claimer", () => {
+    const grid = makeGrid([
+      [1,1,0,0,0,0,1,1],
+      [1,1,0,0,0,0,1,1],
+      [1,1,0,0,0,0,1,1],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+    ]);
+    const cellCounts = makeCellCounts(grid, 2);
+    const chars = [
+      { id: 0, factionId: 1, alive: true, trailVerts: [], cellIndex: 1 * 8 + 1 }, // left block only
+    ];
+    const result = enforceConnectivity({
+      grid, gridSize: 8, numFactions: 2,
+      affectedFactions: new Set([1]),
+      characters: chars, claimerFactionId: 2, cellCounts,
+    });
+    // Right block (6 cells) captured.
+    expect(result.capturedCells).toBe(6);
+    expect(result.killedCharacters).toEqual([]);
+    expect(cellCounts[1]).toBe(6); // left block remains
+    expect(cellCounts[2]).toBe(6); // claimer gained 6
+    // Right block cells are now claimer's faction.
+    expect(grid[0 * 8 + 6]).toBe(2);
+    expect(grid[2 * 8 + 7]).toBe(2);
+    // Left block unchanged.
+    expect(grid[0 * 8 + 0]).toBe(1);
+  });
 });
