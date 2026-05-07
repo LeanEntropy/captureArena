@@ -31,9 +31,13 @@ export class CharacterSchema extends Schema {
 }
 
 export class GameStateSchema extends Schema {
-  @type("string") phase: string = "playing"; // "playing" | "intermission" | "ended"
+  @type("string") phase: string = "playing"; // "waiting" | "playing" | "intermission" | "ended"
   @type("number") timeRemaining: number = 0;
   @type("number") intermissionRemaining: number = 0;
   @type([FactionSchema]) factions = new ArraySchema<FactionSchema>();
   @type([CharacterSchema]) characters = new ArraySchema<CharacterSchema>();
+  // Private-room only. Public room leaves these at defaults.
+  @type("string") roomCode: string = "";
+  @type("number") minHumans: number = 0;
+  @type("number") humanCount: number = 0;
 }
