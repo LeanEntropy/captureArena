@@ -1301,8 +1301,14 @@ class Game {
       if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
       if (e.key.toLowerCase() === "v") this._toggleFactionMeshes();
       if (e.key.toLowerCase() === "f" && _stats) {
-        // Toggle stats.js FPS/MS/MB overlay
         _stats.dom.style.display = _stats.dom.style.display === "none" ? "block" : "none";
+      }
+      if (e.key.toLowerCase() === "g") {
+        // Toggle net-stats HUD (online only). Persist across sessions.
+        if (window._game?.mode !== "online") return;
+        _netStatsVisible = !_netStatsVisible;
+        try { localStorage.setItem("netStatsVisible", _netStatsVisible ? "1" : "0"); } catch {}
+        _netStatsApplyVisibility();
       }
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
@@ -1577,6 +1583,8 @@ class Game {
     } catch (err) {
       console.error("[online] connection failed:", err);
     }
+
+    _netStatsApplyVisibility();
   }
 
   // Decompress a gzip Uint8Array into an ArrayBuffer (browser-native API).
