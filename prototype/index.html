@@ -526,6 +526,38 @@
     @media (min-width: 769px) and (pointer: fine) {
       .hud-collapse-tab { display: none !important; }
     }
+
+    /* ============ Private room modal ============ */
+    #private-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+    #private-modal.hidden { display: none; }
+    #private-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+    #private-modal-panel {
+      position: relative; min-width: 360px; max-width: 90vw;
+      background: #1a1f2b; color: #eef3fb; padding: 22px 26px; border-radius: 8px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    #private-modal-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .pm-tab { flex: 1; padding: 8px 12px; background: transparent; color: #9aa6b8; border: 1px solid #2d3445; border-radius: 4px; cursor: pointer; font-weight: 600; letter-spacing: 0.06em; }
+    .pm-tab.active { background: #ffcf2a; color: #1a1f2b; border-color: #ffcf2a; }
+    .pm-body { display: flex; flex-direction: column; gap: 10px; }
+    .pm-body.hidden { display: none; }
+    .pm-body label { font-size: 12px; color: #9aa6b8; letter-spacing: 0.04em; text-transform: uppercase; }
+    .pm-body input[type="text"], .pm-body input[type="number"] {
+      background: #11141d; color: #eef3fb; border: 1px solid #2d3445; border-radius: 4px;
+      padding: 8px 10px; font-family: inherit; font-size: 14px;
+    }
+    #pm-code { letter-spacing: 0.4em; text-transform: uppercase; text-align: center; font-family: ui-monospace, monospace; }
+    .pm-radios { display: flex; gap: 14px; }
+    .pm-radios label { display: flex; align-items: center; gap: 4px; }
+    .pm-row { display: flex; align-items: center; gap: 8px; }
+    .pm-readout { font-size: 12px; color: #cfd6e0; padding: 6px 0; }
+    .pm-error { color: #e74a3f; font-size: 13px; min-height: 16px; }
+    #pm-join-submit, #pm-create-submit, #pm-cancel {
+      background: #ffcf2a; color: #1a1f2b; border: none; border-radius: 4px;
+      padding: 10px 16px; font-weight: 700; letter-spacing: 0.06em; cursor: pointer; font-family: inherit;
+    }
+    #pm-cancel { background: transparent; color: #9aa6b8; margin-top: 12px; padding: 4px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
   <script type="importmap">
@@ -627,6 +659,7 @@
       <div id="ts-button-row">
         <button id="solo-btn">SOLO</button>
         <button id="online-btn">ONLINE</button>
+        <button id="private-btn">PRIVATE ROOM</button>
       </div>
       <div id="ts-music-row">
         <button id="music-toggle-title" title="Toggle music">&#x1F50A;</button>
@@ -635,6 +668,42 @@
       <div id="ts-byline">A GAME BY
         <a href="https://x.com/Civaxo" target="_blank" rel="noopener noreferrer">CIVAX</a>
       </div>
+    </div>
+  </div>
+  <!-- Private-room modal: create or join. Hidden by default; main.js shows it. -->
+  <div id="private-modal" class="hidden">
+    <div id="private-modal-backdrop"></div>
+    <div id="private-modal-panel">
+      <div id="private-modal-tabs">
+        <button class="pm-tab active" data-tab="join">JOIN</button>
+        <button class="pm-tab" data-tab="create">CREATE</button>
+      </div>
+      <div class="pm-body" id="pm-body-join">
+        <label>ROOM CODE</label>
+        <input id="pm-code" type="text" maxlength="6" placeholder="FG58R2" />
+        <div id="pm-join-error" class="pm-error"></div>
+        <button id="pm-join-submit">JOIN ROOM</button>
+      </div>
+      <div class="pm-body hidden" id="pm-body-create">
+        <label>FACTIONS</label>
+        <div id="pm-factions" class="pm-radios">
+          <label><input type="radio" name="pm-fac" value="3"> 3</label>
+          <label><input type="radio" name="pm-fac" value="4"> 4</label>
+          <label><input type="radio" name="pm-fac" value="5" checked> 5</label>
+        </div>
+        <label class="pm-row">
+          <input id="pm-bots" type="checkbox" checked> BOTS
+        </label>
+        <label id="pm-bots-per-row">BOTS PER FACTION <span id="pm-bots-per-val">6</span>
+          <input id="pm-bots-per" type="range" min="1" max="9" value="6">
+        </label>
+        <label>MIN HUMANS TO START
+          <input id="pm-min-humans" type="number" min="1" max="10" value="2">
+        </label>
+        <div id="pm-cap-readout" class="pm-readout">Capacity: 1 humans + 30 bots = 31 / 50</div>
+        <button id="pm-create-submit">CREATE ROOM</button>
+      </div>
+      <button id="pm-cancel">CANCEL</button>
     </div>
   </div>
   <div id="net-stats">FPS — · — ms</div>
