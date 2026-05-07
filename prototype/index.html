@@ -98,6 +98,22 @@
       background: rgba(0,0,0,0.85);
       border-color: white;
     }
+    #net-stats {
+      position: fixed;
+      bottom: 60px;
+      right: 16px;
+      z-index: 12;
+      display: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #cfd6e0;
+      background: rgba(0, 0, 0, 0.55);
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
     #music-toggle-hud {
       position: absolute;
       left: 206px;
@@ -621,6 +637,7 @@
       </div>
     </div>
   </div>
+  <div id="net-stats">FPS — · — ms</div>
   <script src="telemetry.js" type="module"></script>
   <script type="module" src="main.js"></script>
 </body>
