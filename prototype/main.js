@@ -3270,7 +3270,6 @@ const _titleScreen = _initTitleScreen();
 // ===================== MAIN =====================
 const game = new Game();
 window.game = game; // debug hook
-window._game = game; // also expose as _game for consistency
 _stats = _initStats();
 let lastTime = performance.now();
 
