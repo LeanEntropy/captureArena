@@ -74,9 +74,16 @@ export class PrivateGameRoom extends GameRoom {
     this.state.minHumans = cfg.minHumans;
     this.state.humanCount = 0;
 
+    // Note: we deliberately do NOT call setCurrentRoom(this). The
+    // concurrency sampler in stats/concurrency.ts tracks ONE current room
+    // (the public game room). Private rooms get their own analytics events
+    // (room_created, room_started, room_expired); they're not double-counted
+    // in the concurrent-online sampler.
+
     this.patchRate = 1000 / 30;
 
-    // Sim with NO bots yet — they get added by startMatch().
+    // Sim with NO bots yet — bots spawn in startMatch() once minHumans is met
+    // so the host plays alone with empty arena (showing "Waiting for players").
     this.sim = new Simulation({ numFactions: cfg.factions, botsPerFaction: 0 });
     this.sim.start();
     this.wireSimEvents();
@@ -148,6 +155,10 @@ export class PrivateGameRoom extends GameRoom {
     const sim = this.sim;
     for (let f = 1; f <= cfg.factions; f++) {
       for (let i = 0; i < cfg.botsPerFaction; i++) {
+        // The 2nd arg is a per-faction cap. We pass a generous slack
+        // (botsPerFaction + 50) because humans may have grown the faction
+        // during waiting; the actual bot count comes from this loop, not
+        // the cap. addCharacter only refuses if we'd exceed the cap.
         const c = sim.addCharacter(f, cfg.botsPerFaction + 50);
         if (!c) continue;
         const cs = new CharacterSchema();
