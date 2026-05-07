@@ -118,4 +118,84 @@ describe("enforceConnectivity", () => {
     expect(result.killedCharacters).toHaveLength(1);
     expect(result.killedCharacters[0]).toBe(trailRunner);
   });
+
+  it("all residents trail-running: all components captured + all trail-runners die", () => {
+    const grid = makeGrid([
+      [1,1,0,0,0,0,1,1],
+      [1,1,0,0,0,0,1,1],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+    ]);
+    const cellCounts = makeCellCounts(grid, 2);
+    const chars = [
+      { id: 0, factionId: 1, alive: true, trailVerts: [{x:0,z:0}], cellIndex: 5 * 8 + 5 },
+      { id: 1, factionId: 1, alive: true, trailVerts: [{x:0,z:0}], cellIndex: 6 * 8 + 5 },
+    ];
+    const result = enforceConnectivity({
+      grid, gridSize: 8, numFactions: 2,
+      affectedFactions: new Set([1]),
+      characters: chars, claimerFactionId: 2, cellCounts,
+    });
+    expect(result.capturedCells).toBe(8); // both 4-cell blocks
+    expect(cellCounts[1]).toBe(0);
+    expect(result.killedCharacters).toHaveLength(2);
+  });
+
+  it("claimer's own faction has a fragment (with the claimer in it): unchanged", () => {
+    // Faction 2 (the claimer) has two fragments. One has a resident (the claimer
+    // body); the other doesn't. We pass affectedFactions={2} but the helper skips
+    // claimer's faction entirely (own components are safe by definition).
+    const grid = makeGrid([
+      [2,2,0,0,0,0,2,2],
+      [2,2,0,0,0,0,2,2],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+    ]);
+    const cellCounts = makeCellCounts(grid, 2);
+    const chars = [
+      { id: 0, factionId: 2, alive: true, trailVerts: [], cellIndex: 0 * 8 + 0 },
+    ];
+    const before = cellCounts[2];
+    const result = enforceConnectivity({
+      grid, gridSize: 8, numFactions: 2,
+      affectedFactions: new Set([2]),
+      characters: chars, claimerFactionId: 2, cellCounts,
+    });
+    expect(result.capturedCells).toBe(0);
+    expect(cellCounts[2]).toBe(before);
+  });
+
+  it("three regions, only one has a resident: the other two captured, no deaths", () => {
+    const grid = makeGrid([
+      [1,1,0,1,1,0,1,1],
+      [1,1,0,1,1,0,1,1],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0],
+    ]);
+    const cellCounts = makeCellCounts(grid, 2);
+    // Resident only in middle region.
+    const chars = [
+      { id: 0, factionId: 1, alive: true, trailVerts: [], cellIndex: 0 * 8 + 3 },
+    ];
+    const result = enforceConnectivity({
+      grid, gridSize: 8, numFactions: 2,
+      affectedFactions: new Set([1]),
+      characters: chars, claimerFactionId: 2, cellCounts,
+    });
+    expect(result.capturedCells).toBe(8); // 4 + 4 (left + right)
+    expect(cellCounts[1]).toBe(4); // middle survives
+    expect(result.killedCharacters).toEqual([]); // faction still has cells; no deaths
+  });
 });
