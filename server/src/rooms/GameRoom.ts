@@ -130,6 +130,12 @@ export class GameRoom extends Room<GameStateSchema> {
         meta.lastInputSeq = msg.seq;
       }
     });
+
+    // Client RTT measurement: echo back the client's send-time so the client
+    // can compute round-trip latency. No schema change; payload is a number.
+    this.onMessage("ping", (client, t: number) => {
+      client.send("pong", t);
+    });
   }
 
   // Wire sim event hooks → broadcast to clients.
