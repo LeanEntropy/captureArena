@@ -10,6 +10,7 @@ import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
 import { BotAI } from "./BotAI.js";
 import { extractContours, countCells } from "./grid_geom.js";
+import { enforceConnectivity } from "./connectivity.js";
 
 export class Simulation {
   constructor({ seed = 1 } = {}) {
@@ -763,6 +764,64 @@ export class Simulation {
     // Invalidate contour cache for the claimer + every faction that lost cells.
     this._contourCache.delete(factionId);
     for (const loser of losers) this._contourCache.delete(loser);
+
+    // Build the set of factions whose cell counts changed during this claim.
+    // The claimer always grew; every loser shrank. The connectivity sweep
+    // then checks whether any of the losers' remaining territory is now
+    // disconnected, capturing fragments without a resident player.
+    const affectedFactions = new Set(losers);
+    affectedFactions.add(factionId);
+
+    // Encirclement death: any disconnected region of an affected faction
+    // without a resident player flips to the claimer; trail-runners whose
+    // faction is now wiped die.
+    {
+      // Snap each character's body position to its current grid index.
+      const N = GRID_SIZE;
+      for (const c of this.characters) {
+        if (!c.alive) { c.cellIndex = -1; continue; }
+        const { gx, gy } = this._worldToGrid(c.pos.x, c.pos.z);
+        c.cellIndex = (gx >= 0 && gx < N && gy >= 0 && gy < N) ? (gy * N + gx) : -1;
+      }
+      const result = enforceConnectivity({
+        grid,
+        gridSize: N,
+        numFactions: this.numFactions ?? FACTION_COUNT,
+        affectedFactions,
+        characters: this.characters,
+        claimerFactionId: factionId,
+        cellCounts,
+      });
+      if (result.capturedCells > 0) {
+        const seen = new Set(changedCells);
+        let foundInBbox = 0;
+        for (let gy = minGY; gy <= maxGY; gy++) {
+          for (let gx = minGX; gx <= maxGX; gx++) {
+            const idx = gy * N + gx;
+            if (grid[idx] === factionId && !seen.has(idx)) {
+              changedCells.push(idx);
+              seen.add(idx);
+              foundInBbox++;
+            }
+          }
+        }
+        // Fragments outside the bbox: full-grid pass only when needed.
+        if (foundInBbox < result.capturedCells) {
+          for (let i = 0, len = grid.length; i < len; i++) {
+            if (grid[i] === factionId && !seen.has(i)) {
+              changedCells.push(i);
+              seen.add(i);
+            }
+          }
+        }
+      }
+      // Apply the kill pass.
+      for (const v of result.killedCharacters) {
+        this._killCharacter(v, char); // credit the claimer
+      }
+      // Invalidate contour caches for affected factions.
+      for (const f of affectedFactions) this._contourCache.delete(f);
+    }
 
     // 5. Clear trail and fire hooks.
     char.trailVerts = [];

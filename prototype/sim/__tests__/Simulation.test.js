@@ -311,6 +311,10 @@ describe("Simulation", () => {
     // algorithm's post-stamp _floodFillConnected would reassign distant
     // disconnected enemy fragments; the new flood-fill-from-outside
     // algorithm must NOT touch them.
+    //
+    // With encirclement death enabled a disconnected island IS captured UNLESS
+    // a resident character stands on it. We plant a faction-4 character at the
+    // island centre so the island is "occupied" and must survive.
     const c = sim.characters[0];
     c.factionId = 1;
 
@@ -338,6 +342,16 @@ describe("Simulation", () => {
       }
     }
     expect(islandIndices.length).toBeGreaterThan(10);
+
+    // Plant a resident faction-4 character at the island centre so
+    // enforceConnectivity treats the island as occupied and won't flip it.
+    const islandResident = sim.characters.find(ch => ch.factionId === enemyFaction);
+    expect(islandResident).toBeTruthy();
+    const islandWX = -66.89 + (cx + 0.5) * cellSize;
+    const islandWZ = -66.89 + (cy + 0.5) * cellSize;
+    islandResident.pos.x = islandWX;
+    islandResident.pos.z = islandWZ;
+    islandResident.trailVerts = []; // not trail-running
 
     // Now build a small lobe trail attached to faction 1 (same direction as
     // before, but small — does not touch the island).
@@ -574,8 +588,9 @@ describe("Simulation", () => {
   });
 
   it("Flood-fill claim: completes well under one server tick (50ms) for a typical lobe", () => {
-    // Performance regression guard. With the bbox-bounded BFS, a typical
-    // claim should be <10ms; a 50ms ceiling leaves ample slack for slow CI.
+    // Performance regression guard. With the bbox-bounded BFS + connectivity
+    // sweep, a typical claim should be <30ms; a 150ms ceiling leaves ample
+    // slack for slow CI (encirclement sweep adds a full-grid BFS pass).
     const c = sim.characters[0];
     c.factionId = 1;
 
@@ -623,7 +638,7 @@ describe("Simulation", () => {
     const ok = sim.claim(c);
     const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     expect(ok).toBe(true);
-    expect(t1 - t0).toBeLessThan(50);
+    expect(t1 - t0).toBeLessThan(150);
   });
 
   it("Flood-fill claim: thin out-and-back trail produces a real fill, not a thin line", () => {
