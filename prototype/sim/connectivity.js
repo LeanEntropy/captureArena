@@ -99,7 +99,7 @@ export function enforceConnectivity({
     }
 
     // 3. Convert unoccupied components to claimer.
-    if (occupied.every?.((v) => v === 1) === true) continue;
+    if (occupied.every((v) => v === 1)) continue;
     for (let i = 0; i < size; i++) {
       const cid = label[i];
       if (cid < 0) continue;
