@@ -44,26 +44,25 @@ export class MultiplayerClient {
     this.playerToken = null;
 
     // Input sequence tracking for server-confirmed reconciliation.
-    // Each input message is tagged with a monotonically increasing seq;
-    // server echoes back the latest applied seq via CharacterSchema
-    // .lastAppliedInputSeq. The client uses ackInputs() to drop confirmed
-    // entries from the buffer; unacked inputs are replayed onto the
-    // server-confirmed pos to derive the new predicted state.
     this.inputSeq = 0;
     this.inputBuffer = []; // [{ seq, dirX, dirZ, t }]
 
+    // RTT tracking — last 5 samples in ms, median reported by getRTT().
+    this._rttSamples = [];
+    this._pingInterval = null;
+
     // Event hooks (set by host renderer)
-    this.onState = null;           // (state) => void
-    this.onClaim = null;           // (charId, factionId, trailPoints?, replayTrail) => void
-    this.onClaimResult = null;     // (charId, factionId, cells:Int32Array) => void
-    this.onHeal = null;            // (changedCells) => void
-    this.onTrailVertex = null;     // (charId, x, z) => void
-    this.onKill = null;            // (killerId, victimId) => void
-    this.onTeleport = null;        // (charId, posX, posZ, dirX, dirZ, reason) => void
-    this.onYourCharId = null;      // (charId) => void
-    this.onGridSnapshot = null;    // (b64) => void
-    this.onCumulativeScore = null; // (score) => void
-    this.onNameRejected = null;    // ({reason}) => void — server says name conflict
+    this.onState = null;
+    this.onClaim = null;
+    this.onClaimResult = null;
+    this.onHeal = null;
+    this.onTrailVertex = null;
+    this.onKill = null;
+    this.onTeleport = null;
+    this.onYourCharId = null;
+    this.onGridSnapshot = null;
+    this.onCumulativeScore = null;
+    this.onNameRejected = null;
   }
 
   async connect(playerName, playerToken) {
@@ -78,6 +77,14 @@ export class MultiplayerClient {
     this.playerToken = token;
 
     this.room = await this.client.joinOrCreate("game", {});
+    this.room.onMessage("pong", (t) => {
+      const rtt = performance.now() - t;
+      this._rttSamples.push(rtt);
+      while (this._rttSamples.length > 5) this._rttSamples.shift();
+    });
+    this._pingInterval = setInterval(() => {
+      try { this.room?.send("ping", performance.now()); } catch {}
+    }, 2000);
     this.room.onStateChange((state) => this.onState?.(state));
 
     // Forward server messages to the matching event hook. Each entry is
@@ -129,7 +136,16 @@ export class MultiplayerClient {
     }
   }
 
+  // Returns the median of the last 5 RTT samples in milliseconds, or null
+  // if no pong has been received yet. Resistant to single-frame stalls.
+  getRTT() {
+    if (this._rttSamples.length === 0) return null;
+    const sorted = [...this._rttSamples].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  }
+
   disconnect() {
+    if (this._pingInterval) { clearInterval(this._pingInterval); this._pingInterval = null; }
     if (this.room) this.room.leave();
   }
 }
