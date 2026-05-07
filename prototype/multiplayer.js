@@ -71,9 +71,6 @@ export class MultiplayerClient {
   }
 
   async connect(playerName, playerToken) {
-    // Browser refresh = new sessionId. Reconnection grace covers transient
-    // network blips only. Score persistence across refresh is via playerToken.
-    // Resolve token: passed-in > localStorage > generate new
     let token = playerToken || localStorage.getItem("playerToken");
     if (!token) {
       token = crypto.randomUUID();
@@ -82,18 +79,44 @@ export class MultiplayerClient {
     this.playerToken = token;
 
     this.room = await this.client.joinOrCreate("game", {});
-    this.room.onMessage("pong", (t) => {
-      const rtt = performance.now() - t;
-      this._rttSamples.push(rtt);
-      while (this._rttSamples.length > 5) this._rttSamples.shift();
-    });
-    this._pingInterval = setInterval(() => {
-      try { this.room?.send("ping", performance.now()); } catch {}
-    }, 2000);
+    this._wireRoomHandlers();
+    this.room.send("hello", { name: playerName, playerToken: token });
+    return this.room;
+  }
+
+  // Join a private room by 6-char code. Same hello flow.
+  async joinPrivate(code, playerName) {
+    let token = localStorage.getItem("playerToken");
+    if (!token) {
+      token = crypto.randomUUID();
+      localStorage.setItem("playerToken", token);
+    }
+    this.playerToken = token;
+
+    this.room = await this.client.join("private", { code });
+    this._wireRoomHandlers();
+    this.room.send("hello", { name: playerName, playerToken: token });
+    return this.room;
+  }
+
+  // Create a private room with the given config + immediately join it.
+  async createPrivate(config, playerName) {
+    let token = localStorage.getItem("playerToken");
+    if (!token) {
+      token = crypto.randomUUID();
+      localStorage.setItem("playerToken", token);
+    }
+    this.playerToken = token;
+
+    this.room = await this.client.create("private", config);
+    this._wireRoomHandlers();
+    this.room.send("hello", { name: playerName, playerToken: token });
+    return this.room;
+  }
+
+  _wireRoomHandlers() {
     this.room.onStateChange((state) => this.onState?.(state));
 
-    // Forward server messages to the matching event hook. Each entry is
-    // [serverMessage, hookName, (payload) => args[]].
     const handlers = [
       ["claim",           "onClaim",           (m) => [m.charId, m.factionId, m.trailPoints, !!m.replayTrail]],
       ["claimResult",     "onClaimResult",     (m) => [m.charId, m.factionId, m.cells]],
@@ -112,11 +135,14 @@ export class MultiplayerClient {
         if (fn) fn(...mapArgs(payload));
       });
     }
-
-    // Now that handlers are wired, send hello
-    this.room.send("hello", { name: playerName, playerToken: token });
-
-    return this.room;
+    this.room.onMessage("pong", (t) => {
+      const rtt = performance.now() - t;
+      this._rttSamples.push(rtt);
+      while (this._rttSamples.length > 5) this._rttSamples.shift();
+    });
+    this._pingInterval = setInterval(() => {
+      try { this.room?.send("ping", performance.now()); } catch {}
+    }, 2000);
   }
 
   sendInput(dirX, dirZ) {
