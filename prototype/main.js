@@ -3693,6 +3693,38 @@ document.getElementById("return-to-menu").addEventListener("click", () => {
   location.reload();
 });
 
+// Auto-join a private room when the URL has ?r=CODE. Skip the title screen
+// entirely; show it back with an error toast if the room isn't found.
+{
+  const urlCode = new URLSearchParams(location.search).get("r");
+  if (urlCode) {
+    const code = urlCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    if (/^[A-Z0-9]{6}$/.test(code)) {
+      const name = (document.getElementById("name-input").value.trim() || "Player").slice(0, 16);
+      // Validate first so a bad code doesn't blow up the join flow.
+      fetch(`/api/room?code=${encodeURIComponent(code)}`)
+        .then(r => r.json())
+        .then(j => {
+          if (!j.exists) {
+            const err = document.getElementById("pm-join-error");
+            if (err) err.textContent = `Room ${code} not found.`;
+            return;
+          }
+          document.getElementById("name-entry").classList.add("hidden");
+          _onFirstGesture();
+          telemetry.setPlayerName(name);
+          telemetry.track("room_joined", { code, isHost: false });
+          telemetry.gameStart("private");
+          game.startPrivateJoin(name, code);
+        })
+        .catch(() => {
+          const err = document.getElementById("pm-join-error");
+          if (err) err.textContent = `Server unreachable.`;
+        });
+    }
+  }
+}
+
 // Vibe Jam 2026 — instant load when arriving through the webring.
 // If ?portal=true is set, skip the title/name screen and auto-start in Solo
 // mode (multiplayer's server-connect would add a perceptible startup delay).
