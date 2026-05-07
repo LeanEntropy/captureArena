@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    setupFiles: ["./server/src/__tests__/setup.ts"],
     include: [
       "prototype/sim/__tests__/**/*.test.js",
       "server/src/__tests__/**/*.test.ts",
