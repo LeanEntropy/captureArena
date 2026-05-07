@@ -1411,7 +1411,22 @@ class Game {
     this.playerName = name;
     this.onlineInitialized = false;
     this.mp = new MultiplayerClient();
+    this._wireMpHooks();
 
+    try {
+      await this.mp.connect(name, null);
+      console.log("[online] connected, sessionId =", this.mp.room.sessionId);
+    } catch (err) {
+      console.error("[online] connection failed:", err);
+    }
+
+    _netStatsApplyVisibility();
+  }
+
+  // Wires all multiplayer event hooks onto this.mp. Called by startOnline,
+  // startPrivateCreate, and startPrivateJoin immediately after constructing
+  // a MultiplayerClient, before calling connect/createPrivate/joinPrivate.
+  _wireMpHooks() {
     // Server says the chosen name is already in use by another human.
     // Disconnect, re-show the name entry with an inline error, and let the
     // user pick a different name without reloading.
@@ -1576,14 +1591,25 @@ class Game {
         isPlayer: victimR.isPlayer,
       });
     };
+  }
 
-    try {
-      await this.mp.connect(name, null);
-      console.log("[online] connected, sessionId =", this.mp.room.sessionId);
-    } catch (err) {
-      console.error("[online] connection failed:", err);
-    }
+  async startPrivateCreate(name, cfg) {
+    this.mode = "online";
+    this.playerName = name;
+    this.onlineInitialized = false;
+    this.mp = new MultiplayerClient();
+    this._wireMpHooks();
+    await this.mp.createPrivate(cfg, name);
+    _netStatsApplyVisibility();
+  }
 
+  async startPrivateJoin(name, code) {
+    this.mode = "online";
+    this.playerName = name;
+    this.onlineInitialized = false;
+    this.mp = new MultiplayerClient();
+    this._wireMpHooks();
+    await this.mp.joinPrivate(code, name);
     _netStatsApplyVisibility();
   }
 
@@ -3565,6 +3591,46 @@ _pmEl("pm-code").addEventListener("input", (e) => {
   const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
   e.target.value = v;
 });
+
+async function _pmSubmitJoin() {
+  const code = _pmEl("pm-code").value.toUpperCase();
+  const errEl = _pmEl("pm-join-error");
+  errEl.textContent = "";
+  if (!/^[A-Z0-9]{6}$/.test(code)) { errEl.textContent = "Code must be 6 letters/numbers."; return; }
+  // Validate via /api/room.
+  try {
+    const r = await fetch(`/api/room?code=${encodeURIComponent(code)}`);
+    const j = await r.json();
+    if (!j.exists) { errEl.textContent = `Room ${code} not found.`; return; }
+  } catch (e) {
+    errEl.textContent = "Server unreachable.";
+    return;
+  }
+  const name = document.getElementById("name-input").value.trim() || "Player";
+  document.getElementById("name-entry").classList.add("hidden");
+  _pmClose();
+  _onFirstGesture();
+  telemetry.setPlayerName(name);
+  telemetry.track("room_joined", { code, isHost: false });
+  telemetry.gameStart("private");
+  game.startPrivateJoin(name, code);
+}
+
+async function _pmSubmitCreate() {
+  const cfg = _pmReadCreateConfig();
+  const name = document.getElementById("name-input").value.trim() || "Player";
+  document.getElementById("name-entry").classList.add("hidden");
+  _pmClose();
+  _onFirstGesture();
+  telemetry.setPlayerName(name);
+  telemetry.track("room_joined", { code: "(creating)", isHost: true });
+  telemetry.gameStart("private");
+  game.startPrivateCreate(name, cfg);
+}
+
+_pmEl("pm-join-submit").addEventListener("click", _pmSubmitJoin);
+_pmEl("pm-create-submit").addEventListener("click", _pmSubmitCreate);
+_pmEl("pm-code").addEventListener("keydown", (e) => { if (e.key === "Enter") _pmSubmitJoin(); });
 
 // Name entry
 document.getElementById("solo-btn").addEventListener("click", () => {
