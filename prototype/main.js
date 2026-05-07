@@ -3708,6 +3708,11 @@ document.getElementById("return-to-menu").addEventListener("click", () => {
           if (!j.exists) {
             const err = document.getElementById("pm-join-error");
             if (err) err.textContent = `Room ${code} not found.`;
+            // Open the modal to the Join tab so the error is visible.
+            _pmOpen();
+            // Pre-fill the bad code so the user can edit and retry.
+            const codeInput = document.getElementById("pm-code");
+            if (codeInput) codeInput.value = code;
             return;
           }
           document.getElementById("name-entry").classList.add("hidden");
@@ -3720,6 +3725,7 @@ document.getElementById("return-to-menu").addEventListener("click", () => {
         .catch(() => {
           const err = document.getElementById("pm-join-error");
           if (err) err.textContent = `Server unreachable.`;
+          _pmOpen();
         });
     }
   }
