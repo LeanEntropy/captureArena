@@ -3270,8 +3270,29 @@ const _titleScreen = _initTitleScreen();
 // ===================== MAIN =====================
 const game = new Game();
 window.game = game; // debug hook
+window._game = game; // also expose as _game for consistency
 _stats = _initStats();
 let lastTime = performance.now();
+
+// ===== Net-stats HUD (FPS + Ping) =====
+// 30-frame ring buffer of dt values; FPS = 30 / sum(buffer).
+const _netFpsBuf = new Float32Array(30);
+let _netFpsIdx = 0;
+let _netFpsCount = 0;
+let _netHudLastUpdate = 0;
+const _netHudEl = () => document.getElementById("net-stats");
+let _netStatsVisible = (() => {
+  try { return localStorage.getItem("netStatsVisible") === "1"; }
+  catch { return false; }
+})();
+
+function _netStatsApplyVisibility() {
+  const el = _netHudEl();
+  if (!el) return;
+  // Only ever VISIBLE in online mode; G has no effect in solo.
+  const isOnline = window._game?.mode === "online";
+  el.style.display = (isOnline && _netStatsVisible) ? "block" : "none";
+}
 
 function loop(now) {
   if (_stats) _stats.begin();
@@ -3281,6 +3302,23 @@ function loop(now) {
   game.tick(dt);
   game.render();
   if (_stats) _stats.end();
+
+  // Net-stats HUD: sample dt every frame; refresh DOM ~4x/sec.
+  _netFpsBuf[_netFpsIdx] = dt;
+  _netFpsIdx = (_netFpsIdx + 1) % _netFpsBuf.length;
+  if (_netFpsCount < _netFpsBuf.length) _netFpsCount++;
+  if (_netStatsVisible && now - _netHudLastUpdate > 250) {
+    _netHudLastUpdate = now;
+    const el = _netHudEl();
+    if (el && window._game?.mode === "online") {
+      let sum = 0;
+      for (let i = 0; i < _netFpsCount; i++) sum += _netFpsBuf[i];
+      const fps = sum > 0 ? Math.round(_netFpsCount / sum) : 0;
+      const rtt = window._game?.mp?.getRTT?.();
+      const rttStr = rtt == null ? "—" : Math.round(rtt) + "ms";
+      el.textContent = `FPS ${fps} · ${rttStr}`;
+    }
+  }
 }
 requestAnimationFrame(loop);
 
