@@ -817,12 +817,15 @@ class Character {
       this.group.position.z = tgtZ;
       this.group.rotation.y = Math.atan2(tgtDirX, tgtDirZ);
     } else if (this.predicted) {
-      // Local player: lerp visual toward predicted pos. ~3 frame visual lag
-      // at 60fps in exchange for smoothing out per-ack reconciliation jumps.
-      const t = 0.30;
+      // Local player: lerp visual toward predicted pos. Tightened from 0.30
+      // → 0.55 after the speed-mismatch and mouse-leak fixes — reconciliation
+      // jumps are now small enough that a snappier follow doesn't expose them.
+      // ~20ms visual lag at 60fps (1.5 frames).
+      const t = 0.55;
       this.group.position.x += (tgtX - this.group.position.x) * t;
       this.group.position.z += (tgtZ - this.group.position.z) * t;
       // Rotation: lerp via shortest-path angle to avoid 2π wraparound jumps.
+      // Same tightened factor as the position lerp above.
       const targetAng = Math.atan2(tgtDirX, tgtDirZ);
       let curAng = this.group.rotation.y;
       let d = targetAng - curAng;
