@@ -1703,6 +1703,7 @@ class Game {
       const sc = r.simChar?._schemaChar;
       if (sc) known.add(sc);
     }
+    let wrappedMine = false;
     for (const schemaChar of schemaChars) {
       if (known.has(schemaChar)) continue;
       const proxy = makeOnlineCharProxy(schemaChar);
@@ -1710,7 +1711,15 @@ class Game {
       const r = new Character(this.scene, proxy, color, false);
       this.characters.push(r);
       this._charBySim.set(proxy, r);
+      if (this.myCharId != null && schemaChar.id === this.myCharId) wrappedMine = true;
       dlog("DYN_CHAR", `wrapped late char id=${schemaChar.id} faction=${schemaChar.factionId}`);
+    }
+    // Private-room hosts join when the renderer has already initialized with
+    // zero characters (no bots yet). yourCharId arrives before the schema sync
+    // and _bindOnlinePlayer no-ops because this.characters is empty. Re-attempt
+    // the bind here once the matching schema char is wrapped.
+    if (wrappedMine && (this.player == null || this.player?.simChar?.id !== this.myCharId)) {
+      this._bindOnlinePlayer();
     }
   }
 
