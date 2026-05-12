@@ -757,8 +757,15 @@ export class Simulation {
       changedCells.push(ci);
     }
 
-    // Invalidate contour cache for the claimer (always grew territory).
+    // Invalidate contour cache for the claimer (always grew territory) AND
+    // every loser (each shrank, so their cached boundary is stale). This
+    // must run for EVERY claim, including bots'. Stale loser contours cause
+    // BotAI to plan paths through cells that no longer belong to its faction
+    // → bots wander into enemy territory and die from cutoff → respawn at
+    // faction spawn → synchronized teleports across all bots. Reported by
+    // user as "all characters jump together" in regular online, not in prod.
     this._contourCache.delete(factionId);
+    for (const loser of losers) this._contourCache.delete(loser);
 
     // Encirclement sweep is suppressed:
     //   - When the match is frozen (private-room waiting state). With no bots,
@@ -827,8 +834,8 @@ export class Simulation {
         for (const v of result.killedCharacters) {
           this._killCharacter(v, char); // credit the claimer
         }
-        // Invalidate contour caches for affected factions (losers + claimer).
-        for (const f of affectedFactions) this._contourCache.delete(f);
+        // (Contour cache for claimer + losers was already invalidated above,
+        // before this encirclement block — runs for every claim.)
       }
     }
 
