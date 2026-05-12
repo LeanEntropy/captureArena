@@ -920,7 +920,7 @@ export class Simulation {
   restart() {
     this._initGrid();
     this.factionManager = new FactionManager();
-    this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL);
+    this.factionManager.init(this.grid, GRID_SIZE, WORLD_MIN, CELL_SIZE, ARENA_RADIUS, GRID_SENTINEL, this.numFactions);
     // Re-init cellCounts after the grid was rewritten.
     this._recomputeCellCounts();
     for (const c of this.characters) {

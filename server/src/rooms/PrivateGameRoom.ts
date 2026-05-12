@@ -1,4 +1,5 @@
 import type { Client } from "@colyseus/core";
+import { gzipSync } from "node:zlib";
 import { GameRoom } from "./GameRoom.js";
 import { CharacterSchema, FactionSchema, GameStateSchema } from "../schema/GameState.js";
 import { generateCode, register, release } from "./roomCodeRegistry.js";
@@ -90,6 +91,12 @@ export class PrivateGameRoom extends GameRoom {
     // so the host plays alone with empty arena (showing "Waiting for players").
     this.sim = new Simulation({ numFactions: cfg.factions, botsPerFaction: 0 });
     this.sim.start();
+    // Freeze the match while waiting: territoryPct still refreshes (UI bars
+    // stay correct) but the round timer doesn't drain and no faction gets
+    // marked dead from "0 alive chars + low territory". Without this, a lone
+    // host claiming any land trips isMatchOver and auto-wins, which kicks
+    // the room out of waiting state and teleports them on intermission/restart.
+    this.sim.matchManager.frozen = true;
     this.wireSimEvents();
 
     for (let f = 1; f <= cfg.factions; f++) {
@@ -176,6 +183,15 @@ export class PrivateGameRoom extends GameRoom {
         this.state.characters.push(cs);
       }
     }
+    // Whatever the host did during waiting (claims, kills, encirclement) is
+    // discarded for a clean kickoff. restart() rebuilds the grid into fresh
+    // pie-slices, repositions every character at its faction spawn, and
+    // recreates matchManager (frozen=false on the new instance). The bot
+    // characters added above get repositioned by the same restart loop.
+    sim.restart();
+    // Broadcast the reset grid so clients overwrite their waiting-state copy.
+    const compressed = gzipSync(Buffer.from(sim.grid));
+    this.broadcast("gridSnapshot", { bytes: compressed.toString("base64") });
     // Re-enable normal phase syncing now that the sim's phase can be trusted.
     this.skipPhaseSync = false;
     this.state.phase = "playing";

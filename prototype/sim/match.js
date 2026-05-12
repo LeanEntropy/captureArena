@@ -8,6 +8,11 @@ export class MatchManager {
     this.timeRemaining = MATCH_DURATION;
     this.factionCheckTimer = 0;
     this.winner = null;
+    // When true: skip the timer countdown and the win-condition checks.
+    // territoryPct refresh still runs (UI bars stay correct), but no faction
+    // gets marked dead and the match never ends. Used during private-room
+    // waiting state so a lone host can roam without auto-winning the match.
+    this.frozen = false;
   }
 
   startMatch() {
@@ -18,7 +23,7 @@ export class MatchManager {
   update(dt, grid, gridSize, sentinel, cellCounts, totalArenaCells) {
     if (this.phase !== "playing") return;
 
-    this.timeRemaining -= dt;
+    if (!this.frozen) this.timeRemaining -= dt;
 
     this.factionCheckTimer += dt;
     if (this.factionCheckTimer >= 1.0) {
@@ -32,12 +37,16 @@ export class MatchManager {
         this.factionManager.updateTerritoryPcts(grid, gridSize, sentinel);
       }
 
-      for (const [id] of this.factionManager.factions) {
-        this.factionManager.checkEndangered(id);
-        this.factionManager.checkRecovery(id);
-        this.factionManager.checkElimination(id);
+      if (!this.frozen) {
+        for (const [id] of this.factionManager.factions) {
+          this.factionManager.checkEndangered(id);
+          this.factionManager.checkRecovery(id);
+          this.factionManager.checkElimination(id);
+        }
       }
     }
+
+    if (this.frozen) return;
 
     if (this.timeRemaining <= 0) {
       this.timeRemaining = 0;
