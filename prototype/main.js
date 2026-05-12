@@ -2299,6 +2299,10 @@ class Game {
         if (this.keysDown.has("d") || this.keysDown.has("arrowright")) kx += 1;
         if (kx !== 0 || kz !== 0) {
           this.player.targetDir.set(kx, 0, kz).normalize();
+          // Drop any pending mouse signal so a stray cursor wiggle while a key
+          // is held can't slip in on a single-frame key release and yank the
+          // server-side targetDir sideways (causes a perpendicular jolt mid-run).
+          this.hasMouseInput = false;
         } else if (this.hasMouseInput) {
           this.hasMouseInput = false;
           this.raycaster.setFromCamera(this.mouseNDC, this.camera);
