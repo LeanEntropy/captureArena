@@ -281,7 +281,9 @@ export class GameRoom extends Room<GameStateSchema> {
       }
     }
 
-    target.isHuman = true;
+    // Route through setHumanControl so speed flips from BOT_SPEED to
+    // PLAYER_SPEED — without this, server moves ~30% slower than client predicts.
+    this.sim.setHumanControl(target.id, true);
     if (name) target.name = name;
 
     // Rename any BOT that shares the player's name so player + bot never share.

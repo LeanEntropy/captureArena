@@ -3,6 +3,7 @@ import {
   RESPAWN_DELAY, BOT_NAMES,
   MIN_POINT_DIST, TURN_SPEED,
   TRAIL_KILL_DIST, SELF_TRAIL_SKIP,
+  PLAYER_SPEED, BOT_SPEED,
 } from "./constants.js";
 import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 import { MatchManager } from "./match.js";
@@ -909,7 +910,13 @@ export class Simulation {
 
   setHumanControl(charId, isHuman) {
     const c = this.characters[charId];
-    if (c) c.isHuman = !!isHuman;
+    if (!c) return;
+    c.isHuman = !!isHuman;
+    // Match client prediction speed (PLAYER_SPEED=9.8 vs BOT_SPEED=7.5). If
+    // left at BOT_SPEED for humans, the server simulates ~30% slower than the
+    // client predicts; reconciliation snaps the local mesh sideways each ack,
+    // showing up as a "jump to the right" of motion as the user reported.
+    c.speed = c.isHuman ? PLAYER_SPEED : BOT_SPEED;
   }
 
   setTargetDir(charId, dirX, dirZ) {
