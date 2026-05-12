@@ -3,7 +3,7 @@ import {
   RESPAWN_DELAY, BOT_NAMES,
   MIN_POINT_DIST, TURN_SPEED,
   TRAIL_KILL_DIST, SELF_TRAIL_SKIP,
-  PLAYER_SPEED, BOT_SPEED,
+  PLAYER_SPEED, BOT_SPEED, MAX_TRAIL_LEN,
 } from "./constants.js";
 import { FactionManager, FACTION_COUNT, CHARS_PER_FACTION } from "./faction.js";
 import { MatchManager } from "./match.js";
@@ -282,6 +282,15 @@ export class Simulation {
     const dx = char.pos.x - last.x;
     const dz = char.pos.z - last.z;
     if (Math.sqrt(dx * dx + dz * dz) >= MIN_POINT_DIST) {
+      // Trail length cap. Without this, a player roaming the empty arena
+      // (private waiting state) or just running for ages can build a trail
+      // that turns claim() into a full-grid flood-fill and stalls the server
+      // for hundreds of ms. Kill the char when the cap is hit — same as any
+      // other "too risky" trail outcome.
+      if (char.trailVerts.length >= MAX_TRAIL_LEN) {
+        this._killCharacter(char, null);
+        return;
+      }
       char.trailVerts.push({ x: char.pos.x, z: char.pos.z });
       this.onTrailVertex?.(char.id, char.pos.x, char.pos.z);
     }
