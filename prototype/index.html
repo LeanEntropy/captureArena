@@ -399,12 +399,15 @@
     }
     #solo-btn, #online-btn, #private-btn {
       font-family: 'Lilita One', sans-serif;
-      font-size: 22px; letter-spacing: 2px;
-      padding: 12px 36px;
+      letter-spacing: 2px;
       border-radius: 8px;
       cursor: pointer;
       box-shadow: 4px 4px 0 #000;
       transition: transform 0.08s ease, box-shadow 0.08s ease;
+    }
+    #solo-btn, #online-btn {
+      font-size: 22px;
+      padding: 12px 36px;
     }
     #solo-btn {
       background: #fff; color: #1a0f08;
@@ -415,13 +418,22 @@
       border: 3px solid #fff;
     }
     #private-btn {
+      font-size: 13px; letter-spacing: 1.5px;
+      padding: 6px 14px;
       background: #ffcf2a; color: #1a1f2b;
-      border: 3px solid #1a1f2b;
+      border: 2px solid #1a1f2b;
+      box-shadow: 2px 2px 0 #000;
+      align-self: center;
     }
-    #solo-btn:hover, #online-btn:hover, #private-btn:hover {
+    #solo-btn:hover, #online-btn:hover {
       transform: translate(2px, 2px);
       box-shadow: 2px 2px 0 #000;
     }
+    #private-btn:hover {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000;
+    }
+    #ts-private-row { margin-top: 12px; display: flex; justify-content: center; }
     #ts-music-row { margin-top: 18px; }
     #ts-byline {
       margin-top: 28px;
@@ -532,7 +544,7 @@
     }
 
     /* ============ Private room modal ============ */
-    #private-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+    #private-modal { position: fixed; inset: 0; z-index: 110; display: flex; align-items: center; justify-content: center; }
     #private-modal.hidden { display: none; }
     #private-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
     #private-modal-panel {
@@ -674,6 +686,8 @@
       <div id="ts-button-row">
         <button id="solo-btn">SOLO</button>
         <button id="online-btn">ONLINE</button>
+      </div>
+      <div id="ts-private-row">
         <button id="private-btn">PRIVATE ROOM</button>
       </div>
       <div id="ts-music-row">

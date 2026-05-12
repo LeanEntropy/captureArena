@@ -1,5 +1,3 @@
 packages:
-  - "packages/*"
-  - "client"
   - "server"
   - "prototype"

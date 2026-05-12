@@ -15,8 +15,6 @@
     "@colyseus/monitor": "^0.17.8",
     "@colyseus/schema": "^3.0.0",
     "@colyseus/ws-transport": "^0.16.5",
-    "@template/shared": "workspace:*",
-    "@template/simulation": "workspace:*",
     "basic-auth": "^2.0.1",
     "better-sqlite3": "^12.0.0",
     "colyseus": "^0.16.5",

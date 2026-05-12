@@ -167,7 +167,7 @@ export class Simulation {
    * @returns {object|null}
    */
   addCharacter(factionId, maxPerFaction) {
-    if (factionId < 1 || factionId > FACTION_COUNT) return null;
+    if (factionId < 1 || factionId > this.numFactions) return null;
     let countInFaction = 0;
     for (const c of this.characters) {
       if (c.factionId === factionId) countInFaction++;
@@ -179,6 +179,13 @@ export class Simulation {
     const c = new Character({ id, factionId, name, respawnDelay: RESPAWN_DELAY });
     this.characters.push(c);
     this.scoreTracker.register(c);
+    // Mirror start(): register with factionManager and place at faction spawn,
+    // otherwise the new char defaults to (0,0) on neutral land and starts a
+    // trail immediately — dying on first edge/self collision. Critical for
+    // private rooms where every host joins via this grow path.
+    this.factionManager.addCharacter(c, factionId);
+    const sp = this._spawnFor(factionId);
+    c.setPos(sp.x, sp.z);
     return c;
   }
 

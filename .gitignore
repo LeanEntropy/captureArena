@@ -11,6 +11,7 @@ server/src/sim/
 
 # Local SQLite analytics database (created at runtime; mount a volume in prod)
 server/data/
+/data/
 
 # DB-IP geolocation database (downloaded during Docker build)
 *.mmdb

@@ -17,8 +17,6 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json ./server/
 COPY prototype/package.json ./prototype/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/simulation/package.json ./packages/simulation/
 
 # Install all deps for the server's workspace tree
 RUN pnpm install --frozen-lockfile --filter "template-server..."
@@ -27,7 +25,6 @@ RUN pnpm install --frozen-lockfile --filter "template-server..."
 COPY tsconfig.base.json ./
 COPY prototype ./prototype
 COPY server ./server
-COPY packages ./packages
 
 # Build server (prebuild script copies sim, then tsc)
 RUN pnpm --filter template-server build
@@ -60,8 +57,6 @@ COPY --from=build /app/server/node_modules ./server/node_modules
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
 COPY --from=build /app/server/package.json ./server/
 COPY --from=build /app/prototype/package.json ./prototype/
-COPY --from=build /app/packages/shared/package.json ./packages/shared/
-COPY --from=build /app/packages/simulation/package.json ./packages/simulation/
 
 # Copy built server + the static prototype + the geoip database
 COPY --from=build /app/server/dist ./server/dist
