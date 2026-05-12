@@ -759,7 +759,12 @@ export class Simulation {
     // Invalidate contour cache for the claimer (always grew territory).
     this._contourCache.delete(factionId);
 
-    if (losers.size > 0) {
+    // Encirclement sweep is suppressed while the match is frozen (private-
+    // room waiting state). With no bots, every other faction has zero
+    // residents — letting the sweep run would capture every disconnected
+    // fragment, wiping the "whole color" on a single small claim. Frozen=false
+    // (solo, public online, post-startMatch private) keeps default behavior.
+    if (losers.size > 0 && !this.matchManager.frozen) {
       // Build the set of factions whose cell counts changed during this claim.
       // The claimer always grew; every loser shrank. The connectivity sweep
       // then checks whether any of the losers' remaining territory is now
