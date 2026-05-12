@@ -737,14 +737,16 @@ class Character {
           dirX: this.simChar.dir.x,
           dirZ: this.simChar.dir.z,
         });
-        // Keep the most recent 3 snapshots — enough to bracket render-time
-        // and absorb a single dropped/late packet without losing both ends.
-        if (this.posBuffer.length > 3) this.posBuffer.shift();
+        // Keep the most recent 6 snapshots. With INTERP_DELAY=150 below, that
+        // covers ~200ms of buffer time at 30Hz — gives the interpolator several
+        // pairs of bracketing snapshots to choose from, so render-time lands
+        // mid-buffer instead of at the edges where late packets cause freezes.
+        if (this.posBuffer.length > 6) this.posBuffer.shift();
         this._lastSchemaPosX = schemaX;
         this._lastSchemaPosZ = schemaZ;
       }
 
-      const INTERP_DELAY = 100; // ms behind real-time, ≈ 2 server ticks at 20Hz
+      const INTERP_DELAY = 150; // ms behind real-time, ≈ 4.5 server ticks at 30Hz
       const renderTime = now - INTERP_DELAY;
       const buf = this.posBuffer;
 
