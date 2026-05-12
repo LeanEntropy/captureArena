@@ -760,12 +760,19 @@ export class Simulation {
     // Invalidate contour cache for the claimer (always grew territory).
     this._contourCache.delete(factionId);
 
-    // Encirclement sweep is suppressed while the match is frozen (private-
-    // room waiting state). With no bots, every other faction has zero
-    // residents — letting the sweep run would capture every disconnected
-    // fragment, wiping the "whole color" on a single small claim. Frozen=false
-    // (solo, public online, post-startMatch private) keeps default behavior.
-    if (losers.size > 0 && !this.matchManager.frozen) {
+    // Encirclement sweep is suppressed:
+    //   - When the match is frozen (private-room waiting state). With no bots,
+    //     every other faction has zero residents — sweeping would capture
+    //     every disconnected fragment on a single small claim.
+    //   - When the claim is by a bot. The spec is a player-vs-player mechanic
+    //     ("if I close around a player…"). Running it on every bot claim
+    //     causes mass-kills: when ≥6 bots happen to be trail-running at the
+    //     moment of a claim, their faction has no residents, the entire
+    //     faction territory flips to the claimer, and all trail-running bots
+    //     of that faction die and respawn at spawn in the same tick. That's
+    //     the "everyone jumps together" jitter the user sees in regular
+    //     online; production (no encirclement) doesn't have it.
+    if (losers.size > 0 && !this.matchManager.frozen && char.isHuman) {
       // Build the set of factions whose cell counts changed during this claim.
       // The claimer always grew; every loser shrank. The connectivity sweep
       // then checks whether any of the losers' remaining territory is now
