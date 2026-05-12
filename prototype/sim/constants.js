@@ -12,12 +12,6 @@ export const TURN_SPEED = 5;
 // Trail
 export const TRAIL_KILL_DIST = 0.6;
 export const SELF_TRAIL_SKIP = 5;
-// Hard cap on trail vertex count. Long trails balloon the claim bbox (PAD
-// scales with trailExtent); a trail spanning most of the arena makes
-// _claimTrail iterate the full grid and stalls the server hundreds of ms —
-// visible to clients as a freeze + jump in every character. Cap is generous
-// (~60 world units = ~90% of arena diameter) but bounds worst-case cost.
-export const MAX_TRAIL_LEN = 200;
 
 // Players / respawn
 export const BOT_COUNT = FACTION_COUNT * CHARS_PER_FACTION - 1;
