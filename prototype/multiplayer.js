@@ -115,7 +115,22 @@ export class MultiplayerClient {
   }
 
   _wireRoomHandlers() {
-    this.room.onStateChange((state) => this.onState?.(state));
+    // Diagnostic: track gap between consecutive state-change deliveries.
+    // Expected cadence is 33ms (server patchRate = TICK_MS). Anything > 80ms
+    // means the server tick stalled, the network buffered, or the client
+    // event loop was blocked. The 500ms upper bound filters tab-backgrounding.
+    let _lastStateChangeTs = 0;
+    this.room.onStateChange((state) => {
+      const now = performance.now();
+      if (_lastStateChangeTs > 0) {
+        const gap = now - _lastStateChangeTs;
+        if (gap > 80 && gap < 500) {
+          console.log(`[patch gap] ${gap.toFixed(0)}ms`);
+        }
+      }
+      _lastStateChangeTs = now;
+      this.onState?.(state);
+    });
 
     const handlers = [
       ["claim",           "onClaim",           (m) => [m.charId, m.factionId, m.trailPoints, !!m.replayTrail]],

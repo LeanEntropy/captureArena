@@ -316,13 +316,17 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`[GameRoom] ${client.sessionId} ("${name}") took over char ${target.id} (faction ${factionId})`);
   }
 
-  // Sliding window stats: every 5s, log max + avg tick duration. Useful for
-  // confirming that the 1Hz updateTerritoryPcts stall is gone after the
-  // incremental-cellCounts fix.
-  protected tickStats = { maxMs: 0, sumMs: 0, count: 0, windowStartMs: 0 };
+  // Sliding window stats: every 5s, log max + avg + p95 + p99 tick duration.
+  // p95/p99 added to surface periodic outliers that the mean hides. Samples
+  // are bounded by the 5s window (~150 ticks at 30Hz) so the sort is cheap.
+  protected tickStats = { maxMs: 0, sumMs: 0, count: 0, windowStartMs: 0, samples: [] as number[] };
 
   protected tick(dt: number) {
     const tickStart = performance.now();
+    // Diagnostic: capture whether the 1Hz match-manager faction check fired
+    // this tick, so the OVER BUDGET warn can attribute itself to the 1Hz
+    // boundary vs. an unrelated outlier.
+    const preFactionTimer: number = this.sim?.matchManager?.factionCheckTimer ?? 0;
     if (dt > MAX_DT) {
       console.warn(`[GameRoom] tick dt clamp: ${(dt * 1000).toFixed(1)}ms → ${(MAX_DT * 1000).toFixed(0)}ms`);
       dt = MAX_DT;
@@ -331,26 +335,34 @@ export class GameRoom extends Room<GameStateSchema> {
       this._tickInner(dt);
     } finally {
       const elapsed = performance.now() - tickStart;
+      const postFactionTimer: number = this.sim?.matchManager?.factionCheckTimer ?? 0;
+      const factionCheckFired = postFactionTimer < preFactionTimer;
       const stats = this.tickStats;
       if (elapsed > stats.maxMs) stats.maxMs = elapsed;
       stats.count++;
       stats.sumMs += elapsed;
+      stats.samples.push(elapsed);
       if (stats.windowStartMs === 0) stats.windowStartMs = tickStart;
       if (tickStart - stats.windowStartMs >= 5000) {
         const avg = stats.sumMs / Math.max(1, stats.count);
-        console.log(`[tick stats] window=${(tickStart - stats.windowStartMs).toFixed(0)}ms ticks=${stats.count} max=${stats.maxMs.toFixed(1)}ms avg=${avg.toFixed(2)}ms`);
+        const sorted = stats.samples.slice().sort((a, b) => a - b);
+        const p = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
+        const p95 = p(0.95);
+        const p99 = p(0.99);
+        console.log(`[tick stats] window=${(tickStart - stats.windowStartMs).toFixed(0)}ms ticks=${stats.count} max=${stats.maxMs.toFixed(1)}ms p99=${p99.toFixed(1)}ms p95=${p95.toFixed(1)}ms avg=${avg.toFixed(2)}ms`);
         stats.windowStartMs = tickStart;
         stats.maxMs = 0;
         stats.count = 0;
         stats.sumMs = 0;
+        stats.samples.length = 0;
       }
       if (elapsed > 50) {
         // Tick exceeded the 50ms budget. Log the simulation's phase breakdown
-        // so we can attribute the cost. With incremental cellCounts the 1Hz
-        // territoryPcts scan is gone; remaining outliers are rare big claims.
+        // so we can attribute the cost. `1Hz=Y` means the match.js faction
+        // block ran this tick — the only known 1Hz scheduled work in the sim.
         const claimMs = this.sim._lastClaimMs ?? 0;
         const phaseLog = this.sim._lastTickPhases ?? "";
-        console.warn(`[GameRoom] tick OVER BUDGET: ${elapsed.toFixed(1)}ms (claim=${claimMs.toFixed(1)}ms ${phaseLog})`);
+        console.warn(`[GameRoom] tick OVER BUDGET: ${elapsed.toFixed(1)}ms (1Hz=${factionCheckFired ? "Y" : "N"} claim=${claimMs.toFixed(1)}ms ${phaseLog})`);
       }
     }
   }

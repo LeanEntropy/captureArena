@@ -67,6 +67,18 @@ window.dumpDebug = () => {
   return DEBUG_LOG.length;
 };
 
+// ===================== DIAGNOSTIC INSTRUMENTATION =====================
+// Localizing the ~1Hz online-mode stutter. Each counter is bumped at the
+// suspect callsite; the rAF loop emits a once-per-second summary. Per-event
+// logs only fire above their threshold so the console stays quiet during
+// normal play and only speaks up when a path crosses its budget.
+const _diag = {
+  lastFrameTs: 0,
+  clampCount: 0,
+  lastEmitTs: 0,
+};
+window._diag = _diag;
+
 // ===================== TERRITORY GRID =====================
 const territoryGrid = {
   grid: new Uint8Array(GRID_SIZE * GRID_SIZE),
@@ -786,6 +798,7 @@ class Character {
             const last = buf[buf.length - 1];
             tgtX = last.x; tgtZ = last.z;
             tgtDirX = last.dirX; tgtDirZ = last.dirZ;
+            _diag.clampCount++;
           }
         } else {
           const a = buf[i0], b = buf[i1];
@@ -1660,6 +1673,7 @@ class Game {
   // No algorithm rerun, no compute spike on the client.
   _applyOnlineClaimResult(charId, factionId, cells) {
     if (!cells) return;
+    const _t0 = performance.now();
     // cells may arrive as a typed array (Int32Array) or a plain array.
     const grid = territoryGrid.grid;
     const len = cells.length;
@@ -1675,6 +1689,8 @@ class Game {
     this._clearOnlineCharTrail(charId);
     this.territoryDirty = true;
     this._emitOnlineClaimFX(charId, factionId);
+    const elapsed = performance.now() - _t0;
+    if (elapsed > 15) console.log(`[handler claim] ${elapsed.toFixed(1)}ms cells=${len}`);
   }
 
   _clearOnlineCharTrail(charId) {
@@ -1686,11 +1702,14 @@ class Game {
   // pair list. Writing them straight into territoryGrid keeps the client in
   // lockstep with the server without re-running the heal pass locally.
   _applyHealCells(changedCells) {
+    const _t0 = performance.now();
     const grid = territoryGrid.grid;
     for (let i = 0; i < changedCells.length; i += 2) {
       grid[changedCells[i]] = changedCells[i + 1];
     }
     this.territoryDirty = true;
+    const elapsed = performance.now() - _t0;
+    if (elapsed > 15) console.log(`[handler heal] ${elapsed.toFixed(1)}ms pairs=${changedCells.length / 2}`);
   }
 
   // Online-only: poll for new schema characters that the server has pushed
@@ -3093,6 +3112,7 @@ class Game {
   // heal pass mutate cells outside the claimed polygon's bbox, causing holes.
   _updateTerritoryTexture() {
     if (!this._territoryCtx) return;
+    const _t0 = performance.now();
 
     const data = this._territoryImageData.data;
     const grid = territoryGrid.grid;
@@ -3141,6 +3161,8 @@ class Game {
 
     this._territoryCtx.putImageData(this._territoryImageData, 0, 0);
     this.territoryTexture.needsUpdate = true;
+    const elapsed = performance.now() - _t0;
+    if (elapsed > 15) console.log(`[handler texture] ${elapsed.toFixed(1)}ms`);
   }
 
   // _checkCutoff, _killCharacter, _healUnclaimedCells: previously lived here;
@@ -3349,6 +3371,25 @@ function _netStatsApplyVisibility() {
 function loop(now) {
   if (_stats) _stats.begin();
   requestAnimationFrame(loop);
+
+  // Diagnostic: log rAF cadence breaks > 50ms (target is 16.7ms at 60Hz, 33.3 at 30Hz).
+  // Filters out the initial frame (lastFrameTs=0) and tab-backgrounding (>500ms gap).
+  if (_diag.lastFrameTs > 0) {
+    const gap = now - _diag.lastFrameTs;
+    if (gap > 50 && gap < 500) {
+      const mode = window._game?.mode ?? "—";
+      console.log(`[rAF gap] ${gap.toFixed(0)}ms mode=${mode}`);
+    }
+  }
+  _diag.lastFrameTs = now;
+  if (now - _diag.lastEmitTs >= 1000) {
+    if (_diag.clampCount > 0) {
+      console.log(`[interp clamp] ${_diag.clampCount}/s`);
+      _diag.clampCount = 0;
+    }
+    _diag.lastEmitTs = now;
+  }
+
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
   game.tick(dt);
