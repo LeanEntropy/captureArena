@@ -10,8 +10,11 @@ import { MatchManager } from "./match.js";
 import { ScoreTracker } from "./scoring.js";
 import { Character } from "./Character.js";
 import { BotAI } from "./BotAI.js";
-import { extractContours, countCells } from "./grid_geom.js";
+import { extractContours } from "./grid_geom.js";
 import { enforceConnectivity } from "./connectivity.js";
+
+// Max extractContours rebuilds allowed per tick. See ctor comment.
+const CONTOUR_BUILD_PER_TICK = 1;
 
 export class Simulation {
   constructor({ seed = 1, numFactions = FACTION_COUNT, botsPerFaction = CHARS_PER_FACTION } = {}) {
@@ -36,7 +39,15 @@ export class Simulation {
     this.onTeleport = null;
 
     this._contourCache = new Map();
-    this._contourDirty = new Set();
+    // Throttle for extractContours rebuilds. After a claim invalidates 5
+    // factions' caches, all 5 used to rebuild on the next tick when bots
+    // replanned simultaneously → 5 × O(grid) ≈ 80ms tick spike → server
+    // stalled → patches arrived late → client snapshot interp clamped to
+    // newest → visible synchronized freeze on all entities. With this gate,
+    // at most CONTOUR_BUILD_PER_TICK rebuilds happen per tick. Other bots in
+    // the same tick see empty contours and fall back to their wander branch
+    // for one tick (≈33ms of degraded AI).
+    this._contourBuildsThisTick = 0;
   }
 
   // Invalidate cached contours for the given faction(s). Pass an iterable of
@@ -54,16 +65,19 @@ export class Simulation {
   // Cached contour lookup. BotAI calls this many times per second across
   // many bots; the underlying extractContours is O(grid). The cache is keyed
   // on factionId and invalidated by claim() and _healUnclaimedCells().
-  //
-  // NOTE: Cache entries can be partially populated. getCachedCellCount creates
-  // an entry holding only cellCount (no contours), so checking truthiness of
-  // `entry` is not enough — we must check `entry.contours` specifically.
-  // Returning undefined from here used to throw inside BotAI._planLoop's
-  // `contours.length` access, which the BotAI catch handler converted into a
-  // random unclamped 5-unit hop — pinning bots to the arena wall forever.
+  // Rebuilds are throttled to CONTOUR_BUILD_PER_TICK per tick — see ctor.
   getCachedContours(factionId) {
     let entry = this._contourCache.get(factionId);
     if (entry && entry.contours) return entry.contours;
+    if (this._contourBuildsThisTick >= CONTOUR_BUILD_PER_TICK) {
+      // Budget exhausted this tick. Returning empty makes BotAI._planLoop
+      // fall through its `contours.length === 0` branch (wander toward
+      // origin) for one tick. Next tick the budget resets and one more
+      // faction gets rebuilt. Acceptable AI degradation; the alternative
+      // was a server-tick spike that froze every client.
+      return [];
+    }
+    this._contourBuildsThisTick++;
     const contours = extractContours(this.grid, factionId);
     if (entry) {
       entry.contours = contours;
@@ -74,19 +88,13 @@ export class Simulation {
     return contours;
   }
 
-  // Cached cell count per faction. Bots check whether their faction has any
-  // territory, and pick aggro targets among factions with territory.
+  // Cached cell count per faction. Reads from the incrementally-maintained
+  // cellCounts Uint32Array (kept in sync by every cell write in claim() and
+  // _healUnclaimedCells), so this is O(1). The previous implementation
+  // called countCells (O(grid)) when the cache was invalidated, compounding
+  // the per-claim cost with extractContours on the same tick.
   getCachedCellCount(factionId) {
-    let entry = this._contourCache.get(factionId);
-    if (entry && typeof entry.cellCount === "number") return entry.cellCount;
-    const count = countCells(this.grid, factionId);
-    if (!entry) {
-      entry = { cellCount: count };
-      this._contourCache.set(factionId, entry);
-    } else {
-      entry.cellCount = count;
-    }
-    return count;
+    return this.cellCounts[factionId] ?? 0;
   }
 
   start() {
@@ -962,6 +970,7 @@ export class Simulation {
 
   tick(dt) {
     if (!this.started) return;
+    this._contourBuildsThisTick = 0;
     const _t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     this.matchManager.update(dt, this.grid, GRID_SIZE, GRID_SENTINEL, this.cellCounts, this.totalArenaCells);
     if (this.matchManager.phase !== "playing") {

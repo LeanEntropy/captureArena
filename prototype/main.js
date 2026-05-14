@@ -454,6 +454,12 @@ class Character {
     this.factionId = simChar.factionId;   // mirror; updated on faction reassign
     this.trailVerts = [];                 // Vector3[]; populated via sim.onTrailVertex hook
     this.trailMesh = null;
+    // Live trail-head extension. A 1-segment ribbon from trailVerts[last] to
+    // the predicted body pos. Bridges the geometric gap that opens in online
+    // mode because the body is client-predicted at 60Hz while the trail is
+    // server-authoritative at 30Hz + network latency. Local player only;
+    // does NOT mutate trailVerts (kept as server truth).
+    this.trailHeadMesh = null;
     // Online prediction hook: when set, syncVisuals reads from this object's
     // {posX, posZ, dirX, dirZ} instead of simChar. Used for the local player
     // in online mode to eliminate input-roundtrip lag.
@@ -676,6 +682,54 @@ class Character {
     geom.setDrawRange(0, this._trailIndexCount);
   }
 
+  // Live trail-head extension. Draws a single ribbon segment from the last
+  // server-confirmed trail vertex to (headX, headZ) — the predicted body
+  // position. Eliminates the visible gap that opens in online mode when the
+  // client predicts the body forward at 60Hz while trail vertices arrive
+  // from the server at 30Hz + network latency.
+  //
+  // Pure visual polish: trailVerts is NOT mutated, so the server-authoritative
+  // source of truth stays clean. The head mesh is a flat planar quad at
+  // TRAIL_Y_TOP (camera looks down, only the top face is dominant); cheap
+  // to update per-frame.
+  _updateTrailHead(headX, headZ) {
+    const verts = this.trailVerts;
+    if (verts.length === 0) {
+      if (this.trailHeadMesh) this.trailHeadMesh.visible = false;
+      return;
+    }
+    const a = verts[verts.length - 1];
+    const dx = headX - a.x;
+    const dz = headZ - a.z;
+    const len = Math.sqrt(dx * dx + dz * dz);
+    if (len < 0.05) {
+      if (this.trailHeadMesh) this.trailHeadMesh.visible = false;
+      return;
+    }
+    const hw = TRAIL_WIDTH / 2;
+    const nx = -dz / len, nz = dx / len;
+    if (!this.trailHeadMesh) {
+      const positions = new Float32Array(4 * 3);
+      const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geom.setIndex(new THREE.BufferAttribute(indices, 1));
+      this.trailHeadMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+        color: this.color, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+      }));
+      this.scene.add(this.trailHeadMesh);
+    }
+    const posAttr = this.trailHeadMesh.geometry.attributes.position;
+    const p = posAttr.array;
+    // Vertex order (CCW on top face): aL, aR, bR, bL.
+    p[0]  = a.x + nx * hw; p[1]  = TRAIL_Y_TOP; p[2]  = a.z + nz * hw;
+    p[3]  = a.x - nx * hw; p[4]  = TRAIL_Y_TOP; p[5]  = a.z - nz * hw;
+    p[6]  = headX - nx * hw; p[7]  = TRAIL_Y_TOP; p[8]  = headZ - nz * hw;
+    p[9]  = headX + nx * hw; p[10] = TRAIL_Y_TOP; p[11] = headZ + nz * hw;
+    posAttr.needsUpdate = true;
+    this.trailHeadMesh.visible = true;
+  }
+
   // Renderer-only sync: pull authoritative pos/dir from simChar (or predicted
   // state for the local online player) and place the mesh. All simulation
   // work (steer, move, trail, claim, kills) is owned by sim.tick.
@@ -749,16 +803,18 @@ class Character {
           dirX: this.simChar.dir.x,
           dirZ: this.simChar.dir.z,
         });
-        // Keep the most recent 6 snapshots. With INTERP_DELAY=150 below, that
-        // covers ~200ms of buffer time at 30Hz — gives the interpolator several
+        // Keep the most recent 12 snapshots. With INTERP_DELAY=200 below, that
+        // covers ~400ms of buffer time at 30Hz — gives the interpolator several
         // pairs of bracketing snapshots to choose from, so render-time lands
         // mid-buffer instead of at the edges where late packets cause freezes.
-        if (this.posBuffer.length > 6) this.posBuffer.shift();
+        // Sized for resilience against ~150ms server tick spikes after large
+        // claims (when many factions' contour caches invalidate at once).
+        if (this.posBuffer.length > 12) this.posBuffer.shift();
         this._lastSchemaPosX = schemaX;
         this._lastSchemaPosZ = schemaZ;
       }
 
-      const INTERP_DELAY = 150; // ms behind real-time, ≈ 4.5 server ticks at 30Hz
+      const INTERP_DELAY = 200; // ms behind real-time, ≈ 6 server ticks at 30Hz
       const renderTime = now - INTERP_DELAY;
       const buf = this.posBuffer;
 
@@ -849,6 +905,13 @@ class Character {
       this.group.rotation.y = curAng + d * t;
     }
 
+    // Local player only: update the live trail-head extension so the trail
+    // visually meets the predicted body (closes the gap caused by the body
+    // running on client prediction while trail vertices come from the server).
+    if (this.predicted) {
+      this._updateTrailHead(this.group.position.x, this.group.position.z);
+    }
+
     // Invuln shield visible while invulnTimer > 0 (any character, not just
     // local player). Pulses subtly so it reads as "active effect" rather than
     // a static prop. Replaces the old player-only flicker.
@@ -868,6 +931,7 @@ class Character {
   _clearTrail() {
     this.trailVerts = [];
     if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
+    if (this.trailHeadMesh) { this.scene.remove(this.trailHeadMesh); this.trailHeadMesh.geometry.dispose(); this.trailHeadMesh = null; }
     this._trailGeomCapacity = 0;
     this._trailWrittenCount = 0;
     this._trailIndexCount = 0;
