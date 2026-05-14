@@ -20,6 +20,13 @@ telemetry.init();
 const CAMERA_HEIGHT = 34;
 const CAMERA_Z_OFFSET = 26;
 const TRAIL_WIDTH = 0.8;
+// How far behind real-time the renderer interpolates remote-character state.
+// ~6 server ticks at 30Hz: snapshot-buffer pairs straddle render-time so
+// motion stays smooth even when patches arrive bursty. Also used to delay
+// remote-character trail vertex application, so the trail tail shares the
+// same time domain as the rendered body (otherwise trails appear to lead
+// the bot they belong to).
+const INTERP_DELAY_MS = 200;
 // Trail is a 3D extruded ribbon: bottom edge at TRAIL_Y, top edge above the
 // peak wave amplitude (waves cap ~0.55) so the player's path stays visible
 // above the wavy arena surface.
@@ -460,6 +467,14 @@ class Character {
     // server-authoritative at 30Hz + network latency. Local player only;
     // does NOT mutate trailVerts (kept as server truth).
     this.trailHeadMesh = null;
+    // Pending trail vertices for REMOTE characters: queued with arrival time
+    // and drained into trailVerts only after INTERP_DELAY_MS has elapsed.
+    // Keeps the trail tail aligned with the interp-rendered body (otherwise
+    // trail vertices arrive in near-real-time while the body renders 200ms
+    // behind — bots would appear to walk INTO their own incoming trail).
+    // Local player skips this queue (immediate push; head mesh handles the
+    // gap to predicted body).
+    this.pendingTrailVerts = [];     // [{t, x, z}]
     // Online prediction hook: when set, syncVisuals reads from this object's
     // {posX, posZ, dirX, dirZ} instead of simChar. Used for the local player
     // in online mode to eliminate input-roundtrip lag.
@@ -755,6 +770,24 @@ class Character {
     }
     this.factionId = this.simChar.factionId;
 
+    // Drain delayed trail vertices for remote characters. Vertices that
+    // arrived more than INTERP_DELAY_MS ago are now safe to publish — they
+    // belong to the same server-time window as the interp-rendered body.
+    if (this.pendingTrailVerts.length > 0) {
+      const cutoff = performance.now() - INTERP_DELAY_MS;
+      let drained = 0;
+      while (drained < this.pendingTrailVerts.length &&
+             this.pendingTrailVerts[drained].t <= cutoff) {
+        const v = this.pendingTrailVerts[drained];
+        this.trailVerts.push(new THREE.Vector3(v.x, 0, v.z));
+        drained++;
+      }
+      if (drained > 0) {
+        this.pendingTrailVerts.splice(0, drained);
+        this._rebuildTrailMesh();
+      }
+    }
+
     let tgtX, tgtZ, tgtDirX, tgtDirZ;
     let snap = false;
 
@@ -814,8 +847,7 @@ class Character {
         this._lastSchemaPosZ = schemaZ;
       }
 
-      const INTERP_DELAY = 200; // ms behind real-time, ≈ 6 server ticks at 30Hz
-      const renderTime = now - INTERP_DELAY;
+      const renderTime = now - INTERP_DELAY_MS;
       const buf = this.posBuffer;
 
       if (buf.length === 0) {
@@ -930,6 +962,7 @@ class Character {
   // method clears the renderer mirror used to build the visible mesh.
   _clearTrail() {
     this.trailVerts = [];
+    this.pendingTrailVerts = [];
     if (this.trailMesh) { this.scene.remove(this.trailMesh); this.trailMesh.geometry.dispose(); this.trailMesh = null; }
     if (this.trailHeadMesh) { this.scene.remove(this.trailHeadMesh); this.trailHeadMesh.geometry.dispose(); this.trailHeadMesh = null; }
     this._trailGeomCapacity = 0;
@@ -1613,6 +1646,11 @@ class Game {
     };
 
     // Trail vertices: append to renderer character trail so the line is visible.
+    // For the LOCAL player, push immediately — predicted body runs ahead, and
+    // the trail-head extension bridges the gap to this latest vertex.
+    // For REMOTE characters, queue with a timestamp and drain in syncVisuals
+    // after INTERP_DELAY_MS has passed, so the trail tail shares the same
+    // time domain as the interp-rendered body.
     this.mp.onTrailVertex = (charId, x, z) => {
       if (!this._onlineGridReady) {
         this._onlineEventQueue.push({ type: "trail", charId, x, z });
@@ -1620,8 +1658,12 @@ class Game {
       }
       const r = this._findRendererCharBySimId(charId);
       if (!r) return;
-      r.trailVerts.push(new THREE.Vector3(x, 0, z));
-      r._rebuildTrailMesh();
+      if (r.predicted) {
+        r.trailVerts.push(new THREE.Vector3(x, 0, z));
+        r._rebuildTrailMesh();
+      } else {
+        r.pendingTrailVerts.push({ t: performance.now(), x, z });
+      }
     };
 
     this.mp.onYourCharId = (charId) => {
@@ -2131,6 +2173,10 @@ class Game {
     // when this advances (otherwise the server hasn't seen any new input
     // and our prediction is still consistent with what they'll compute).
     this._lastAckedSeq = 0;
+    // performance.now() at the most recent ack. Used to bound forward
+    // extrapolation when the server stalls: if no ack has arrived for >100ms,
+    // we freeze the predicted pos rather than letting it diverge.
+    this._lastAckTs = 0;
     // One-shot flag: when true, the visual lerp on the local player is
     // skipped for this frame and the mesh snaps directly to the predicted
     // pos (used for teleport events: respawn, restart, faction reassign).
@@ -2189,6 +2235,9 @@ class Game {
     const ackedSeq = sc._schemaChar?.lastAppliedInputSeq ?? 0;
 
     if (ackedSeq > this._lastAckedSeq) {
+      // Track ack arrival time so the forward-extrapolation below can stop
+      // diverging during prolonged server stalls.
+      this._lastAckTs = performance.now();
       // Snapshot pre-reconciliation pos so we can detect a large jump and
       // snap the visual rather than lerping (which would slide for 100+ms).
       const prevPosX = this.predicted.posX;
@@ -2240,12 +2289,21 @@ class Game {
 
     // Forward-extrapolate predicted by dt with the latest targetDir so the
     // player sees instant response between acks (and between input sends).
-    this._integrateInput(
-      this.predicted,
-      this.player.targetDir.x,
-      this.player.targetDir.z,
-      dt,
-    );
+    // Cap extrapolation when the ack is stale: if the server stalls for
+    // >100ms, continuing to extrapolate makes predicted diverge from the
+    // eventual server pos by 1+ world units, which then snaps back hard
+    // when the ack arrives. Better to hold position for a frame than to
+    // visibly teleport. Normal play has acks every 33ms so this cap is
+    // only hit during real server stalls.
+    const ackAge = this._lastAckTs > 0 ? performance.now() - this._lastAckTs : 0;
+    if (ackAge < 100) {
+      this._integrateInput(
+        this.predicted,
+        this.player.targetDir.x,
+        this.player.targetDir.z,
+        dt,
+      );
+    }
   }
 
   start(name) {
