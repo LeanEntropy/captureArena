@@ -1,17 +1,11 @@
 # Stage 1: build
 FROM node:20-alpine AS build
+# pnpm version is pinned via package.json `packageManager` field. corepack
+# respects that and avoids fetching a newer pnpm that requires Node >20.
 RUN corepack enable
 # Native build deps for better-sqlite3.
 RUN apk add --no-cache python3 make g++ wget
 WORKDIR /app
-
-# Skip Playwright's ~300MB Chromium download. The `playwright` package
-# is a root devDependency used only by tools/screenshot.mjs (dev-only) —
-# `--filter "template-server..."` SHOULD exclude it, but pnpm has been
-# inconsistent about this in v10. Setting this env var is belt-and-
-# suspenders: even if the package gets installed, the browser binary
-# download (which dominates install time) is skipped.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Copy package manifests for dependency install
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
