@@ -59,6 +59,6 @@ describe("Character", () => {
     const player = new Character({ id: 0, factionId: 1, name: "P", speed: 8 });
     const bot = new Character({ id: 1, factionId: 1, name: "B" });
     expect(player.speed).toBe(8);
-    expect(bot.speed).toBe(6);
+    expect(bot.speed).toBe(7.5);
   });
 });

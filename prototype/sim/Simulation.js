@@ -780,62 +780,55 @@ export class Simulation {
     //     the "everyone jumps together" jitter the user sees in regular
     //     online; production (no encirclement) doesn't have it.
     if (losers.size > 0 && !this.matchManager.frozen && char.isHuman) {
-      // Build the set of factions whose cell counts changed during this claim.
-      // The claimer always grew; every loser shrank. The connectivity sweep
-      // then checks whether any of the losers' remaining territory is now
-      // disconnected, capturing fragments without a resident player.
+      // Encirclement death: any disconnected region of an affected faction
+      // without a resident player flips to the claimer; trail-runners whose
+      // faction is now wiped die. Contour cache for claimer + losers was
+      // already invalidated above so this runs only when the human-claim
+      // gate fires, but the cache stays consistent for every claim.
       const affectedFactions = new Set(losers);
       affectedFactions.add(factionId);
 
-      // Encirclement death: any disconnected region of an affected faction
-      // without a resident player flips to the claimer; trail-runners whose
-      // faction is now wiped die.
-      {
-        // Snap each character's body position to its current grid index.
-        const N = GRID_SIZE;
-        for (const c of this.characters) {
-          if (!c.alive) { c.cellIndex = -1; continue; }
-          const { gx, gy } = this._worldToGrid(c.pos.x, c.pos.z);
-          c.cellIndex = (gx >= 0 && gx < N && gy >= 0 && gy < N) ? (gy * N + gx) : -1;
-        }
-        const result = enforceConnectivity({
-          grid,
-          gridSize: N,
-          numFactions: this.numFactions,
-          affectedFactions,
-          characters: this.characters,
-          claimerFactionId: factionId,
-          cellCounts,
-        });
-        if (result.capturedCells > 0) {
-          const seen = new Set(changedCells);
-          let foundInBbox = 0;
-          for (let gy = minGY; gy <= maxGY; gy++) {
-            for (let gx = minGX; gx <= maxGX; gx++) {
-              const idx = gy * N + gx;
-              if (grid[idx] === factionId && !seen.has(idx)) {
-                changedCells.push(idx);
-                seen.add(idx);
-                foundInBbox++;
-              }
-            }
-          }
-          // Fragments outside the bbox: full-grid pass only when needed.
-          if (foundInBbox < result.capturedCells) {
-            for (let i = 0, len = grid.length; i < len; i++) {
-              if (grid[i] === factionId && !seen.has(i)) {
-                changedCells.push(i);
-                seen.add(i);
-              }
+      // Snap each character's body position to its current grid index.
+      for (const c of this.characters) {
+        if (!c.alive) { c.cellIndex = -1; continue; }
+        const { gx, gy } = this._worldToGrid(c.pos.x, c.pos.z);
+        c.cellIndex = (gx >= 0 && gx < N && gy >= 0 && gy < N) ? (gy * N + gx) : -1;
+      }
+      const result = enforceConnectivity({
+        grid,
+        gridSize: N,
+        numFactions: this.numFactions,
+        affectedFactions,
+        characters: this.characters,
+        claimerFactionId: factionId,
+        cellCounts,
+      });
+      if (result.capturedCells > 0) {
+        const seen = new Set(changedCells);
+        let foundInBbox = 0;
+        for (let gy = minGY; gy <= maxGY; gy++) {
+          for (let gx = minGX; gx <= maxGX; gx++) {
+            const idx = gy * N + gx;
+            if (grid[idx] === factionId && !seen.has(idx)) {
+              changedCells.push(idx);
+              seen.add(idx);
+              foundInBbox++;
             }
           }
         }
-        // Apply the kill pass.
-        for (const v of result.killedCharacters) {
-          this._killCharacter(v, char); // credit the claimer
+        // Fragments outside the bbox: full-grid pass only when needed.
+        if (foundInBbox < result.capturedCells) {
+          for (let i = 0, len = grid.length; i < len; i++) {
+            if (grid[i] === factionId && !seen.has(i)) {
+              changedCells.push(i);
+              seen.add(i);
+            }
+          }
         }
-        // (Contour cache for claimer + losers was already invalidated above,
-        // before this encirclement block — runs for every claim.)
+      }
+      // Apply the kill pass.
+      for (const v of result.killedCharacters) {
+        this._killCharacter(v, char); // credit the claimer
       }
     }
 
@@ -999,16 +992,12 @@ export class Simulation {
     const _t3 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     this._checkCutoff();
     const _t4 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-    // NOTE: updateTerritoryPcts is called inside matchManager.update() at 1Hz
-    // (see MatchManager.update). Calling it here every tick was scanning the
-    // entire 1024×1024 grid 20 times per second — the dominant cost in the
-    // over-budget tick stalls. The 1Hz cadence is plenty for endangered/recovery
-    // checks and HUD readout; per-tick precision isn't needed.
-    const _t5 = _t4;
+    // Per-tick territoryPcts is intentionally NOT called here: matchManager
+    // refreshes it at 1Hz from incremental cellCounts. Calling it every tick
+    // used to scan the full 1024×1024 grid and dominated the tick budget.
 
     this._lastTickPhases =
       `match=${(_t1-_t0).toFixed(1)} chars=${(_t2-_t1).toFixed(1)} ` +
-      `trailKill=${(_t3-_t2).toFixed(1)} cutoff=${(_t4-_t3).toFixed(1)} ` +
-      `pct=${(_t5-_t4).toFixed(1)}`;
+      `trailKill=${(_t3-_t2).toFixed(1)} cutoff=${(_t4-_t3).toFixed(1)}`;
   }
 }

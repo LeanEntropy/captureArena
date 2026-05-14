@@ -1,6 +1,6 @@
 // In-memory map of human-readable 6-char codes → Colyseus roomIds.
-// Codes use a 32-char alphabet that omits visually confusing pairs:
-//   no 0/O, no 1/I/L. → ABCDEFGHJKLMNPQRSTUVWXYZ23456789
+// Codes use a 32-char alphabet that omits visually confusing chars:
+//   no 0, 1, I, O → ABCDEFGHJKLMNPQRSTUVWXYZ23456789
 // 32^6 = ~1B codes; collisions are negligible. The room caller still retries
 // register() up to 3 times if generateCode() happens to clash.
 

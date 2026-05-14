@@ -12,5 +12,8 @@ export default defineConfig({
     // Contour extraction over the 1024×1024 grid is slow; per-test sims that
     // exercise it can exceed the default 5s. Bump to 30s for headroom.
     testTimeout: 30000,
+    // Multiple room tests boot @colyseus/testing on the same port and would
+    // EADDRINUSE if run in parallel. Cheap to serialize at this test count.
+    fileParallelism: false,
   },
 });

@@ -61,7 +61,7 @@ Feel free to contact me for any questions: [@civaxo](https://x.com/civaxo) on Tw
 - Server: Node 20 + Express, TypeScript via `tsx` 
 - Simulation: Pure JS, shared between client (solo) and server (online) 
 - Build / monorepo: pnpm v10 workspaces, no bundler 
-- Tests: Vitest, Playwright (smoke) 
+- Tests: Vitest 
 - Analytics: better-sqlite3 (WAL) + db-ip GeoLite (country-level) + Chart.js dashboard 
 - Container: Multi-stage Dockerfile, `node:20-alpine` 
 - Hosting (canonical): Railway (one container, persistent volume for stats DB) 
