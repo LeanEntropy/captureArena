@@ -1337,6 +1337,8 @@ class Game {
     // _cameraZoomTarget is what the user has dialled in via scroll wheel.
     this._cameraZoom = 1.0;
     this._cameraZoomTarget = 1.0;
+    this._mobileArenaView = false;
+    this._mobileArenaDistance = 0;
     // Respawn cinematic state. Non-null while the ~2s cinematic is playing.
     // Fields: { startTime, savedZoom, oldCamX, oldCamZ, spawnX, spawnZ }
     this._respawnCinematic = null;
@@ -1388,24 +1390,6 @@ class Game {
       this.mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       this.hasMouseInput = true;
     });
-    this.renderer.domElement.addEventListener("touchmove", e => {
-      e.preventDefault();
-      if (e.touches.length) {
-        const t = e.touches[0], rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouseNDC.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNDC.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
-        this.hasMouseInput = true;
-      }
-    }, { passive: false });
-    this.renderer.domElement.addEventListener("touchstart", e => {
-      e.preventDefault();
-      if (e.touches.length) {
-        const t = e.touches[0], rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouseNDC.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNDC.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
-        this.hasMouseInput = true;
-      }
-    }, { passive: false });
     window.addEventListener("keydown", e => {
       this.keysDown.add(e.key.toLowerCase());
       if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
@@ -1422,14 +1406,11 @@ class Game {
       }
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
-    const resizeRenderer = () => {
-      this.camera.aspect = innerWidth / innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(innerWidth, innerHeight);
-    };
+    const resizeRenderer = () => this._resizeForViewport();
     window.addEventListener("resize", resizeRenderer);
     window.addEventListener("orientationchange", resizeRenderer);
     window.visualViewport?.addEventListener("resize", resizeRenderer);
+    this._resizeForViewport();
     // Mouse-wheel zoom: scroll up → zoom in, scroll down → zoom out.
     // Clamped to [0.5, 2.5] so the camera can never clip the ground or fly
     // too far away. The factor is smoothed each frame via lerp (see tick()).
@@ -1580,6 +1561,57 @@ class Game {
     zone.addEventListener("pointercancel", release);
     zone.addEventListener("lostpointercapture", release);
     zone.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
+
+  _resizeForViewport() {
+    const viewport = window.visualViewport;
+    const viewportWidth = Math.round(viewport?.width || innerWidth);
+    const viewportHeight = Math.round(viewport?.height || innerHeight);
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    const mobile = coarse || Math.min(viewportWidth, viewportHeight) <= 600;
+    const portrait = mobile && viewportHeight > viewportWidth;
+    const canvas = this.renderer.domElement;
+
+    if (!mobile) {
+      this._mobileArenaView = false;
+      canvas.style.position = "";
+      canvas.style.left = "";
+      canvas.style.top = "";
+      this.camera.aspect = viewportWidth / viewportHeight;
+      this.renderer.setSize(viewportWidth, viewportHeight);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+
+    // Keep WebGL out of InZone's header, controls, joystick, and swipe zone.
+    // Portrait reserves vertical bands; landscape also reserves a right rail
+    // for the thumb control so the arena never sits underneath it.
+    const topReserved = portrait ? 76 : 54;
+    const bottomReserved = portrait ? 240 : 164;
+    const rightReserved = portrait ? 0 : 140;
+    const usableWidth = Math.max(240, viewportWidth - rightReserved);
+    const usableHeight = Math.max(160, viewportHeight - topReserved - bottomReserved);
+    canvas.style.position = "fixed";
+    canvas.style.left = `${Math.round(viewport?.offsetLeft || 0)}px`;
+    canvas.style.top = `${Math.round((viewport?.offsetTop || 0) + topReserved)}px`;
+    this.renderer.setSize(usableWidth, usableHeight);
+    this.camera.aspect = usableWidth / usableHeight;
+    this.camera.updateProjectionMatrix();
+
+    const verticalHalfFov = THREE.MathUtils.degToRad(this.camera.fov * 0.5);
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * this.camera.aspect);
+    const limitingHalfFov = Math.min(verticalHalfFov, horizontalHalfFov);
+    this._mobileArenaDistance = (ARENA_RADIUS + 3) / Math.tan(limitingHalfFov) * 1.08;
+    this._mobileArenaView = true;
+    this._applyMobileArenaCamera();
+  }
+
+  _applyMobileArenaCamera() {
+    if (!this._mobileArenaView) return;
+    const baseLength = Math.hypot(CAMERA_HEIGHT, CAMERA_Z_OFFSET);
+    const scale = this._mobileArenaDistance / baseLength;
+    this.camera.position.set(0, CAMERA_HEIGHT * scale, CAMERA_Z_OFFSET * scale);
+    this.camera.lookAt(0, TERRITORY_Y, 0);
   }
 
   async startOnline(name) {
@@ -2728,6 +2760,10 @@ class Game {
       this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
       this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
     }
+
+    // Mobile uses the unobstructed viewport region and frames the arena as a
+    // whole. Desktop retains the existing player-follow camera above.
+    this._applyMobileArenaCamera();
 
     if (this.shadowLight) {
       this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);

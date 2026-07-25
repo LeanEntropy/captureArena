@@ -18,6 +18,7 @@ const runtimeFiles = [
   "portals.js",
   "music/bgm.mp3",
   "vendor/three.module.js",
+  "vendor/three.core.js",
   "sim/BotAI.js",
   "sim/Character.js",
   "sim/Simulation.js",
