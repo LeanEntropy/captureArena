@@ -1,5 +1,4 @@
 import { FACTION_COLORS, FACTION_COUNT } from "./sim/faction.js";
-import * as telemetry from "./telemetry.js";
 
 // ===================== UI MANAGER =====================
 // Manages HUD elements: timer, faction ranking, player stats, minimap,
@@ -426,39 +425,15 @@ export class UIManager {
   _showEndScreen() {
     if (!this.endScreenEl) return;
 
-    // First call: render the static layout (banner + standings + buttons),
-    // and fire a telemetry game_end event with the player's final stats.
+    // First call: render the static layout (banner + standings + buttons).
     // Subsequent calls: only refresh the dynamic countdown text.
     if (!this._endShown) {
       this._endShown = true;
       this.endScreenEl.style.display = "flex";
       this._renderEndScreenStatic();
       this._wireEndScreenButtons();
-      this._fireGameEndTelemetry();
     }
     this._updateEndScreenCountdown();
-  }
-
-  _fireGameEndTelemetry() {
-    try {
-      const stats = { mode: (typeof window !== "undefined" && window._game?.mode) || null };
-      if (this.player && this.scoreTracker?.getScore) {
-        const s = this.scoreTracker.getScore(this.player) || {};
-        if (typeof s.kills === "number") stats.kills = s.kills;
-        if (typeof s.deaths === "number") stats.deaths = s.deaths;
-        if (typeof s.total === "number") stats.score = Math.floor(s.total);
-        // Territory pct of the player's faction at match end.
-        const faction = this.factionManager
-          ?.getAllFactions?.()
-          ?.find((f) => f.id === this.player.factionId);
-        if (faction && typeof faction.territoryPct === "number") {
-          stats.capturePct = Number(faction.territoryPct.toFixed(1));
-        }
-      }
-      telemetry.gameEnd(stats);
-    } catch {
-      // Telemetry must never break the end screen.
-    }
   }
 
   _renderEndScreenStatic() {
@@ -521,7 +496,14 @@ export class UIManager {
   _wireEndScreenButtons() {
     const playAgain = document.getElementById("end-play-again");
     if (playAgain) {
-      playAgain.addEventListener("click", () => location.reload());
+      playAgain.addEventListener("click", () => {
+        // Rebuild the whole local simulation on reload, but skip the welcome
+        // screen so Play Again immediately starts a fresh Solo round.
+        try {
+          sessionStorage.setItem("soloPlayAgainName", window._game?.playerName || "Player");
+        } catch {}
+        location.reload();
+      });
     }
     const lbBtn = document.getElementById("end-leaderboard-btn");
     const modal = document.getElementById("end-leaderboard-modal");

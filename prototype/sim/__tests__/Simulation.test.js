@@ -60,6 +60,23 @@ describe("Simulation", () => {
     expect(Math.abs(c.pos.z)).toBeLessThan(0.05);
   });
 
+  it("turning follows the same arc across uneven frame steps", () => {
+    const a = sim.characters[0];
+    const b = sim.characters[1];
+    for (const c of [a, b]) {
+      c.setPos(0, 0);
+      c.dir = { x: 0, z: 1 };
+      c.targetDir = { x: 1, z: 0 };
+    }
+    sim._stepCharacter(a, 0.1);
+    sim._stepCharacter(b, 0.04);
+    sim._stepCharacter(b, 0.06);
+    expect(a.pos.x).toBeCloseTo(b.pos.x, 8);
+    expect(a.pos.z).toBeCloseTo(b.pos.z, 8);
+    expect(a.dir.x).toBeCloseTo(b.dir.x, 8);
+    expect(a.dir.z).toBeCloseTo(b.dir.z, 8);
+  });
+
   it("invuln timer decreases over time", () => {
     const c = sim.characters[0];
     c.invulnTimer = 1.0;

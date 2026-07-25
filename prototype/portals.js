@@ -15,7 +15,7 @@
 // Read the full portal guide: https://vibej.am/2026#portals
 // ─────────────────────────────────────────────────────────────────────
 
-import * as THREE from "three";
+import * as THREE from "./vendor/three.module.js";
 
 const qs = new URLSearchParams(window.location.search);
 export const arrivedViaPortal = qs.get('portal') === 'true' || qs.get('portal') === '1';

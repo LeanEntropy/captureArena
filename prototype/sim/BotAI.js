@@ -44,6 +44,22 @@ export class BotAI {
       }
     }
 
+    // Abandon a route that is no longer making progress. This is deliberately
+    // slow to trigger so normal wide turns remain fair; it only breaks the
+    // obvious wall/waypoint circles that can otherwise last indefinitely.
+    if (wp0) {
+      const waypointDist = Math.hypot(wp0.x - bot.pos.x, wp0.z - bot.pos.z);
+      if (waypointDist < bot.botLastWaypointDist - 0.02) bot.botStallTicks = 0;
+      else bot.botStallTicks = (bot.botStallTicks || 0) + 1;
+      bot.botLastWaypointDist = waypointDist;
+      if (bot.botStallTicks > 120) {
+        bot.botWaypoints = [];
+        bot.botLastWaypointDist = Infinity;
+        bot.botStallTicks = 0;
+        return BotAI.planTargetDir(bot, sim);
+      }
+    }
+
     // Walk the waypoint queue. Pop any waypoints we are already standing on,
     // and steer toward the first remaining one.
     while (bot.botWaypoints.length > 0) {
@@ -53,6 +69,8 @@ export class BotAI {
       const d = Math.hypot(dx, dz);
       if (d < 1.2) {
         bot.botWaypoints.shift();
+        bot.botLastWaypointDist = Infinity;
+        bot.botStallTicks = 0;
         continue;
       }
       return { x: dx / d, z: dz / d };
@@ -137,10 +155,18 @@ export class BotAI {
     for (let i = 0; i <= arcSteps; i++) {
       const t = i / arcSteps;
       const angle = startArcAngle + (endArcAngle - startArcAngle) * t;
-      const pushOut = 2 + loopRadius * Math.sin(t * Math.PI);
-      const r = pushOut;
-      let wx = cx + Math.sin(angle) * r;
-      let wz = cz + Math.cos(angle) * r;
+      // Follow the actual territory edge, then push outward. The previous
+      // centroid-radius points could land back inside irregular territory and
+      // produce circles without a claim. Basing each point on the contour
+      // makes the route a clear leave-edge / expand / re-enter loop.
+      const ray = { x: cx + Math.sin(angle) * 50, z: cz + Math.cos(angle) * 50 };
+      const edge = boundaryV[closestIdx(boundaryV, ray)];
+      const edgeDx = edge.x - cx;
+      const edgeDz = edge.z - cz;
+      const edgeLen = Math.hypot(edgeDx, edgeDz) || 1;
+      const pushOut = 1.5 + loopRadius * Math.sin(t * Math.PI);
+      let wx = edge.x + (edgeDx / edgeLen) * pushOut;
+      let wz = edge.z + (edgeDz / edgeLen) * pushOut;
       const distFromOrigin = Math.sqrt(wx * wx + wz * wz);
       if (distFromOrigin > ARENA_RADIUS - 1) {
         wx *= (ARENA_RADIUS - 1) / distFromOrigin;
