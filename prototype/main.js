@@ -1344,6 +1344,8 @@ class Game {
     // _cameraZoomTarget is what the user has dialled in via scroll wheel.
     this._cameraZoom = 1.0;
     this._cameraZoomTarget = 1.0;
+    this._mobileArenaView = false;
+    this._mobileArenaDistance = 0;
     // Respawn cinematic state. Non-null while the ~2s cinematic is playing.
     // Fields: { startTime, savedZoom, oldCamX, oldCamZ, spawnX, spawnZ }
     this._respawnCinematic = null;
@@ -1384,6 +1386,7 @@ class Game {
     this.mouseNDC = new THREE.Vector2();
     this.hasMouseInput = false;
     this.keysDown = new Set();
+    this.touchSteering = { active: false, pointerId: null, x: 0, z: 0 };
     this.raycaster = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -1393,24 +1396,6 @@ class Game {
       this.mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       this.hasMouseInput = true;
     });
-    this.renderer.domElement.addEventListener("touchmove", e => {
-      e.preventDefault();
-      if (e.touches.length) {
-        const t = e.touches[0], rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouseNDC.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNDC.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
-        this.hasMouseInput = true;
-      }
-    }, { passive: false });
-    this.renderer.domElement.addEventListener("touchstart", e => {
-      e.preventDefault();
-      if (e.touches.length) {
-        const t = e.touches[0], rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouseNDC.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNDC.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
-        this.hasMouseInput = true;
-      }
-    }, { passive: false });
     window.addEventListener("keydown", e => {
       this.keysDown.add(e.key.toLowerCase());
       if (e.key.toLowerCase() === "c") this._toggleGridOverlay();
@@ -1427,11 +1412,11 @@ class Game {
       }
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
-    window.addEventListener("resize", () => {
-      this.camera.aspect = innerWidth / innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(innerWidth, innerHeight);
-    });
+    const resizeRenderer = () => this._resizeForViewport();
+    window.addEventListener("resize", resizeRenderer);
+    window.addEventListener("orientationchange", resizeRenderer);
+    window.visualViewport?.addEventListener("resize", resizeRenderer);
+    this._resizeForViewport();
     // Mouse-wheel zoom: scroll up → zoom in, scroll down → zoom out.
     // Clamped to [0.5, 2.5] so the camera can never clip the ground or fly
     // too far away. The factor is smoothed each frame via lerp (see tick()).
@@ -1451,6 +1436,7 @@ class Game {
     this.hudTR = document.getElementById("hud-tr");
     this.deathScreen = document.getElementById("death-screen");
     this.deathTimer = document.getElementById("death-timer");
+    this._initTouchSteering();
 
     // ===== Theme F overlays =====
     this.fx = new JenFXManager(this.scene);
@@ -1518,7 +1504,96 @@ class Game {
 
   startSolo(name) {
     this.mode = "solo";
+    document.getElementById("touch-steering")?.classList.remove("hidden");
     this.start(name);  // existing local sim flow
+  }
+
+  _initTouchSteering() {
+    const zone = document.getElementById("touch-steering");
+    const knob = document.getElementById("touch-steering-knob");
+    if (!zone || !knob) return;
+    const update = (event) => {
+      if (!this.touchSteering.active || event.pointerId !== this.touchSteering.pointerId) return;
+      event.preventDefault();
+      const rect = zone.getBoundingClientRect();
+      const radius = Math.max(1, Math.min(rect.width, rect.height) * 0.36);
+      let dx = event.clientX - (rect.left + rect.width / 2);
+      let dy = event.clientY - (rect.top + rect.height / 2);
+      const distance = Math.hypot(dx, dy);
+      if (distance > radius) { dx *= radius / distance; dy *= radius / distance; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      const magnitude = Math.hypot(dx, dy);
+      if (magnitude > radius * 0.12) {
+        this.touchSteering.x = dx / magnitude;
+        this.touchSteering.z = dy / magnitude;
+      }
+    };
+    const release = (event) => {
+      if (event.pointerId !== this.touchSteering.pointerId) return;
+      event.preventDefault();
+      this.touchSteering.active = false;
+      this.touchSteering.pointerId = null;
+      this.touchSteering.x = 0;
+      this.touchSteering.z = 0;
+      knob.style.transform = "translate(0, 0)";
+      if (this.player?.simChar) {
+        this.player.targetDir.set(this.player.simChar.dir.x, 0, this.player.simChar.dir.z);
+        if (this.mode === "solo") this.sim.setTargetDir(this.player.simChar.id, this.player.simChar.dir.x, this.player.simChar.dir.z);
+      }
+    };
+    zone.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") return;
+      event.preventDefault();
+      this.touchSteering.active = true;
+      this.touchSteering.pointerId = event.pointerId;
+      zone.setPointerCapture?.(event.pointerId);
+      update(event);
+    });
+    zone.addEventListener("pointermove", update);
+    zone.addEventListener("pointerup", release);
+    zone.addEventListener("pointercancel", release);
+    zone.addEventListener("lostpointercapture", release);
+    zone.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
+
+  _resizeForViewport() {
+    const viewport = window.visualViewport;
+    const viewportWidth = Math.round(viewport?.width || innerWidth);
+    const viewportHeight = Math.round(viewport?.height || innerHeight);
+    const mobile = window.matchMedia("(pointer: coarse)").matches || Math.min(viewportWidth, viewportHeight) <= 600;
+    const portrait = mobile && viewportHeight > viewportWidth;
+    const canvas = this.renderer.domElement;
+    if (!mobile) {
+      this._mobileArenaView = false;
+      canvas.style.position = canvas.style.left = canvas.style.top = "";
+      this.camera.aspect = viewportWidth / viewportHeight;
+      this.renderer.setSize(viewportWidth, viewportHeight);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    const topReserved = portrait ? 76 : 54;
+    const bottomReserved = portrait ? 240 : 164;
+    const rightReserved = portrait ? 0 : 140;
+    const usableWidth = Math.max(240, viewportWidth - rightReserved);
+    const usableHeight = Math.max(160, viewportHeight - topReserved - bottomReserved);
+    canvas.style.position = "fixed";
+    canvas.style.left = `${Math.round(viewport?.offsetLeft || 0)}px`;
+    canvas.style.top = `${Math.round((viewport?.offsetTop || 0) + topReserved)}px`;
+    this.renderer.setSize(usableWidth, usableHeight);
+    this.camera.aspect = usableWidth / usableHeight;
+    this.camera.updateProjectionMatrix();
+    const verticalHalfFov = THREE.MathUtils.degToRad(this.camera.fov * 0.5);
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * this.camera.aspect);
+    this._mobileArenaDistance = (ARENA_RADIUS + 3) / Math.tan(Math.min(verticalHalfFov, horizontalHalfFov)) * 1.08;
+    this._mobileArenaView = true;
+    this._applyMobileArenaCamera();
+  }
+
+  _applyMobileArenaCamera() {
+    if (!this._mobileArenaView) return;
+    const scale = this._mobileArenaDistance / Math.hypot(CAMERA_HEIGHT, CAMERA_Z_OFFSET);
+    this.camera.position.set(0, CAMERA_HEIGHT * scale, CAMERA_Z_OFFSET * scale);
+    this.camera.lookAt(0, TERRITORY_Y, 0);
   }
 
   async startOnline(name) {
@@ -2449,6 +2524,9 @@ class Game {
           // is held can't slip in on a single-frame key release and yank the
           // server-side targetDir sideways (causes a perpendicular jolt mid-run).
           this.hasMouseInput = false;
+        } else if (this.touchSteering.active) {
+          this.player.targetDir.set(this.touchSteering.x, 0, this.touchSteering.z);
+          this.hasMouseInput = false;
         } else if (this.hasMouseInput) {
           this.hasMouseInput = false;
           this.raycaster.setFromCamera(this.mouseNDC, this.camera);
@@ -2659,6 +2737,8 @@ class Game {
       this.camera.position.set(this.camCurrent.x, CAMERA_HEIGHT * zoom, this.camCurrent.z + CAMERA_Z_OFFSET * zoom);
       this.camera.lookAt(this.camCurrent.x, TERRITORY_Y, this.camCurrent.z);
     }
+
+    this._applyMobileArenaCamera();
 
     if (this.shadowLight) {
       this.shadowLight.position.set(this.camCurrent.x + 5, 15, this.camCurrent.z + 5);
