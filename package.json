@@ -6,6 +6,7 @@
   "scripts": {
     "dev:server": "pnpm --filter template-server dev",
     "build": "pnpm -r build",
+    "build:inzone": "node scripts/build-inzone.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

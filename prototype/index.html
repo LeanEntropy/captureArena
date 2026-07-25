@@ -7,7 +7,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Lilita+One&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #f0f0f0; font-family: 'Segoe UI', system-ui, sans-serif; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #f0f0f0; font-family: 'Segoe UI', system-ui, sans-serif; overscroll-behavior: none; }
+    canvas { touch-action: none; }
     canvas#game-canvas { display: block; }
     #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
     /* Theme F countdown — same wooden-stamp visual as faction banners (yellow bg, dark text) */
@@ -76,6 +77,7 @@
       padding: 4px 12px 8px; border-top: 1px solid rgba(0,0,0,0.15); flex-shrink: 0;
     }
     #hud-bottom { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: #333; font-size: 14px; background: rgba(255,255,255,0.8); border-radius: 8px; padding: 6px 16px; white-space: nowrap; }
+    #touch-steering { display: none; }
     #minimap-container { position: absolute; bottom: 70px; left: 16px; border: 2px solid rgba(255,255,255,0.6); border-radius: 50%; overflow: hidden; background: transparent; }
     #minimap { display: block; width: 180px; height: 180px; image-rendering: pixelated; border-radius: 50%; }
     #return-to-menu {
@@ -506,6 +508,33 @@
 
     /* ============ Mobile: collapsible HUD panels ============ */
     @media (max-width: 768px), (pointer: coarse) {
+      html, body { touch-action: none; -webkit-user-select: none; user-select: none; }
+      input, button { -webkit-user-select: none; user-select: none; }
+      button { min-height: 44px; }
+
+      #touch-steering {
+        position: fixed; right: max(18px, env(safe-area-inset-right));
+        bottom: max(22px, env(safe-area-inset-bottom));
+        width: 124px; height: 124px; border-radius: 50%;
+        display: block; pointer-events: auto; touch-action: none; z-index: 14;
+        background: rgba(15,20,26,0.28); border: 2px solid rgba(255,255,255,0.48);
+        box-shadow: inset 0 0 22px rgba(0,0,0,0.25);
+        -webkit-tap-highlight-color: transparent;
+      }
+      #touch-steering.hidden { display: none; }
+      #touch-steering-knob {
+        position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+        margin: -26px 0 0 -26px; border-radius: 50%; pointer-events: none;
+        background: rgba(255,225,64,0.9); border: 3px solid rgba(26,15,8,0.85);
+        box-shadow: 0 3px 8px rgba(0,0,0,0.35); transform: translate(0, 0);
+      }
+      #minimap-container { bottom: 76px; }
+      #hud-bottom { bottom: max(12px, env(safe-area-inset-bottom)); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+      #return-to-menu { min-height: 44px; }
+      #match-end-screen .end-content { min-width: 0; width: calc(100% - 28px); max-height: calc(100% - 28px); overflow-y: auto; padding: 24px 18px; }
+      #name-input { width: min(280px, calc(100vw - 32px)); min-height: 48px; font-size: 16px; }
+      #solo-btn, #online-btn { min-width: 120px; min-height: 48px; padding: 10px 22px; }
+
       /* Hide panels when collapsed */
       #hud-tr.collapsed,
       #player-leaderboard.collapsed { display: none !important; }
@@ -538,9 +567,22 @@
       .hud-collapse-tab[data-target="player-leaderboard"] { top: 110px; }
     }
 
+    @media (max-height: 500px) and (pointer: coarse) {
+      #touch-steering { width: 104px; height: 104px; }
+      #touch-steering-knob { width: 44px; height: 44px; margin: -22px 0 0 -22px; }
+      #ts-title { font-size: clamp(38px, 10vw, 64px); }
+      #ts-sub { margin-bottom: 10px; }
+      #ts-button-row { margin-top: 10px; }
+      #ts-private-row, #ts-music-row { margin-top: 8px; }
+      #ts-byline { margin-top: 10px; }
+    }
+
     /* On desktop: hide the tab buttons entirely */
     @media (min-width: 769px) and (pointer: fine) {
       .hud-collapse-tab { display: none !important; }
+    }
+    @media (pointer: fine) {
+      #touch-steering { display: none !important; }
     }
 
     /* ============ Private room modal ============ */
@@ -586,33 +628,29 @@
     #wo-share code { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; }
     #wo-copy { pointer-events: auto; margin-left: 8px; padding: 4px 10px; background: #ffcf2a; color: #1a1f2b; border: none; border-radius: 3px; font-weight: 700; cursor: pointer; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "colyseus.js": "https://esm.sh/colyseus.js@0.16.6"
-    }
-  }
-  </script>
-  <!-- Vibe Jam 2026 widget — REQUIRED for contest entrant tracking -->
-  <script async src="https://vibej.am/2026/widget.js"></script>
+  <style>
+    #startup-status { position:fixed; right:10px; bottom:10px; z-index:10000; padding:5px 8px; border-radius:4px; background:#222; color:#ffcf2a; font:700 11px ui-monospace,monospace; }
+    #startup-status.ready { color:#7dff9b; }
+    #fatal-error { display:none; position:fixed; inset:16px; z-index:20000; overflow:auto; padding:20px; border:2px solid #ff5b5b; border-radius:8px; background:rgba(20,0,0,.96); color:#fff; white-space:pre-wrap; font:14px/1.45 ui-monospace,monospace; }
+    #fatal-error.visible { display:block; }
+  </style>
 
   <!--
     Remote-server URL used by the static client when this file is served from
-    a host that is NOT itself a Colyseus + /track server (e.g. the canonical
+    a host that is NOT itself a Colyseus server (e.g. the canonical
     site is on Railway, but a fork hosted on itch.io / GitHub Pages / a CDN
     needs to know where to point its WebSocket and telemetry POSTs).
 
     If you fork this game and host the static files elsewhere, change this
     to your own Colyseus URL. Origin only — no path. If left at the default,
     forks will phone home to the canonical Land Capture server. Multiplayer
-    clients use this with a wss:// prefix; telemetry uses it with a /track
-    suffix.
+    clients use this with a wss:// prefix.
   -->
   <meta name="game-remote-origin" content="https://landcapture.up.railway.app">
 </head>
 <body>
+  <div id="startup-status" role="status">LOADING</div>
+  <div id="fatal-error" role="alert"></div>
   <div id="ui">
     <div id="hud-tl"></div>
     <div id="hud-tr"></div>
@@ -630,6 +668,9 @@
       </label>
     </div>
     <button id="return-to-menu">Main Menu</button>
+    <div id="touch-steering" class="hidden" aria-label="Touch steering control">
+      <div id="touch-steering-knob"></div>
+    </div>
     <!-- Mobile collapse tabs — shown only on mobile via media query -->
     <button class="hud-collapse-tab" data-target="hud-tr" title="Toggle factions">&#x2691;</button>
     <button class="hud-collapse-tab" data-target="player-leaderboard" title="Toggle leaderboard">&#x1F3C6;</button>
@@ -749,7 +790,21 @@
       </div>
     </div>
   </div>
-  <script src="telemetry.js" type="module"></script>
-  <script type="module" src="main.js"></script>
+  <script>
+    (() => {
+      const panel = document.getElementById("fatal-error");
+      const status = document.getElementById("startup-status");
+      const showFatal = (reason) => {
+        const value = reason?.reason ?? reason?.error ?? reason;
+        const message = value?.stack || value?.message || String(value || "Unknown startup error");
+        status.textContent = "FAILED";
+        panel.textContent = `The game could not start.\n\n${message}`;
+        panel.classList.add("visible");
+      };
+      window.addEventListener("error", showFatal);
+      window.addEventListener("unhandledrejection", showFatal);
+      import("./main.js").catch(showFatal);
+    })();
+  </script>
 </body>
 </html>
