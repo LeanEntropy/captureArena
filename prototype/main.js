@@ -1,7 +1,4 @@
-import * as THREE from "three";
-
-import * as telemetry from "./telemetry.js";
-import { MultiplayerClient } from "./multiplayer.js";
+import * as THREE from "./vendor/three.module.js";
 import { FACTION_COUNT, FACTION_COLORS, FACTION_NAMES } from "./sim/faction.js";
 import { Simulation } from "./sim/Simulation.js";
 import { UIManager } from "./ui.js";
@@ -11,10 +8,6 @@ import {
   BOT_NAMES,
 } from "./sim/constants.js";
 import { initVibeJamPortals, animateVibeJamPortals, arrivedViaPortal } from "./portals.js";
-
-// Self-hosted analytics — fires the initial pageview + (if applicable) a
-// portal_arrival event. Safe to call repeatedly; only the first call wins.
-telemetry.init();
 
 // Renderer-only tuning (client-side; not part of shared simulation)
 const CAMERA_HEIGHT = 34;
@@ -1379,11 +1372,13 @@ class Game {
     // we can fire visual hooks when sim respawns or kills a character. Allocated
     // once here, then clear()/refilled per tick — same pattern as _labelTmpVec3.
     this._wasAlive = new Map();
+    this._claimCellCounts = new Map();
 
     // Input
     this.mouseNDC = new THREE.Vector2();
     this.hasMouseInput = false;
     this.keysDown = new Set();
+    this.touchSteering = { active: false, pointerId: null, x: 0, z: 0 };
     this.raycaster = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -1427,11 +1422,14 @@ class Game {
       }
     });
     window.addEventListener("keyup", e => this.keysDown.delete(e.key.toLowerCase()));
-    window.addEventListener("resize", () => {
+    const resizeRenderer = () => {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
-    });
+    };
+    window.addEventListener("resize", resizeRenderer);
+    window.addEventListener("orientationchange", resizeRenderer);
+    window.visualViewport?.addEventListener("resize", resizeRenderer);
     // Mouse-wheel zoom: scroll up → zoom in, scroll down → zoom out.
     // Clamped to [0.5, 2.5] so the camera can never clip the ground or fly
     // too far away. The factor is smoothed each frame via lerp (see tick()).
@@ -1451,6 +1449,7 @@ class Game {
     this.hudTR = document.getElementById("hud-tr");
     this.deathScreen = document.getElementById("death-screen");
     this.deathTimer = document.getElementById("death-timer");
+    this._initTouchSteering();
 
     // ===== Theme F overlays =====
     this.fx = new JenFXManager(this.scene);
@@ -1462,6 +1461,9 @@ class Game {
     this._winFXFired = false;
 
     // ===== Sim event hooks: bridge authoritative sim events to renderer state =====
+    this.sim.onClaimResult = (charId, _factionId, changedCells) => {
+      this._claimCellCounts.set(charId, Math.floor((changedCells?.length || 0) / 2));
+    };
     this.sim.onClaim = (charId, trailPoints, _factionId) => {
       this.territoryDirty = true;
       const simChar = this.sim.characters[charId];
@@ -1474,8 +1476,10 @@ class Game {
       if (r === this.player && this.factionManager) {
         const faction = this.factionManager.getAllFactions().find(f => f.id === simChar.factionId);
         const fname = faction ? faction.name : `F${simChar.factionId}`;
-        this.hud.push(`Claimed for ${fname}`);
+        const cells = this._claimCellCounts.get(charId) || 0;
+        this.hud.push(cells > 0 ? `Captured ${cells} cells for ${fname}` : `Captured territory for ${fname}`);
       }
+      this._claimCellCounts.delete(charId);
       dlog("CLAIM", `${r ? r.name : "?"}: claimed (sim)`, { charId });
     };
     this.sim.onHeal = (changedCells) => {
@@ -1505,7 +1509,7 @@ class Game {
         if (victimR === this.player) {
           this.killedBy = killerR ? killerR.name : "";
           this.deathScreen.classList.add("visible");
-          this.hud.push(killerR ? `Killed by ${killerR.name}` : `Cut off`);
+          this.hud.push(killerR ? `Eliminated by ${killerR.name} — respawning` : `Trail cut — respawning`);
         } else if (killerR === this.player) {
           this.hud.push(`You killed ${victimR.name}`);
         }
@@ -1518,13 +1522,71 @@ class Game {
 
   startSolo(name) {
     this.mode = "solo";
+    document.getElementById("touch-steering")?.classList.remove("hidden");
     this.start(name);  // existing local sim flow
+  }
+
+  _initTouchSteering() {
+    const zone = document.getElementById("touch-steering");
+    const knob = document.getElementById("touch-steering-knob");
+    if (!zone || !knob) return;
+
+    const update = (event) => {
+      if (!this.touchSteering.active || event.pointerId !== this.touchSteering.pointerId) return;
+      event.preventDefault();
+      const rect = zone.getBoundingClientRect();
+      const radius = Math.max(1, Math.min(rect.width, rect.height) * 0.36);
+      let dx = event.clientX - (rect.left + rect.width / 2);
+      let dy = event.clientY - (rect.top + rect.height / 2);
+      const distance = Math.hypot(dx, dy);
+      if (distance > radius) {
+        dx *= radius / distance;
+        dy *= radius / distance;
+      }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      const magnitude = Math.hypot(dx, dy);
+      if (magnitude > radius * 0.12) {
+        this.touchSteering.x = dx / magnitude;
+        this.touchSteering.z = dy / magnitude;
+      }
+    };
+    const release = (event) => {
+      if (event.pointerId !== this.touchSteering.pointerId) return;
+      event.preventDefault();
+      this.touchSteering.active = false;
+      this.touchSteering.pointerId = null;
+      this.touchSteering.x = 0;
+      this.touchSteering.z = 0;
+      knob.style.transform = "translate(0, 0)";
+      // Characters always move by design. Releasing the stick stops steering
+      // by holding the current heading rather than preserving the last drag.
+      if (this.player?.simChar) {
+        this.player.targetDir.set(this.player.simChar.dir.x, 0, this.player.simChar.dir.z);
+        if (this.mode === "solo") {
+          this.sim.setTargetDir(this.player.simChar.id, this.player.simChar.dir.x, this.player.simChar.dir.z);
+        }
+      }
+    };
+    zone.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") return;
+      event.preventDefault();
+      this.touchSteering.active = true;
+      this.touchSteering.pointerId = event.pointerId;
+      zone.setPointerCapture?.(event.pointerId);
+      update(event);
+    });
+    zone.addEventListener("pointermove", update);
+    zone.addEventListener("pointerup", release);
+    zone.addEventListener("pointercancel", release);
+    zone.addEventListener("lostpointercapture", release);
+    zone.addEventListener("contextmenu", (event) => event.preventDefault());
   }
 
   async startOnline(name) {
     this.mode = "online";
     this.playerName = name;
     this.onlineInitialized = false;
+    const { MultiplayerClient } = await import("./multiplayer.js");
     this.mp = new MultiplayerClient();
     this._wireMpHooks();
 
@@ -1722,6 +1784,7 @@ class Game {
     this.mode = "online";
     this.playerName = name;
     this.onlineInitialized = false;
+    const { MultiplayerClient } = await import("./multiplayer.js");
     this.mp = new MultiplayerClient();
     this._wireMpHooks();
     await this.mp.createPrivate(cfg, name);
@@ -1732,6 +1795,7 @@ class Game {
     this.mode = "online";
     this.playerName = name;
     this.onlineInitialized = false;
+    const { MultiplayerClient } = await import("./multiplayer.js");
     this.mp = new MultiplayerClient();
     this._wireMpHooks();
     await this.mp.joinPrivate(code, name);
@@ -2449,6 +2513,11 @@ class Game {
           // is held can't slip in on a single-frame key release and yank the
           // server-side targetDir sideways (causes a perpendicular jolt mid-run).
           this.hasMouseInput = false;
+        } else if (this.touchSteering.active) {
+          // Virtual stick uses the same world-space target-direction path as
+          // keyboard input. Keyboard remains first priority when both exist.
+          this.player.targetDir.set(this.touchSteering.x, 0, this.touchSteering.z);
+          this.hasMouseInput = false;
         } else if (this.hasMouseInput) {
           this.hasMouseInput = false;
           this.raycaster.setFromCamera(this.mouseNDC, this.camera);
@@ -2553,7 +2622,7 @@ class Game {
         const baseY = c.baseY != null ? c.baseY : (ISLAND_TOP_Y + 0.05);
         this.fx.triggerRespawn(c.group, baseY, c.simChar.pos.x, c.simChar.pos.z);
         if (c === this.player && this.deathScreen) this.deathScreen.classList.remove("visible");
-        if (c === this.player) this.hud.push("You spawned (invuln 5s)");
+        if (c === this.player) this.hud.push("Back in action — protected for 5s");
         // Juice: 2-second cinematic on local player respawn.
         // Phase 1 [0–700ms]: camera moves to spawn + zooms in to 0.45.
         // Phase 2 [700–1300ms]: hold (build-up FX plays).
@@ -3315,9 +3384,8 @@ class Game {
   }
 }
 
-// ===================== STATS.JS FPS OVERLAY =====================
-// stats.js is loaded as a plain UMD <script> tag (window.Stats).
-// Toggle with F key. Hidden by default — zero overhead when hidden.
+// ===================== OPTIONAL FPS OVERLAY =====================
+// A host may provide window.Stats. Toggle with F when present.
 let _stats = null;
 function _initStats() {
   if (typeof window.Stats === "undefined") return null;
@@ -3792,9 +3860,6 @@ async function _pmSubmitJoin() {
   document.getElementById("name-entry").classList.add("hidden");
   _pmClose();
   _onFirstGesture();
-  telemetry.setPlayerName(name);
-  telemetry.track("room_joined", { code, isHost: false });
-  telemetry.gameStart("private");
   game.startPrivateJoin(name, code);
 }
 
@@ -3804,9 +3869,6 @@ async function _pmSubmitCreate() {
   document.getElementById("name-entry").classList.add("hidden");
   _pmClose();
   _onFirstGesture();
-  telemetry.setPlayerName(name);
-  telemetry.track("room_joined", { code: "(creating)", isHost: true });
-  telemetry.gameStart("private");
   game.startPrivateCreate(name, cfg);
 }
 
@@ -3850,9 +3912,6 @@ document.getElementById("solo-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
   _onFirstGesture();
-  telemetry.setPlayerName(name);
-  telemetry.track("mode_pick", { mode: "solo" });
-  telemetry.gameStart("solo");
   game.startSolo(name);
 });
 
@@ -3860,9 +3919,6 @@ document.getElementById("online-btn").addEventListener("click", () => {
   const name = document.getElementById("name-input").value.trim() || "Player";
   document.getElementById("name-entry").classList.add("hidden");
   _onFirstGesture();
-  telemetry.setPlayerName(name);
-  telemetry.track("mode_pick", { mode: "online" });
-  telemetry.gameStart("online");
   game.startOnline(name);
 });
 
@@ -3873,6 +3929,22 @@ document.getElementById("name-input").addEventListener("keydown", e => {
 document.getElementById("return-to-menu").addEventListener("click", () => {
   location.reload();
 });
+
+// Play Again reloads to guarantee a completely fresh Simulation and renderer.
+// Consume the one-shot name saved by UIManager and immediately resume Solo;
+// no multiplayer module or server connection is involved.
+if (!arrivedViaPortal) {
+  let soloPlayAgainName = null;
+  try {
+    soloPlayAgainName = sessionStorage.getItem("soloPlayAgainName");
+    if (soloPlayAgainName) sessionStorage.removeItem("soloPlayAgainName");
+  } catch {}
+  if (soloPlayAgainName) {
+    const name = soloPlayAgainName.slice(0, 16);
+    document.getElementById("name-entry").classList.add("hidden");
+    game.startSolo(name);
+  }
+}
 
 // Auto-join a private room when the URL has ?r=CODE. Skip the title screen
 // entirely; show it back with an error toast if the room isn't found.
@@ -3898,9 +3970,6 @@ document.getElementById("return-to-menu").addEventListener("click", () => {
           }
           document.getElementById("name-entry").classList.add("hidden");
           _onFirstGesture();
-          telemetry.setPlayerName(name);
-          telemetry.track("room_joined", { code, isHost: false });
-          telemetry.gameStart("private");
           game.startPrivateJoin(name, code);
         })
         .catch(() => {
@@ -3921,7 +3990,6 @@ if (arrivedViaPortal) {
   const portalQS = new URLSearchParams(window.location.search);
   const portalName = (portalQS.get("username") || "Player").slice(0, 16);
   document.getElementById("name-entry").classList.add("hidden");
-  telemetry.setPlayerName(portalName);
   game.startSolo(portalName);
   // After Game.start() runs synchronously above, this.player exists. Move the
   // player to the start-portal location so the spawn matches the red portal.
@@ -3938,4 +4006,12 @@ if (arrivedViaPortal) {
     game.camera.position.set(startX, CAMERA_HEIGHT, startZ + CAMERA_Z_OFFSET);
     game.camera.lookAt(startX, TERRITORY_Y, startZ);
   }
+}
+
+// This is deliberately last: READY means module evaluation completed and all
+// title, mode, modal, and replay click handlers above are installed.
+const startupStatus = document.getElementById("startup-status");
+if (startupStatus) {
+  startupStatus.textContent = "READY";
+  startupStatus.classList.add("ready");
 }

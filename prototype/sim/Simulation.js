@@ -232,11 +232,21 @@ export class Simulation {
     const na = ca + turn;
     char.dir = { x: Math.sin(na), z: Math.cos(na) };
 
-    // Move
-    char.pos = {
-      x: char.pos.x + char.dir.x * char.speed * dt,
-      z: char.pos.z + char.dir.z * char.speed * dt,
-    };
+    // Integrate the constant-rate turn as an arc instead of taking one Euler
+    // step in the final direction. Speed and TURN_SPEED are unchanged, but the
+    // path is now stable across uneven render-frame durations.
+    if (Math.abs(turn) > 1e-7) {
+      const omega = turn / dt;
+      char.pos = {
+        x: char.pos.x + (char.speed / omega) * (Math.cos(ca) - Math.cos(na)),
+        z: char.pos.z + (char.speed / omega) * (Math.sin(na) - Math.sin(ca)),
+      };
+    } else {
+      char.pos = {
+        x: char.pos.x + char.dir.x * char.speed * dt,
+        z: char.pos.z + char.dir.z * char.speed * dt,
+      };
+    }
 
     // Boundary -- solid wall, slide along it
     const r = Math.sqrt(char.pos.x * char.pos.x + char.pos.z * char.pos.z);
