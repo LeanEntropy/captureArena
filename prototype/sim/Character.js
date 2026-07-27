@@ -24,6 +24,8 @@ export class Character {
     this.botWaypoints = [];
     this.botLoopCount = 0;
     this.botAggroChance = 0.25;
+    this.botLastWaypointDist = Infinity;
+    this.botStallTicks = 0;
   }
 
   setPos(x, z) {
@@ -42,6 +44,8 @@ export class Character {
     this._lastInsidePos = null;
     this.botWaypoints = [];
     this.botLoopCount = 0;
+    this.botLastWaypointDist = Infinity;
+    this.botStallTicks = 0;
   }
 
   kill() {

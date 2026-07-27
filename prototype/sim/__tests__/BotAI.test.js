@@ -24,4 +24,15 @@ describe("BotAI", () => {
       expect(() => BotAI.planTargetDir(bot, sim)).not.toThrow();
     }
   });
+
+  it("abandons a waypoint after sustained lack of progress", () => {
+    const sim = new Simulation();
+    sim.start();
+    const bot = sim.characters[2];
+    bot.setPos(0, 0);
+    bot.botWaypoints = [{ x: 10, z: 0 }];
+    for (let i = 0; i < 122; i++) BotAI.planTargetDir(bot, sim);
+    expect(bot.botStallTicks).toBe(0);
+    expect(bot.botWaypoints).not.toEqual([{ x: 10, z: 0 }]);
+  });
 });
