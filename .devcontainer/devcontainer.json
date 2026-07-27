@@ -1,13 +1,5 @@
 {
   "customizations": {
-    "codespaces": {
-      "repositories": {
-        "inzonesm/inzone-games": {
-          "permissions": {
-            "contents": "read"
-          }
-        }
-      }
-    }
+    "codespaces": {}
   }
 }
